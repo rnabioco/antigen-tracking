@@ -1,0 +1,1560 @@
+---
+title: "LEC analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Seurat)
+library(scrunchy)
+library(MultiAssayExperiment)
+library(SingleCellExperiment)
+library(tidyverse)
+library(ggridges)
+library(umap)
+library(clustifyr)
+library(cowplot)
+library(dplyr)
+library(topGO)
+library(biomaRt)
+library(clustree)
+library(M3Drop)
+
+#if scrunchy doesn't load properly use reticulate::py_install("igraph") and reticulate::py_install("leidenalg")
+load("~/LEC_analysis/clustifyr/ref_mousespleenDC.rda")
+load("~/LEC_analysis/clustifyr/ref_lymphnodestromal.rda")
+load("~/LEC_analysis/clustifyr/ref_LEC.rda")
+
+ortholog_table <- "mouse_orthologs.tsv"
+ if(!file.exists(ortholog_table)){
+  library(biomaRt)
+  ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+  orthologs <- getBM(mart = ensembl,
+      attributes = c("external_gene_name",
+                     "mmusculus_homolog_associated_gene_name"))
+  write_tsv(orthologs, ortholog_table)
+}
+orthologs <- read_tsv(ortholog_table)
+
+#convert human LEC gene names to mouse orthologs
+hum_genes_LEC <- rownames(ref_LEC)
+mus_genes_LEC <- ref_LEC %>% 
+  as.tibble() %>%
+  mutate(external_gene_name = hum_genes_LEC) %>%
+  left_join(orthologs, by = "external_gene_name") %>%
+  dplyr::select(-external_gene_name) %>%
+  filter(!is.na(mmusculus_homolog_associated_gene_name)) %>%
+  dplyr::select(mmusculus_homolog_associated_gene_name, LEC1:"???") %>%
+  group_by(mmusculus_homolog_associated_gene_name) %>%
+  summarise_all(mean)
+mus_ref_LEC <- mus_genes_LEC %>%
+  dplyr::select(-mmusculus_homolog_associated_gene_name) %>%
+  as.matrix()
+rownames(mus_ref_LEC) <- mus_genes_LEC$mmusculus_homolog_associated_gene_name
+
+#convert DC reference genes names to lowercase
+cap_genes_DC <- rownames(ref_mousespleenDC)
+lc_genes_DC <- ref_mousespleenDC %>%
+  as.tibble() %>%
+  mutate(external_gene_name = cap_genes_DC) %>%
+  mutate(mmusculus_homolog_associated_gene_name = ifelse(str_detect(external_gene_name, "[:digit:]RIK"), str_replace(external_gene_name, "RIK", "Rik"), str_to_title(external_gene_name))) %>%
+  dplyr::select(-external_gene_name) %>%
+  filter(!is.na(mmusculus_homolog_associated_gene_name)) %>%
+  dplyr::select(mmusculus_homolog_associated_gene_name, "CCR7hi DC":"Siglec-H DC") %>%
+  group_by(mmusculus_homolog_associated_gene_name) %>%
+  summarise_all(mean)
+ref_lcDC <- lc_genes_DC %>%
+  dplyr::select(-mmusculus_homolog_associated_gene_name) %>%
+  as.matrix()
+rownames(ref_lcDC) <- lc_genes_DC$mmusculus_homolog_associated_gene_name
+
+#migratory DC subtypes ImmGen
+migDC_data <- read_csv("https://sharehost.hms.harvard.edu/immgen/GSE15907/GSE15907_Normalized_Data.csv")
+migDC <- migDC_data %>%
+  dplyr::select(ProbeSetID, GeneSymbol, "DC.IIhilang-103-11b+.SLN#1", "DC.IIhilang-103-11b+.SLN#2",
+                "DC.IIhilang-103-11b+.SLN#3", "DC.IIhilang+103+11blo.SLN#1", "DC.IIhilang+103+11blo.SLN#2",
+                "DC.IIhilang+103+11blo.SLN#3", "DC.IIhilang+103-11b+.SLN#1", "DC.IIhilang+103-11b+.SLN#2", 
+                "DC.IIhilang+103-11b+.SLN#3", "DC.IIhilang-103-11blo.SLN#1", "DC.IIhilang-103-11blo.SLN#2",
+                "DC.IIhilang-103-11blo.SLN#3")
+ref_migDC <- migDC %>%
+  dplyr::select(-ProbeSetID) %>%
+  group_by(GeneSymbol) %>%
+  summarize_all(sum) %>%
+  remove_rownames() %>%
+  column_to_rownames("GeneSymbol")
+
+colors <- discrete_palette_default <- c(
+  palette_OkabeIto_black,
+  scales::brewer_pal(palette = "Set2")(8),
+  scales::brewer_pal(palette = "Set1")(9),
+  scales::brewer_pal(palette = "Paired")(12),
+  scales::brewer_pal(palette = "Dark2")(8)
+)
+
+plots_folder <- '~/LEC_analysis/vaccinia_reanalysis/plots/'
+so_folder <- '~/LEC_analysis/vaccinia_reanalysis/so/'
+```
+```{r, naive data}
+naive_data <- Read10X("~/LEC_analysis/vaccinia_reanalysis/20191212/naive/filtered_feature_bc_matrix/")
+#saveRDS(naive_so, file = paste(so_folder, "naive_so.rds", sep = ""))
+#naive_so <- readRDS(file = paste(so_folder, "naive_so.rds", sep = ""))
+
+naive_mrna <- naive_data$`Gene Expression`
+naive_so <- CreateSeuratObject(counts = naive_mrna)
+
+naive_so[["percent.mt"]] <- PercentageFeatureSet(naive_so, pattern = "^mt-")
+VlnPlot(naive_so, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+FeatureScatter(naive_so, feature1 = "nCount_RNA", feature2 = "percent.mt")
+FeatureScatter(naive_so, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+naive_so <- subset(naive_so, subset = percent.mt < 25 & nFeature_RNA > 100 & nFeature_RNA < 5000)
+
+naive_all.genes <- rownames(naive_so)
+naive_so <- ScaleData(naive_so, features = naive_all.genes)
+naive_so <- FindVariableFeatures(object = naive_so)
+naive_so <- RunPCA(naive_so, features = VariableFeatures(object = naive_so))
+ElbowPlot(naive_so)
+
+naive_so <- FindNeighbors(naive_so, dims = 1:30)
+naive_so <- FindClusters(naive_so, resolution = 1.0)
+naive_so <- RunTSNE(naive_so, dims = 1:30)
+naive_so <- RunUMAP(naive_so, dims = 1:30)
+DimPlot(naive_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+ggsave(paste(plots_folder, "cluster_umap_naive.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+
+naive_res1 <- clustify(
+      input = naive_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::immgen_ref,
+        seurat_out = T, threshold = 0.5, verbose = T)
+naive_res1_type <- FetchData(naive_res1, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+naive_res1_type
+
+naive_res2 <- clustify(
+      input = naive_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::ref_tabula_muris_drop,
+        seurat_out = T, threshold = 0.5, verbose = T)
+naive_res2_type <- FetchData(naive_res2, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+naive_res2_type
+
+write_csv(d2_res2_type, paste(plots_folder, "d2/d2_corr_tabmuris.csv", sep = "")) 
+
+naive.new.cluster.ids <- c("B cell", "B cell", "T cell", "B cell", "T cell", "LEC", "T cell", "T cell")
+naive_so@meta.data$cell_type1 <- naive.new.cluster.ids[naive_so$seurat_clusters]
+DimPlot(naive_so, reduction = "umap", group.by = "cell_type1", label = F)
+
+#sub-classify LEC cells
+naive_LEC_so <- subset(naive_so, subset = cell_type1 == "LEC")
+naive_LEC_all.genes <- rownames(naive_LEC_so)
+naive_LEC_so <- ScaleData(naive_LEC_so, features = naive_LEC_all.genes)
+naive_LEC_so <- FindVariableFeatures(object = naive_LEC_so)
+naive_LEC_so <- RunPCA(naive_LEC_so, features = VariableFeatures(object = naive_LEC_so))
+ElbowPlot(naive_LEC_so)
+
+naive_LEC_so <- FindNeighbors(naive_LEC_so, dims = 1:30)
+naive_LEC_so <- FindClusters(naive_LEC_so, resolution = 1.0)
+naive_LEC_so <- RunUMAP(naive_LEC_so, dims = 1:30)
+plot <- DimPlot(naive_LEC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+naiveLEC_resLEC <- clustify(
+      input = naive_LEC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = mus_ref_LEC,
+        seurat_out = F, threshold = 0.5, verbose = T)
+naiveLEC_resLEC_type <- FetchData(naiveLEC_resLEC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+naiveLEC_resLEC_type
+
+write_csv(naiveLEC_resLEC, paste(plots_folder, "naive/naive_corr_LEC.csv", sep = "")) 
+
+naiveLEC.new.cluster.ids <- c("Medullary LECs", "Ceiling LECs", "Medullary LECs", "SC")
+naive_LEC_so@meta.data$cell_typeLEC <- naiveLEC.new.cluster.ids[naive_LEC_so$seurat_clusters]
+plot <- DimPlot(naive_LEC_so, reduction = "umap", group.by = "cell_typeLEC")
+
+naiveLEC.new.cluster.ids2 <- c("0-mLEC", "1-cLEC", "2-mLEC", "3-SC")
+naive_LEC_so@meta.data$cell_typeLEC2 <- naiveLEC.new.cluster.ids2[naive_LEC_so$seurat_clusters]
+
+plot <- VlnPlot(naive_LEC_so, features = c("Lyve1", "Itga2b", "Ackr4", "Cd44", "Glycam1", "Coch", "Anxa2", "Cd36", "Fabp4", "Ackr3", "Bgn", "Flrt2", "Il33", "Mrc1", "Marco", "Ptx3", "Kcnj8", "Itih5", "Pecam1", "Pdpn", "Prox1", "Flt4", "Madcam1", "Btnl9", "Pd11", "Spns2"), group.by = "seurat_clusters", ncol = 1)
+
+ggsave(paste(plots_folder, "naive/LEC_clusters_naive.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+#saveRDS(naive_LEC_so, file = paste(so_folder, "naive_LEC_so.rds", sep = ""))
+#naive_LEC_so <- readRDS(file = paste(so_folder, "naive_LEC_so.rds", sep = ""))
+
+#include subclassification cell types
+naive_all_cells <- FetchData(naive_so, c("cell_type1")) %>%
+  rownames_to_column("cell_id")
+naive_LEC <- FetchData(naive_LEC_so, c("cell_typeLEC", "cell_typeLEC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeLEC, cell_type3 = cell_typeLEC2)
+naive_celltype2 <- naive_all_cells %>%
+  left_join(naive_LEC, by = "cell_id") %>%
+  mutate(cell_type2 = ifelse(is.na(cell_type2), cell_type1, cell_type2)) %>%
+  mutate(cell_type3 = ifelse(is.na(cell_type3), cell_type1, cell_type3))
+naive_so@meta.data$cell_type2 <- naive_celltype2$cell_type2
+naive_so@meta.data$cell_type3 <- naive_celltype2$cell_type3
+plot <- DimPlot(naive_so, reduction = "umap", group.by = "cell_type2", cols = colors)
+ggsave(paste(plots_folder, "naive/celltype2_naive.pdf", sep = ""), plot, width = 8, height = 4, units = c("in"), useDingbats = F)
+
+#saveRDS(naive_so, file = paste(so_folder, "naive_so.rds", sep = ""))
+#naive_so <- readRDS(file = paste(so_folder, "naive_so.rds", sep = ""))
+```
+```{r, CD45neg_d14}
+n14_data <- Read10X("~/LEC_analysis/vaccinia_reanalysis/20191212/CD45neg/filtered_feature_bc_matrix/")
+#saveRDS(n14_so, file = paste(so_folder, "n14_so.rds", sep = ""))
+#n14_so <- readRDS(file = paste(so_folder, "n14_so.rds", sep = ""))
+
+n14_mrna <- n14_data$`Gene Expression`
+n14_adt <- t(n14_data$`Antibody Capture`)
+rownames(n14_adt) <- c("ova")
+n14_so <- CreateSeuratObject(counts = n14_mrna)
+n14_so[['adt']] <- CreateAssayObject(counts = n14_adt)
+
+n14_so[["percent.mt"]] <- PercentageFeatureSet(n14_so, pattern = "^mt-")
+VlnPlot(n14_so, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+FeatureScatter(n14_so, feature1 = "nCount_RNA", feature2 = "percent.mt")
+FeatureScatter(n14_so, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+n14_so <- subset(n14_so, subset = percent.mt < 25 & nFeature_RNA > 100 & nFeature_RNA < 5000)
+
+n14_so <- NormalizeData(n14_so, normalization.method = "LogNormalize", scale.factor = 10000)
+n14_so <- FindVariableFeatures(n14_so, selection.method = "vst")
+
+n14_all.genes <- rownames(n14_so)
+n14_so <- ScaleData(n14_so, features = n14_all.genes)
+n14_so <- RunPCA(n14_so, features = VariableFeatures(object = n14_so))
+ElbowPlot(n14_so)
+
+n14_so <- FindNeighbors(n14_so, dims = 1:30)
+n14_so <- FindClusters(n14_so, resolution = 1.0)
+n14_so <- RunTSNE(n14_so, dims = 1:30)
+n14_so <- RunUMAP(n14_so, dims = 1:30)
+DimPlot(n14_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+#ggsave(paste(plots_folder, "cluster_umap_n14.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+
+n14_so <- NormalizeData(n14_so, assay = "adt", normalization.method = "CLR")
+n14_so <- ScaleData(n14_so, assay = "adt")
+
+n14_res1 <- clustify(
+      input = n14_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::immgen_ref,
+        seurat_out = T, threshold = 0.5, verbose = T)
+n14_res1_type <- FetchData(n14_res1, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+n14_res1_type
+
+n14_res2 <- clustify(
+      input = n14_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::ref_tabula_muris_drop,
+        seurat_out = T, threshold = 0.5, verbose = T)
+n14_res2_type <- FetchData(n14_res2, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+n14_res2_type
+
+n14.new.cluster.ids <- c("B cell", "T cell", "fibroblast", "DC", "LEC", "T cell", "BEC", "BEC", "LEC", "fibroblast", "fibroblast", "unassigned")
+n14_so@meta.data$cell_type1 <- n14.new.cluster.ids[n14_so$seurat_clusters]
+DimPlot(n14_so, reduction = "umap", group.by = "cell_type1", label = F)
+#ggsave(paste(plots_folder, "cluster_celltype1_n14.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+
+#sub-classify LEC cells
+n14_LEC_so <- subset(n14_so, subset = cell_type1 %in% c("LEC", "BEC"))
+n14_LEC_all.genes <- rownames(n14_LEC_so)
+n14_LEC_so <- ScaleData(n14_LEC_so, features = n14_LEC_all.genes)
+n14_LEC_so <- FindVariableFeatures(object = n14_LEC_so)
+n14_LEC_so <- RunPCA(n14_LEC_so, features = VariableFeatures(object = n14_LEC_so))
+ElbowPlot(n14_LEC_so)
+
+n14_LEC_so <- FindNeighbors(n14_LEC_so, dims = 1:30)
+n14_LEC_so <- FindClusters(n14_LEC_so, resolution = 1.5)
+n14_LEC_so <- RunUMAP(n14_LEC_so, dims = 1:30)
+plot <- DimPlot(n14_LEC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+n14LEC_resLEC <- clustify(
+      input = n14_LEC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = mus_ref_LEC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+n14LEC_resLEC_type <- FetchData(n14LEC_resLEC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+n14LEC_resLEC_type
+#write_csv(d2LEC_resLEC_type, paste(plots_folder, "d2/d2_corr_LEC.csv", sep = "")) 
+
+n14LEC.new.cluster.ids <- c("Floor LECs", "CD34+SC", "BECs", "Ceiling LECs")
+n14_LEC_so@meta.data$cell_typeLEC <- n14LEC.new.cluster.ids[n14_LEC_so$seurat_clusters]
+plot <- DimPlot(n14_LEC_so, reduction = "umap", group.by = "cell_typeLEC")
+
+n14LEC.new.cluster.ids2 <- c("0-fLEC", "1-CD34+SC", "2-BEC", "3-cLEC")
+n14_LEC_so@meta.data$cell_typeLEC2 <- n14LEC.new.cluster.ids2[n14_LEC_so$seurat_clusters]
+
+FeaturePlot(n14_LEC_so, c("Ackr4", "Nt5e", "Cav1", "Tnfrsf9", "Marco", "Lyve1", "Mfap4", "Cldn11"))
+plot <- VlnPlot(n14_LEC_so, features = c("Lyve1", "Itga2b", "Ackr4", "Cd44", "Glycam1", "Coch", "Anxa2", "Cd36", "Fabp4", "Ackr3", "Bgn", "Flrt2", "Il33", "Mrc1", "Marco", "Ptx3", "Kcnj8", "Itih5", "Pecam1", "Pdpn", "Prox1", "Flt4", "Madcam1", "Btnl9", "Pd11", "Spns2"), group.by = "seurat_clusters", ncol = 1)
+
+FetchData(n14_LEC_so, c("cell_typeLEC2", "ovalbumin"), slot = "counts") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_typeLEC2, vertical = F) +
+  scale_color_OkabeIto() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "counts", y = NULL) +
+  scale_x_log10()
+ggsave(paste(plots_folder, "n14/LEC_celltype_n14.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+#saveRDS(n14_LEC_so, file = paste(so_folder, "n14_LEC_so.rds", sep = ""))
+#n14_LEC_so <- readRDS(file = paste(so_folder, "n14_LEC_so.rds", sep = ""))
+
+#sub-classify DC cells
+n14_DC_so <- subset(n14_so, subset = cell_type1 == "DC")
+n14_DC_all.genes <- rownames(n14_DC_so)
+n14_DC_so <- ScaleData(n14_DC_so, features = n14_DC_all.genes)
+n14_DC_so <- FindVariableFeatures(object = n14_DC_so)
+n14_DC_so <- RunPCA(n14_DC_so, features = VariableFeatures(object = n14_DC_so))
+ElbowPlot(n14_DC_so)
+
+n14_DC_so <- FindNeighbors(n14_DC_so, dims = 1:30)
+n14_DC_so <- FindClusters(n14_DC_so, resolution = 1.1)
+n14_DC_so <- RunUMAP(n14_DC_so, dims = 1:30)
+plot <- DimPlot(n14_DC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+n14DC_resDC <- clustify(
+      input = n14_DC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lcDC,
+        seurat_out = F, threshold = 0.5, verbose = T)
+n14DC_resDC_type <- FetchData(n14DC_resDC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+n14DC_resDC_type
+n14DC_resDC
+#write_csv(d2DC_resDC_type, paste(plots_folder, "d2/d2_corr_DC.csv", sep = "")) 
+
+#subclassify migratory DCs
+# find variable genes from data
+n14_DC_norm_data <- M3DropCleanData(as.matrix(n14_DC_so@assays$RNA@counts),
+                                   labels = rownames(n14_DC_so@assays$RNA@counts),
+                                   is.counts = TRUE,
+                                   suppress.plot = TRUE)
+n14_DC_fits <- M3DropDropoutModels(n14_DC_norm_data$data, suppress.plot = TRUE)
+n14_DC_markers_M3Drop <- M3DropDifferentialExpression(n14_DC_norm_data$data,
+                                                     mt_method = "fdr",
+                                                     mt_threshold = 0.01,
+                                                     suppress.plot = TRUE)
+n14_DC_markers <- n14_DC_markers_M3Drop$Gene
+
+n14_migDC_res <- clustify(
+  input = n14_DC_so,
+  cluster_col = "seurat_clusters",
+  ref_mat = ref_migDC,
+  query_genes = n14_DC_markers,
+  seurat_out = T, threshold = 0.5, verbose = T)
+n14_migDC_res_type <- FetchData(n14_migDC_res, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+n14_migDC_res_type
+#write_csv(d2_migDC_res_type, paste(plots_folder, "d2/d2_corr_migDC.csv", sep = "")) 
+
+n14DC.new.cluster.ids <- c("cDC1", "cDC2 Tbet-", "cDC1", "Siglec-H", "Monocyte")
+n14_DC_so@meta.data$cell_typeDC <- n14DC.new.cluster.ids[n14_DC_so$seurat_clusters]
+plot <- DimPlot(n14_DC_so, reduction = "umap", group.by = "cell_typeDC")
+
+n14DC.new.cluster.ids2 <- c("0-cDC1", "1-cDC2 Tbet-", "2-cDC1", "3-Siglec-H", "4-Monocyte")
+n14_DC_so@meta.data$cell_typeDC2 <- n14DC.new.cluster.ids2[n14_DC_so$seurat_clusters]
+
+FeaturePlot(n14_DC_so, c("Itgax", "Itgam", "Xcr1", "Ccr7", "Tbx21", "Id2"))
+plot <- VlnPlot(n14_DC_so, features = c("Itgax", "Ccr7", "Xcr1", "Irf8", "Csf1r", "Fcgr3", "Cd209a", "Itgam", "Tbx21", "Siglech", "Tcf4", "Bst2", "Cd207", "Itgae", "Epcam"), group.by = "seurat_clusters", ncol = 1)
+
+FetchData(n14_DC_so, c("cell_typeDC2", "ovalbumin"), slot = "data") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_typeDC2, vertical = F) +
+  scale_color_OkabeIto() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "CLR Normalized", y = NULL) +
+  scale_x_log10()
+
+ggsave(paste(plots_folder, "n14/DC_gex_n14.pdf", sep = ""), plot, width = 6, height = 48, units = c("in"), useDingbats = F)
+#saveRDS(n14_DC_so, file = paste(so_folder, "n14_DC_so.rds", sep = ""))
+#n14_DC_so <- readRDS(file = paste(so_folder, "n14_DC_so.rds", sep = ""))
+
+#sub-classify FRC cells,,
+n14_FRC_so <- subset(n14_so, subset = cell_type1 == "fibroblast")
+n14_FRC_all.genes <- rownames(n14_FRC_so)
+n14_FRC_so <- ScaleData(n14_FRC_so, features = n14_FRC_all.genes)
+n14_FRC_so <- FindVariableFeatures(object = n14_FRC_so)
+n14_FRC_so <- RunPCA(n14_FRC_so, features = VariableFeatures(object = n14_FRC_so))
+ElbowPlot(n14_FRC_so)
+
+n14_FRC_so <- FindNeighbors(n14_FRC_so, dims = 1:30)
+n14_FRC_so <- FindClusters(n14_FRC_so, resolution = 1.5)
+n14_FRC_so <- RunUMAP(n14_FRC_so, dims = 1:30)
+plot <- DimPlot(n14_FRC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+n14FRC_resFRC <- clustify(
+      input = n14_FRC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lymphnodestromal,
+        seurat_out = T, threshold = 0.5, verbose = T)
+n14FRC_resFRC_type <- FetchData(n14FRC_resFRC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+n14FRC_resFRC_type
+#write_csv(d2FRC_resFRC_type, paste(plots_folder, "d2/d2_corr_FRC.csv", sep = "")) 
+
+n14FRC.new.cluster.ids <- c("CD34+SC", "PvC", "CD34+SC", "Ccl19loTRC", "Nr4a1+SC")
+n14_FRC_so@meta.data$cell_typeFRC <- n14FRC.new.cluster.ids[n14_FRC_so$seurat_clusters]
+plot <- DimPlot(n14_FRC_so, reduction = "umap", group.by = "cell_typeFRC")
+
+n14FRC.new.cluster.ids2 <- c("0-CD34+SC", "1-PvC", "2-CD34+SC", "3-Ccl19loTRC", "4-Nr4a1+SC")
+n14_FRC_so@meta.data$cell_typeFRC2 <- n14FRC.new.cluster.ids2[n14_FRC_so$seurat_clusters]
+
+plot <- VlnPlot(n14_FRC_so, features = c("Pdpn", "Pdgfra", "Pdgfrb", "Cxcl13", "Ccl19", "Ccl21a", "Cxcl12", "Tnfsf13b", "Ch25h", "Cxcl9", "Cxcl10", "H2-Aa", "Tnfsf11", "Madcam1", "Enpp2", "Cd34", "Des", "Inmt", "Bst1", "Nr4a1", "Pthlh", "Pth1r", "Sox9", "Tmem119"), group.by = "seurat_clusters", ncol = 1)
+
+FetchData(n14_FRC_so, c("cell_typeFRC", "ovalbumin"), slot = "counts") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_typeFRC, vertical = F) +
+  scale_color_OkabeIto() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "counts", y = NULL) +
+  scale_x_log10()
+ggsave(paste(plots_folder, "n14/FRC_gex_n14.pdf", sep = ""), plot, width = 6, height = 48, units = c("in"), useDingbats = F)
+#saveRDS(d2_FRC_so, file = paste(so_folder, "d2_FRC_so.rds", sep = ""))
+#d2_FRC_so <- readRDS(file = paste(so_folder, "d2_FRC_so.rds", sep = ""))
+
+#include subclassification cell types
+n14_all_cells <- FetchData(n14_so, c("cell_type1")) %>%
+  rownames_to_column("cell_id")
+n14_LEC <- FetchData(n14_LEC_so, c("cell_typeLEC", "cell_typeLEC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeLEC, cell_type3 = cell_typeLEC2)
+n14_DC <- FetchData(n14_DC_so, c("cell_typeDC", "cell_typeDC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeDC, cell_type3 = cell_typeDC2)
+n14_FRC <- FetchData(n14_FRC_so, c("cell_typeFRC", "cell_typeFRC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeFRC, cell_type3 = cell_typeFRC2)
+n14_subset <- bind_rows(n14_LEC, n14_DC, n14_FRC)
+n14_celltype2 <- n14_all_cells %>%
+  left_join(n14_subset, by = "cell_id") %>%
+  mutate(cell_type2 = ifelse(is.na(cell_type2), cell_type1, cell_type2)) %>%
+  mutate(cell_type3 = ifelse(is.na(cell_type3), cell_type1, cell_type3))
+n14_so@meta.data$cell_type2 <- n14_celltype2$cell_type2
+n14_so@meta.data$cell_type3 <- n14_celltype2$cell_type3
+plot <- DimPlot(n14_so, reduction = "umap", group.by = "cell_type2", cols = colors)
+ggsave(paste(plots_folder, "n14/celltype2_n14.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+
+plot <- FetchData(n14_so, c("cell_type2", "ovalbumin"), slot = "counts") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "counts", y = NULL) +
+  scale_x_log10()
+
+ggsave(paste(plots_folder, "d2/ova_counts_celltype2_d2.pdf", sep = ""), plot + NoLegend(), width = 6, height = 4, units = c("in"), useDingbats = F)
+#saveRDS(n14_so, file = paste(so_folder, "n14_so.rds", sep = ""))
+#n14_so <- readRDS(file = paste(so_folder, "n14_so.rds", sep = ""))
+
+#ova counts normalization
+#normalize ova to reads/cell
+n14_ova_data <- FetchData(n14_so, c("cell_type2", "cell_type3", "nCount_RNA", "nCount_adt", "ova"), slot = "counts") %>%
+  rownames_to_column("cell_id")
+
+n14_ova_counts <- n14_ova_data %>%
+  summarise(sum = sum(adt_ova))
+
+#ova counts / total ova counts in sample
+n14_ovanorm <- n14_ova_data %>%
+  mutate(norm_ova = adt_ova / as.numeric(n14_ova_counts[1,1]))
+         
+n14_ovanorm %>%
+  plot_activity(norm_ova, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "normalized ova", y = NULL) 
+
+n14_ova_bkgd <- n14_ovanorm %>%
+  filter(cell_type2 %in% c("T cell", "B cell")) %>%
+  summarise(median = median(norm_ova), mean = mean(norm_ova))
+n14_ova_bkgdcorr <- n14_ovanorm %>%
+  mutate(norm_ova_med_fc = norm_ova / as.numeric(n14_ova_bkgd[1,1]))
+
+plot <- d2_ova_bkgdcorr %>%
+  mutate(cell_type2 = fct_relevel(cell_type2, "B cell", "epithelial", "Monocyte", "T cell", "Cxcl9+TRC", "CD34+SC", "CCR7hi XCR1- mig cDC2", "CCR7hi Langerhans", "CCR7hi mig cDC1", "CCR7hi mig cDC2", "cDC2 Tbet-", "cDC1", "Floor LECs", "Ceiling LECs", "Medullary LECs")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  #facet_grid(~sample, scales = "fixed") +
+  scale_x_log10()
+
+#ova activity LEC clusters
+plot <- d2_ova_bkgdcorr %>%  
+  filter(cell_type3 %in% c("0-cLEC", "1-CD34+SC", "2-mLEC", "3-mLEC", "4-fLEC")) %>%
+  mutate(cell_type3 = fct_relevel(cell_type3, "1-CD34+SC", "4-fLEC", "0-cLEC", "2-mLEC", "3-mLEC")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type3, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  scale_x_log10()
+
+#ova activity DC clusters
+plot <- d2_ova_bkgdcorr %>%  
+  filter(cell_type3 %in% c("0-CCR7hi mig cDC2", "1-cDC2 Tbet-", "2-cDC2 Tbet-", "3-CCR7hi mig cDC1", "4-cDC2 Tbet-", "5-CCR7hi XCR1- mig cDC2", "6-CCR7hi mig cDC2", "7-CCR7hi mig cDC2", "8-cDC2 Tbet-", "9-cDC1", "10-cDC2 Tbet-", "11-CCR7hi Langerhans", "12-CCR7hi mig cDC2", "13-cDC2 Tbet-", "14-cDC1", "15-cDC2 Tbet-", "16-cDC1", "17-Monocyte")) %>%
+  mutate(cell_type3 = fct_relevel(cell_type3, "17-Monocyte", "5-CCR7hi XCR1- mig cDC2", "11-CCR7hi Langerhans", "3-CCR7hi mig cDC1", "6-CCR7hi mig cDC2", "12-CCR7hi mig cDC2", "7-CCR7hi mig cDC2", "0-CCR7hi mig cDC2", "10-cDC2 Tbet-", "8-cDC2 Tbet-", "2-cDC2 Tbet-", "15-cDC2 Tbet-", "4-cDC2 Tbet-", "13-cDC2 Tbet-", "1-cDC2 Tbet-", "16-cDC1", "14-cDC1", "9-cDC1")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type3, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  scale_x_log10()
+
+#ova activity FRC clusters
+plot <- d2_ova_bkgdcorr %>%  
+  filter(cell_type3 %in% c("0-CD34+SC", "1-CD34+SC", "2-CD34+SC", "3-Cxcl9+TRC", "4-CD34+SC")) %>%
+  mutate(cell_type3 = fct_relevel(cell_type3, "3-Cxcl9+TRC", "4-CD34+SC", "0-CD34+SC", "2-CD34+SC", "1-CD34+SC")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type3, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  scale_x_log10()
+
+ggsave(paste(plots_folder, "d2/ova_FRC_d2.pdf", sep = ""), plot + NoLegend(), width = 8, height = 6, units = c("in"), useDingbats = F)
+
+```
+
+```{r, CD45_d2}
+neg2_data <- Read10X("~/LEC_analysis/vaccinia_reanalysis/20200203/CD45neg_d2/filtered_feature_bc_matrix/")
+pos2_data <- Read10X("~/LEC_analysis/vaccinia_reanalysis/20200203/CD45pos_d2/filtered_feature_bc_matrix/")
+#saveRDS(d2_so, file = paste(so_folder, "d2_so.rds", sep = ""))
+#d2_so <- readRDS(file = paste(so_folder, "d2_so.rds", sep = ""))
+#d2_DC_so <- readRDS(file = paste(so_folder, "d2_DC_so.rds", sep = ""))
+
+neg2_mrna <- neg2_data$`Gene Expression`
+neg2_adt <- neg2_data$`Antibody Capture`
+neg2_so <- CreateSeuratObject(counts = neg2_mrna)
+neg2_so[['adt']] <- CreateAssayObject(counts = neg2_adt)
+
+pos2_mrna <- pos2_data$`Gene Expression`
+pos2_adt <- pos2_data$`Antibody Capture`
+pos2_so <- CreateSeuratObject(counts = pos2_mrna)
+pos2_so[['adt']] <- CreateAssayObject(counts = pos2_adt)
+
+d2_so <- merge(neg2_so, pos2_so)
+
+d2_so[["percent.mt"]] <- PercentageFeatureSet(d2_so, pattern = "^mt-")
+VlnPlot(d2_so, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+FeatureScatter(d2_so, feature1 = "nCount_RNA", feature2 = "percent.mt")
+FeatureScatter(d2_so, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+d2_so <- subset(d2_so, subset = percent.mt < 25 & nFeature_RNA > 100 & nFeature_RNA < 5000)
+
+d2_so <- NormalizeData(d2_so, normalization.method = "LogNormalize", scale.factor = 10000)
+d2_so <- FindVariableFeatures(d2_so, selection.method = "vst")
+
+d2_all.genes <- rownames(d2_so)
+d2_so <- ScaleData(d2_so, features = d2_all.genes)
+d2_so <- RunPCA(d2_so, features = VariableFeatures(object = d2_so))
+ElbowPlot(d2_so)
+
+d2_so <- FindNeighbors(d2_so, dims = 1:30)
+d2_so <- FindClusters(d2_so, resolution = 1.0)
+d2_so <- RunTSNE(d2_so, dims = 1:30)
+d2_so <- RunUMAP(d2_so, dims = 1:30)
+DimPlot(d2_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+#ggsave(paste(plots_folder, "cluster_umap_d2.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+
+d2_so <- NormalizeData(d2_so, assay = "adt", normalization.method = "CLR")
+d2_so <- ScaleData(d2_so, assay = "adt")
+
+d2_res1 <- clustify(
+      input = d2_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::immgen_ref,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d2_res1_type <- FetchData(d2_res1, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2_res1_type
+
+d2_res2 <- clustify(
+      input = d2_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::ref_tabula_muris_drop,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d2_res2_type <- FetchData(d2_res2, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2_res2_type
+
+write_csv(d2_res2_type, paste(plots_folder, "d2/d2_corr_tabmuris.csv", sep = "")) 
+
+d2.new.cluster.ids <- c("DC", "DC", "DC", "DC", "DC", "DC", "DC", "DC", "DC", "T cell", "DC", "T cell", "fibroblast", "LEC", "B cell", "epithelial", "DC", "DC", "DC", "epithelial", "fibroblast")
+d2_so@meta.data$cell_type1 <- d2.new.cluster.ids[d2_so$seurat_clusters]
+DimPlot(d2_so, reduction = "umap", group.by = "cell_type1", label = F)
+FeaturePlot(d2_so, c("ovalbumin"))
+
+d2_celltype1 <- FetchData(d2_so, c("cell_type1", "ovalbumin", "unprotected-DNA", "protected-DNA"), slot = "data") %>%
+  rownames_to_column(var = "cell_id") %>%
+  rename(ova = adt_ovalbumin) %>%
+  rename(P_DNA = "adt_unprotected-DNA") %>%
+  rename(Ps_DNA = "adt_protected-DNA")
+plot <- plot_activity(d2_celltype1, ova, group = cell_type1, vertical = F) +
+  scale_color_OkabeIto() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "CLR normalized", y = NULL) +
+  scale_x_log10()
+#ggsave(paste(plots_folder, "ova_norm_celltype1_d2.pdf", sep = ""), plot + NoLegend(), width = 6, height = 4, units = c("in"), useDingbats = F)
+
+#sub-classify LEC cells
+d2_LEC_so <- subset(d2_so, subset = cell_type1 == "LEC")
+d2_LEC_all.genes <- rownames(d2_LEC_so)
+d2_LEC_so <- ScaleData(d2_LEC_so, features = d2_LEC_all.genes)
+d2_LEC_so <- FindVariableFeatures(object = d2_LEC_so)
+d2_LEC_so <- RunPCA(d2_LEC_so, features = VariableFeatures(object = d2_LEC_so))
+ElbowPlot(d2_LEC_so)
+
+d2_LEC_so <- FindNeighbors(d2_LEC_so, dims = 1:30)
+d2_LEC_so <- FindClusters(d2_LEC_so, resolution = 1.5)
+d2_LEC_so <- RunUMAP(d2_LEC_so, dims = 1:30)
+plot <- DimPlot(d2_LEC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+d2LEC_resLEC <- clustify(
+      input = d2_LEC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = mus_ref_LEC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d2LEC_resLEC_type <- FetchData(d2LEC_resLEC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2LEC_resLEC_type
+
+write_csv(d2LEC_resLEC_type, paste(plots_folder, "d2/d2_corr_LEC.csv", sep = "")) 
+
+d2LEC.new.cluster.ids <- c("Ceiling LECs", "CD34+SC", "Medullary LECs", "Medullary LECs", "Floor LECs")
+d2_LEC_so@meta.data$cell_typeLEC <- d2LEC.new.cluster.ids[d2_LEC_so$seurat_clusters]
+plot <- DimPlot(d2_LEC_so, reduction = "umap", group.by = "cell_typeLEC")
+
+d2LEC.new.cluster.ids2 <- c("0-cLEC", "1-CD34+SC", "2-mLEC", "3-mLEC", "4-fLEC")
+d2_LEC_so@meta.data$cell_typeLEC2 <- d2LEC.new.cluster.ids2[d2_LEC_so$seurat_clusters]
+
+FeaturePlot(d2_LEC_so, c("Ackr4", "Nt5e", "Cav1", "Tnfrsf9", "Marco", "Lyve1", "Mfap4", "Cldn11"))
+plot <- VlnPlot(d2_LEC_so, features = c("Lyve1", "Itga2b", "Ackr4", "Cd44", "Glycam1", "Coch", "Anxa2", "Cd36", "Fabp4", "Ackr3", "Bgn", "Flrt2", "Il33", "Mrc1", "Marco", "Ptx3", "Kcnj8", "Itih5", "Pecam1", "Pdpn", "Prox1", "Flt4", "Madcam1", "Btnl9", "Pd11", "Spns2"), group.by = "cell_typeLEC2", ncol = 1)
+
+FetchData(d2_LEC_so, c("cell_typeLEC", "ovalbumin"), slot = "counts") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_typeLEC, vertical = F) +
+  scale_color_OkabeIto() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "counts", y = NULL) +
+  scale_x_log10()
+ggsave(paste(plots_folder, "d2/LEC_gex2_d2.pdf", sep = ""), plot, width = 6, height = 49, units = c("in"), useDingbats = F)
+#saveRDS(d2_LEC_so, file = paste(so_folder, "d2_LEC_so.rds", sep = ""))
+#d2_LEC_so <- readRDS(file = paste(so_folder, "d2_LEC_so.rds", sep = ""))
+
+#sub-classify DC cells
+d2_DC_so <- subset(d2_so, subset = cell_type1 == "DC")
+d2_DC_all.genes <- rownames(d2_DC_so)
+d2_DC_so <- ScaleData(d2_DC_so, features = d2_DC_all.genes)
+d2_DC_so <- FindVariableFeatures(object = d2_DC_so)
+d2_DC_so <- RunPCA(d2_DC_so, features = VariableFeatures(object = d2_DC_so))
+ElbowPlot(d2_DC_so)
+
+d2_DC_so <- FindNeighbors(d2_DC_so, dims = 1:30)
+d2_DC_so <- FindClusters(d2_DC_so, resolution = 1.5)
+d2_DC_so <- RunUMAP(d2_DC_so, dims = 1:30)
+plot <- DimPlot(d2_DC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+d2DC_resDC <- clustify(
+      input = d2_DC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lcDC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d2DC_resDC_type <- FetchData(d2DC_resDC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2DC_resDC_type
+write_csv(d2DC_resDC_type, paste(plots_folder, "d2/d2_corr_DC.csv", sep = "")) 
+
+#subclassify migratory DCs
+# find variable genes from data
+d2_DC_norm_data <- M3DropCleanData(as.matrix(d2_DC_so@assays$RNA@counts),
+                                   labels = rownames(d2_DC_so@assays$RNA@counts),
+                                   is.counts = TRUE,
+                                   suppress.plot = TRUE)
+d2_DC_fits <- M3DropDropoutModels(d2_DC_norm_data$data, suppress.plot = TRUE)
+d2_DC_markers_M3Drop <- M3DropDifferentialExpression(d2_DC_norm_data$data,
+                                                     mt_method = "fdr",
+                                                     mt_threshold = 0.01,
+                                                     suppress.plot = TRUE)
+d2_DC_markers <- d2_DC_markers_M3Drop$Gene
+
+d2_migDC_res <- clustify(
+  input = d2_DC_so,
+  cluster_col = "seurat_clusters",
+  ref_mat = ref_migDC,
+  query_genes = d2_DC_markers,
+  seurat_out = F, threshold = 0.5, verbose = T)
+d2_migDC_res_type <- FetchData(d2_migDC_res, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2_migDC_res_type
+write_csv(d2_migDC_res_type, paste(plots_folder, "d2/d2_corr_migDC.csv", sep = "")) 
+
+d2DC.new.cluster.ids <- c("CCR7hi mig cDC2", "cDC2 Tbet-", "cDC2 Tbet-", "CCR7hi mig cDC1", "cDC2 Tbet-", "CCR7hi XCR1- mig cDC2", "CCR7hi mig cDC2", "CCR7hi mig cDC2", "cDC2 Tbet-", "cDC1", "cDC2 Tbet-", "CCR7hi Langerhans", "CCR7hi mig cDC2", "cDC2 Tbet-", "cDC1", "cDC2 Tbet-", "cDC1", "Monocyte")
+d2_DC_so@meta.data$cell_typeDC <- d2DC.new.cluster.ids[d2_DC_so$seurat_clusters]
+plot <- DimPlot(d2_DC_so, reduction = "umap", group.by = "cell_typeDC")
+
+d2DC.new.cluster.ids2 <- c("0-CCR7hi mig cDC2", "1-cDC2 Tbet-", "2-cDC2 Tbet-", "3-CCR7hi mig cDC1", "4-cDC2 Tbet-", "5-CCR7hi XCR1- mig cDC2", "6-CCR7hi mig cDC2", "7-CCR7hi mig cDC2", "8-cDC2 Tbet-", "9-cDC1", "10-cDC2 Tbet-", "11-CCR7hi Langerhans", "12-CCR7hi mig cDC2", "13-cDC2 Tbet-", "14-cDC1", "15-cDC2 Tbet-", "16-cDC1", "17-Monocyte")
+d2_DC_so@meta.data$cell_typeDC2 <- d2DC.new.cluster.ids2[d2_DC_so$seurat_clusters]
+
+FeaturePlot(d2_DC_so, c("Itgax", "Itgam", "Xcr1", "Ccr7", "Tbx21", "Id2"))
+plot <- VlnPlot(d2_DC_so, features = c("Itgax", "Ccr7", "Xcr1", "Irf8", "Csf1r", "Fcgr3", "Cd209a", "Itgam", "Tbx21", "Siglech", "Tcf4", "Bst2", "Cd207", "Itgae", "Epcam"), group.by = "cell_typeDC2", ncol = 1)
+
+FetchData(d2_DC_so, c("cell_typeDC", "ovalbumin"), slot = "data") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_typeDC, vertical = F) +
+  scale_color_OkabeIto() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "CLR Normalized", y = NULL) +
+  scale_x_log10()
+
+ggsave(paste(plots_folder, "d2/DC_gex3_d2.pdf", sep = ""), plot, width = 8, height = 48, units = c("in"), useDingbats = F)
+#saveRDS(d2_DC_so, file = paste(so_folder, "d2_DC_so.rds", sep = ""))
+#d2_DC_so <- readRDS(file = paste(so_folder, "d2_DC_so.rds", sep = ""))
+
+#sub-classify FRC cells,,
+d2_FRC_so <- subset(d2_so, subset = cell_type1 == "fibroblast")
+d2_FRC_all.genes <- rownames(d2_FRC_so)
+d2_FRC_so <- ScaleData(d2_FRC_so, features = d2_FRC_all.genes)
+d2_FRC_so <- FindVariableFeatures(object = d2_FRC_so)
+d2_FRC_so <- RunPCA(d2_FRC_so, features = VariableFeatures(object = d2_FRC_so))
+ElbowPlot(d2_FRC_so)
+
+d2_FRC_so <- FindNeighbors(d2_FRC_so, dims = 1:30)
+d2_FRC_so <- FindClusters(d2_FRC_so, resolution = 1.5)
+d2_FRC_so <- RunUMAP(d2_FRC_so, dims = 1:30)
+plot <- DimPlot(d2_FRC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+d2FRC_resFRC <- clustify(
+      input = d2_FRC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lymphnodestromal,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d2FRC_resFRC_type <- FetchData(d2FRC_resFRC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2FRC_resFRC_type
+write_csv(d2FRC_resFRC_type, paste(plots_folder, "d2/d2_corr_FRC.csv", sep = "")) 
+
+d2FRC.new.cluster.ids <- c("CD34+SC", "CD34+SC", "CD34+SC", "Cxcl9+TRC", "CD34+SC")
+d2_FRC_so@meta.data$cell_typeFRC <- d2FRC.new.cluster.ids[d2_FRC_so$seurat_clusters]
+plot <- DimPlot(d2_FRC_so, reduction = "umap", group.by = "cell_typeFRC")
+
+d2FRC.new.cluster.ids2 <- c("0-CD34+SC", "1-CD34+SC", "2-CD34+SC", "3-Cxcl9+TRC", "4-CD34+SC")
+d2_FRC_so@meta.data$cell_typeFRC2 <- d2FRC.new.cluster.ids2[d2_FRC_so$seurat_clusters]
+
+plot <- VlnPlot(d2_FRC_so, features = c("Pdpn", "Pdgfra", "Pdgfrb", "Cxcl13", "Ccl19", "Ccl21a", "Cxcl12", "Tnfsf13b", "Ch25h", "Cxcl9", "Cxcl10", "H2-Aa", "Tnfsf11", "Madcam1", "Enpp2", "Cd34", "Des", "Inmt", "Bst1", "Nr4a1", "Pthlh", "Pth1r", "Sox9", "Tmem119"), group.by = "cell_typeFRC2", ncol = 1)
+
+FetchData(d2_FRC_so, c("cell_typeFRC", "ovalbumin"), slot = "counts") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_typeFRC, vertical = F) +
+  scale_color_OkabeIto() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "counts", y = NULL) +
+  scale_x_log10()
+#ggsave(paste(plots_folder, "d2/FRC_gex_d2.pdf", sep = ""), plot, width = 6, height = 49, units = c("in"), useDingbats = F)
+#saveRDS(d2_FRC_so, file = paste(so_folder, "d2_FRC_so.rds", sep = ""))
+#d2_FRC_so <- readRDS(file = paste(so_folder, "d2_FRC_so.rds", sep = ""))
+
+#sub-classify epithelial cells
+d2_ep_so <- subset(d2_so, subset = cell_type1 == "epithelial")
+d2_ep_all.genes <- rownames(d2_ep_so)
+d2_ep_so <- ScaleData(d2_ep_so, features = d2_ep_all.genes)
+d2_ep_so <- FindVariableFeatures(object = d2_ep_so)
+d2_ep_so <- RunPCA(d2_ep_so, features = VariableFeatures(object = d2_ep_so))
+ElbowPlot(d2_ep_so)
+
+d2_ep_so <- FindNeighbors(d2_ep_so, dims = 1:30)
+d2_ep_so <- FindClusters(d2_ep_so, resolution = 1.5)
+d2_ep_so <- RunUMAP(d2_ep_so, dims = 1:30)
+DimPlot(d2_ep_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+d2ep_resLEC <- clustify(
+      input = d2_ep_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = mus_ref_LEC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d2ep_resLEC_type <- FetchData(d2ep_resLEC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2ep_resLEC_type
+
+d2ep_resDC <- clustify(
+      input = d2_ep_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lcDC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d2ep_resDC_type <- FetchData(d2ep_resDC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2ep_resDC_type
+
+#subclassify migratory DCs
+# find variable genes from data
+d2_ep_norm_data <- M3DropCleanData(as.matrix(d2_ep_so@assays$RNA@counts),
+                                   labels = rownames(d2_ep_so@assays$RNA@counts),
+                                   is.counts = TRUE,
+                                   suppress.plot = TRUE)
+d2_ep_fits <- M3DropDropoutModels(d2_ep_norm_data$data, suppress.plot = TRUE)
+d2_ep_markers_M3Drop <- M3DropDifferentialExpression(d2_ep_norm_data$data,
+                                                     mt_method = "fdr",
+                                                     mt_threshold = 0.01,
+                                                     suppress.plot = TRUE)
+d2_ep_markers <- d2_ep_markers_M3Drop$Gene
+
+d2ep_migDC_res <- clustify(
+  input = d2_ep_so,
+  cluster_col = "seurat_clusters",
+  ref_mat = ref_migDC,
+  query_genes = d2_ep_markers,
+  seurat_out = T, threshold = 0.5, verbose = T)
+d2ep_migDC_res_type <- FetchData(d2ep_migDC_res, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2ep_migDC_res_type
+
+d2ep_resFRC <- clustify(
+      input = d2_ep_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lymphnodestromal,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d2ep_resFRC_type <- FetchData(d2ep_resFRC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2ep_resFRC_type
+
+#include subclassification cell types
+d2_all_cells <- FetchData(d2_so, c("cell_type1")) %>%
+  rownames_to_column("cell_id")
+d2_LEC <- FetchData(d2_LEC_so, c("cell_typeLEC", "cell_typeLEC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeLEC, cell_type3 = cell_typeLEC2)
+d2_DC <- FetchData(d2_DC_so, c("cell_typeDC", "cell_typeDC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeDC, cell_type3 = cell_typeDC2)
+d2_FRC <- FetchData(d2_FRC_so, c("cell_typeFRC", "cell_typeFRC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeFRC, cell_type3 = cell_typeFRC2)
+d2_subset <- bind_rows(d2_LEC, d2_DC, d2_FRC)
+d2_celltype2 <- d2_all_cells %>%
+  left_join(d2_subset, by = "cell_id") %>%
+  mutate(cell_type2 = ifelse(is.na(cell_type2), cell_type1, cell_type2)) %>%
+  mutate(cell_type3 = ifelse(is.na(cell_type3), cell_type1, cell_type3))
+d2_so@meta.data$cell_type2 <- d2_celltype2$cell_type2
+d2_so@meta.data$cell_type3 <- d2_celltype2$cell_type3
+plot <- DimPlot(d2_so, reduction = "umap", group.by = "cell_type2", cols = colors)
+ggsave(paste(plots_folder, "d2/celltype2_d2.pdf", sep = ""), plot, width = 8, height = 4, units = c("in"), useDingbats = F)
+
+plot <- FetchData(d2_so, c("cell_type2", "ovalbumin"), slot = "counts") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "counts", y = NULL) +
+  scale_x_log10()
+
+ggsave(paste(plots_folder, "d2/ova_counts_celltype2_d2.pdf", sep = ""), plot + NoLegend(), width = 6, height = 4, units = c("in"), useDingbats = F)
+#saveRDS(d2_so, file = paste(so_folder, "d2_so.rds", sep = ""))
+#d2_so <- readRDS(file = paste(so_folder, "d2_so.rds", sep = ""))
+
+#ova counts normalization
+#normalize ova to reads/cell
+d2_ova_data <- FetchData(d2_so, c("cell_type2", "cell_type3", "nCount_RNA", "nCount_adt", "ovalbumin"), slot = "counts") %>%
+  rownames_to_column("cell_id") %>%
+  mutate(sample = ifelse(str_detect(cell_id, "_1"), 1, 
+                         ifelse(str_detect(cell_id, "_2"), 2, NA)))
+
+d2_ova_counts <- d2_ova_data %>%
+  group_by(sample) %>%
+  summarise(sum = sum(adt_ovalbumin))
+
+#ova counts / total ova counts in sample
+d2_ovanorm <- d2_ova_data %>%
+  mutate(norm_ova = ifelse(str_detect(cell_id, "_1"), adt_ovalbumin / as.numeric(d2_ova_counts[1,2]),
+                          ifelse(str_detect(cell_id, "_2"), adt_ovalbumin / as.numeric(d2_ova_counts[2,2]), NA))) 
+d2_ovanorm %>%
+  plot_activity(norm_ova, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "normalized ova", y = NULL) +
+  #facet_grid(~sample, scales = "fixed") +
+  scale_x_log10()
+
+d2_ova_bkgd <- d2_ovanorm %>%
+  filter(cell_type2 %in% c("T cell", "B cell")) %>%
+  group_by(sample) %>%
+  summarise(median = median(norm_ova), mean = mean(norm_ova))
+d2_ova_bkgdcorr <- d2_ovanorm %>%
+  mutate(norm_ova_med = ifelse(str_detect(cell_id, "_1"), norm_ova - as.numeric(d2_ova_bkgd[1,2]),
+                          ifelse(str_detect(cell_id, "_2"), norm_ova - as.numeric(d2_ova_bkgd[2,2]), NA))) %>%
+  mutate(norm_ova_mean = ifelse(str_detect(cell_id, "_1"), norm_ova - as.numeric(d2_ova_bkgd[1,3]),
+                          ifelse(str_detect(cell_id, "_2"), norm_ova - as.numeric(d2_ova_bkgd[2,3]), NA))) %>%
+  mutate(norm_ova_med_fc = ifelse(str_detect(cell_id, "_1"), norm_ova / as.numeric(d2_ova_bkgd[1,2]),
+                          ifelse(str_detect(cell_id, "_2"), norm_ova / as.numeric(d2_ova_bkgd[2,2]), NA))) %>%
+  mutate(norm_ova_mean_fc = ifelse(str_detect(cell_id, "_1"), norm_ova / as.numeric(d2_ova_bkgd[1,3]),
+                          ifelse(str_detect(cell_id, "_2"), norm_ova / as.numeric(d2_ova_bkgd[2,3]), NA)))
+
+plot <- d2_ova_bkgdcorr %>%
+  mutate(cell_type2 = fct_relevel(cell_type2, "B cell", "epithelial", "Monocyte", "T cell", "Cxcl9+TRC", "CD34+SC", "CCR7hi XCR1- mig cDC2", "CCR7hi Langerhans", "CCR7hi mig cDC1", "CCR7hi mig cDC2", "cDC2 Tbet-", "cDC1", "Floor LECs", "Ceiling LECs", "Medullary LECs")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  #facet_grid(~sample, scales = "fixed") +
+  scale_x_log10()
+
+#ova activity LEC clusters
+plot <- d2_ova_bkgdcorr %>%  
+  filter(cell_type3 %in% c("0-cLEC", "1-CD34+SC", "2-mLEC", "3-mLEC", "4-fLEC")) %>%
+  mutate(cell_type3 = fct_relevel(cell_type3, "1-CD34+SC", "4-fLEC", "0-cLEC", "2-mLEC", "3-mLEC")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type3, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  scale_x_log10()
+
+#ova activity DC clusters
+plot <- d2_ova_bkgdcorr %>%  
+  filter(cell_type3 %in% c("0-CCR7hi mig cDC2", "1-cDC2 Tbet-", "2-cDC2 Tbet-", "3-CCR7hi mig cDC1", "4-cDC2 Tbet-", "5-CCR7hi XCR1- mig cDC2", "6-CCR7hi mig cDC2", "7-CCR7hi mig cDC2", "8-cDC2 Tbet-", "9-cDC1", "10-cDC2 Tbet-", "11-CCR7hi Langerhans", "12-CCR7hi mig cDC2", "13-cDC2 Tbet-", "14-cDC1", "15-cDC2 Tbet-", "16-cDC1", "17-Monocyte")) %>%
+  mutate(cell_type3 = fct_relevel(cell_type3, "17-Monocyte", "5-CCR7hi XCR1- mig cDC2", "11-CCR7hi Langerhans", "3-CCR7hi mig cDC1", "6-CCR7hi mig cDC2", "12-CCR7hi mig cDC2", "7-CCR7hi mig cDC2", "0-CCR7hi mig cDC2", "10-cDC2 Tbet-", "8-cDC2 Tbet-", "2-cDC2 Tbet-", "15-cDC2 Tbet-", "4-cDC2 Tbet-", "13-cDC2 Tbet-", "1-cDC2 Tbet-", "16-cDC1", "14-cDC1", "9-cDC1")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type3, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  scale_x_log10()
+
+#ova activity FRC clusters
+plot <- d2_ova_bkgdcorr %>%  
+  filter(cell_type3 %in% c("0-CD34+SC", "1-CD34+SC", "2-CD34+SC", "3-Cxcl9+TRC", "4-CD34+SC")) %>%
+  mutate(cell_type3 = fct_relevel(cell_type3, "3-Cxcl9+TRC", "4-CD34+SC", "0-CD34+SC", "2-CD34+SC", "1-CD34+SC")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type3, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  scale_x_log10()
+
+ggsave(paste(plots_folder, "d2/ova_FRC_d2.pdf", sep = ""), plot + NoLegend(), width = 8, height = 6, units = c("in"), useDingbats = F)
+
+#gene markers
+d2_markers <- FindAllMarkers(d2_so)
+d2_markers <- d2_markers %>%
+  filter(p_val_adj < 0.01)
+
+d2_LEC_all_markers <- FindAllMarkers(d2_LEC_so) %>%
+  filter(p_val_adj < 0.01)
+d2_LECsub_markers <- subset(d2_LEC_so, subset = seurat_clusters != 1) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d2_mLEC_markers <- subset(d2_LEC_so, subset = seurat_clusters %in% c(2, 3)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d2_DC_all_markers <- FindAllMarkers(d2_DC_so) %>%
+  filter(p_val_adj < 0.01)
+d2_DC_cDC1_markers <- subset(d2_DC_so, subset = seurat_clusters %in% c(9, 14, 16)) %>%
+  FindAllMarkers()  %>%
+  filter(p_val_adj < 0.01)
+d2_DC_cDC2tbetneg_markers <- subset(d2_DC_so, subset = seurat_clusters %in% c(1, 2, 4, 8, 10, 13, 15)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d2_DC_migcDC2_markers <- subset(d2_DC_so, subset = seurat_clusters %in% c(0, 6, 7, 12)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d2_FRC_all_markers <- FindAllMarkers(d2_FRC_so) %>%
+  filter(p_val_adj < 0.01)
+d2_FRC_CD34pos_markers <- subset(d2_FRC_so, subset = seurat_clusters != 3) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+
+write_csv(d2_FRC_CD34pos_markers, paste(plots_folder, "d2/d2_FRCcd34pos_markers.csv", sep = ""))
+```
+
+```{r, CD45_d14}
+neg14_data <- Read10X("~/LEC_analysis/vaccinia_reanalysis/20200203/CD45neg_d14/filtered_feature_bc_matrix/")
+pos14_data <- Read10X("~/LEC_analysis/vaccinia_reanalysis/20200203/CD45pos_d14/filtered_feature_bc_matrix/")
+#saveRDS(d14_so, file = paste(so_folder, "d14_so.rds", sep = ""))
+#d14_so <- readRDS(file = paste(so_folder, "d14_so.rds", sep = ""))
+#d14_DC_so <- readRDS(file = paste(so_folder, "d14_DC_so.rds", sep = ""))
+
+neg14_mrna <- neg14_data$`Gene Expression`
+neg14_adt <- neg14_data$`Antibody Capture`
+neg14_so <- CreateSeuratObject(counts = neg14_mrna)
+neg14_so[['adt']] <- CreateAssayObject(counts = neg14_adt)
+
+pos14_mrna <- pos14_data$`Gene Expression`
+pos14_adt <- pos14_data$`Antibody Capture`
+pos14_so <- CreateSeuratObject(counts = pos14_mrna)
+pos14_so[['adt']] <- CreateAssayObject(counts = pos14_adt)
+
+d14_so <- merge(neg14_so, pos14_so)
+
+d14_so[["percent.mt"]] <- PercentageFeatureSet(d14_so, pattern = "^mt-")
+VlnPlot(d14_so, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+FeatureScatter(d14_so, feature1 = "nCount_RNA", feature2 = "percent.mt")
+FeatureScatter(d14_so, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+d14_so <- subset(d14_so, subset = percent.mt < 25 & nFeature_RNA > 100 & nFeature_RNA < 5000)
+
+d14_so <- NormalizeData(d14_so, normalization.method = "LogNormalize", scale.factor = 10000)
+d14_so <- FindVariableFeatures(d14_so, selection.method = "vst")
+
+d14_all.genes <- rownames(d14_so)
+d14_so <- ScaleData(d14_so, features = d14_all.genes)
+d14_so <- RunPCA(d14_so, features = VariableFeatures(object = d14_so))
+ElbowPlot(d14_so)
+
+d14_so <- FindNeighbors(d14_so, dims = 1:30)
+d14_so <- FindClusters(d14_so, resolution = 1.0)
+d14_so <- RunTSNE(d14_so, dims = 1:30)
+d14_so <- RunUMAP(d14_so, dims = 1:30)
+DimPlot(d14_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+#ggsave(paste(plots_folder, "cluster_umap_d14.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+
+d14_so <- NormalizeData(d14_so, assay = "adt", normalization.method = "CLR")
+d14_so <- ScaleData(d14_so, assay = "adt")
+
+d14_res1 <- clustify(
+      input = d14_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::immgen_ref,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d14_res1_type <- FetchData(d14_res1, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14_res1_type
+write_csv(d14_res1_type, paste(plots_folder, "d14/d14_corr_immgen.csv", sep = "")) 
+
+d14_res2 <- clustify(
+      input = d14_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::ref_tabula_muris_drop,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d14_res2_type <- FetchData(d14_res2, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14_res2_type
+write_csv(d14_res2_type, paste(plots_folder, "d14/d14_corr_tabmuris.csv", sep = "")) 
+
+d14.new.cluster.ids <- c("LEC", "LEC", "DC", "fibroblast", "DC", "DC", "DC", "DC", "LEC", "DC", "T cell", "LEC", "epithelial", "DC", "fibroblast", "NK", "B cell", "LEC", "fibroblast", "fibroblast", "fibroblast", "epithelial", "DC", "T cell", "fibroblast", "fibroblast")
+d14_so@meta.data$cell_type1 <- d14.new.cluster.ids[d14_so$seurat_clusters]
+DimPlot(d14_so, reduction = "umap", group.by = "cell_type1", label = F)
+FeaturePlot(d14_so, c("ovalbumin"))
+
+d14_celltype1 <- FetchData(d14_so, c("cell_type1", "ovalbumin", "unprotected-DNA", "protected-DNA"), slot = "counts") %>%
+  rownames_to_column(var = "cell_id") %>%
+  rename(ova = adt_ovalbumin) %>%
+  rename(P_DNA = "adt_unprotected-DNA") %>%
+  rename(Ps_DNA = "adt_protected-DNA")
+plot <- plot_activity(d14_celltype1, ova, group = cell_type1, vertical = F) +
+  scale_color_OkabeIto() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "counts", y = NULL) +
+  scale_x_log10()
+#ggsave(paste(plots_folder, "d14/ova_counts_celltype1_d14.pdf", sep = ""), plot + NoLegend(), width = 6, height = 4, units = c("in"), useDingbats = F)
+
+#sub-classify LEC cells
+d14_LEC_so <- subset(d14_so, subset = cell_type1 == "LEC")
+d14_LEC_all.genes <- rownames(d14_LEC_so)
+d14_LEC_so <- ScaleData(d14_LEC_so, features = d14_LEC_all.genes)
+d14_LEC_so <- FindVariableFeatures(object = d14_LEC_so)
+d14_LEC_so <- RunPCA(d14_LEC_so, features = VariableFeatures(object = d14_LEC_so))
+ElbowPlot(d14_LEC_so)
+
+d14_LEC_so <- FindNeighbors(d14_LEC_so, dims = 1:30)
+d14_LEC_so <- FindClusters(d14_LEC_so, resolution = 1.5)
+d14_LEC_so <- RunUMAP(d14_LEC_so, dims = 1:30)
+plot <- DimPlot(d14_LEC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+d14LEC_resLEC <- clustify(
+      input = d14_LEC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = mus_ref_LEC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d14LEC_resLEC_type <- FetchData(d14LEC_resLEC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14LEC_resLEC_type
+write_csv(d14LEC_resLEC_type, paste(plots_folder, "d14/d14_corr_LEC.csv", sep = "")) 
+
+d14LEC.new.cluster.ids <- c("Floor LECs", "Ceiling LECs", "Ceiling LECs", "Ceiling LECs", "Floor LECs", "BEC", "Floor LECs", "Medullary LECs", "Floor LECs", "Ceiling LECs", "BEC", "Ceiling LECs", "SC", "Ceiling LECs", "unassigned", "unassigned")
+d14_LEC_so@meta.data$cell_typeLEC <- d14LEC.new.cluster.ids[d14_LEC_so$seurat_clusters]
+plot <- DimPlot(d14_LEC_so, reduction = "umap", group.by = "cell_typeLEC")
+
+d14LEC.new.cluster.ids2 <- c("0-fLEC", "1-cLEC", "2-cLEC", "3-cLEC", "4-fLEC", "5-BEC", "6-fLEC", "7-mLEC", "8-fLEC", "9-cLEC", "10-BEC", "11-cLEC", "12-SC", "13-cLEC", "14-NA", "15-NA")
+d14_LEC_so@meta.data$cell_typeLEC2 <- d14LEC.new.cluster.ids2[d14_LEC_so$seurat_clusters]
+plot <- DimPlot(d14_LEC_so, reduction = "umap", group.by = "cell_typeLEC2")
+
+FeaturePlot(d14_LEC_so, c("Ackr4", "Nt5e", "Cav1", "Tnfrsf9", "Marco", "Lyve1", "Mfap4", "Cldn11"))
+plot <- VlnPlot(d14_LEC_so, features = c("Lyve1", "Itga2b", "Ackr4", "Cd44", "Glycam1", "Coch", "Anxa2", "Cd36", "Fabp4", "Ackr3", "Bgn", "Flrt2", "Il33", "Mrc1", "Marco", "Ptx3", "Kcnj8", "Itih5", "Pecam1", "Pdpn", "Prox1", "Flt4", "Madcam1", "Btnl9", "Pd11", "Spns2"), group.by = "cell_typeLEC2", ncol = 1)
+
+ggsave(paste(plots_folder, "d14/LEC_gex2_d14.pdf", sep = ""), plot, width = 6, height = 49, units = c("in"), useDingbats = F)
+#saveRDS(d14_LEC_so, file = paste(so_folder, "d14_LEC_so.rds", sep = ""))
+#d14_LEC_so <- readRDS(file = paste(so_folder, "d14_LEC_so.rds", sep = ""))
+
+#sub-classify DC cells
+d14_DC_so <- subset(d14_so, subset = cell_type1 == "DC")
+d14_DC_all.genes <- rownames(d14_DC_so)
+d14_DC_so <- ScaleData(d14_DC_so, features = d14_DC_all.genes)
+d14_DC_so <- FindVariableFeatures(object = d14_DC_so)
+d14_DC_so <- RunPCA(d14_DC_so, features = VariableFeatures(object = d14_DC_so))
+ElbowPlot(d14_DC_so)
+
+d14_DC_so <- FindNeighbors(d14_DC_so, dims = 1:30)
+d14_DC_so <- FindClusters(d14_DC_so, resolution = 1.5)
+d14_DC_so <- RunUMAP(d14_DC_so, dims = 1:30)
+plot <- DimPlot(d14_DC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+d14DC_resDC <- clustify(
+      input = d14_DC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lcDC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d14DC_resDC_type <- FetchData(d14DC_resDC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14DC_resDC_type
+write_csv(d14DC_resDC_type, paste(plots_folder, "d14/d14_corr_DC.csv", sep = "")) 
+
+d14DC_resDC_mig <- clustify(
+      input = d14_DC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_migDC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d14DC_resDC_mig_type <- FetchData(d14DC_resDC_mig, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14DC_resDC_mig_type
+
+#subclassify migratory DCs
+# find variable genes from data
+d14_DC_norm_data <- M3DropCleanData(as.matrix(d14_DC_so@assays$RNA@counts),
+                                   labels = rownames(d14_DC_so@assays$RNA@counts),
+                                   is.counts = TRUE,
+                                   suppress.plot = TRUE)
+d14_DC_fits <- M3DropDropoutModels(d14_DC_norm_data$data, suppress.plot = TRUE)
+d14_DC_markers_M3Drop <- M3DropDifferentialExpression(d14_DC_norm_data$data,
+                                                     mt_method = "fdr",
+                                                     mt_threshold = 0.01,
+                                                     suppress.plot = TRUE)
+d14_DC_markers <- d14_DC_markers_M3Drop$Gene
+
+d14_migDC_res <- clustify(
+  input = d14_DC_so,
+  cluster_col = "seurat_clusters",
+  ref_mat = ref_migDC,
+  query_genes = d14_DC_markers,
+  seurat_out = T, threshold = 0.5, verbose = T)
+d14_migDC_res_type <- FetchData(d14_migDC_res, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14_migDC_res_type
+write_csv(d14_migDC_res_type, paste(plots_folder, "d14/d14_corr_migDC.csv", sep = "")) 
+
+d14DC.new.cluster.ids <- c("cDC2 Tbet-", "cDC2 Tbet-", "cDC1", "CCR7hi mig cDC2", "cDC2 Tbet-", "Monocyte", "CCR7hi mig cDC2", "cDC2 Tbet-", "cDC1", "cDC2 Tbet+", "CCR7hi mig cDC1", "CCR7hi mig cDC2", "cDC1", "Siglec-H", "cDC2 Tbet-", "Monocyte", "Monocyte", "cDC2 Tbet-", "Monocyte", "cDC2 Tbet-")
+d14_DC_so@meta.data$cell_typeDC <- d14DC.new.cluster.ids[d14_DC_so$seurat_clusters]
+plot <- DimPlot(d14_DC_so, reduction = "umap", group.by = "cell_typeDC")
+
+d14DC.new.cluster.ids2 <- c("0-cDC2 Tbet-", "1-cDC2 Tbet-", "2-cDC1", "3-CCR7hi mig cDC2", "4-cDC2 Tbet-", "5-Monocyte", "6-CCR7hi mig cDC2", "7-cDC2 Tbet-", "8-cDC1", "9-cDC2 Tbet+", "10-CCR7hi mig cDC1", "11-CCR7hi mig cDC2", "12-cDC1", "13-Siglec-H", "14-cDC2 Tbet-", "15-Monocyte", "16-Monocyte", "17-cDC2 Tbet-", "18-Monocyte", "19-cDC2 Tbet-")
+d14_DC_so@meta.data$cell_typeDC2 <- d14DC.new.cluster.ids2[d14_DC_so$seurat_clusters]
+
+FeaturePlot(d14_DC_so, c("Itgax", "Itgam", "Xcr1", "Ccr7", "Tbx21", "Id2"))
+plot <- VlnPlot(d14_DC_so, features = c("Itgax", "Ccr7", "Xcr1", "Irf8", "Csf1r", "Fcgr3", "Cd209a", "Itgam", "Tbx21", "Siglech", "Tcf4", "Bst2", "Cd207", "Itgae", "Epcam"), group.by = "cell_typeDC2", ncol = 1)
+
+FetchData(d14_DC_so, c("seurat_clusters", "ovalbumin"), slot = "data") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = seurat_clusters, vertical = F) +
+  #scale_color_OkabeIto() +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "counts", y = NULL) +
+  scale_x_log10()
+ggsave(paste(plots_folder, "d14/DC_gex2_d14.pdf", sep = ""), plot, width = 8, height = 48, units = c("in"), useDingbats = F)
+#saveRDS(d14_DC_so, file = paste(so_folder, "d14_DC_so.rds", sep = ""))
+#d14_DC_so <- readRDS(file = paste(so_folder, "d14_DC_so.rds", sep = ""))
+
+#sub-classify FRC cells
+d14_FRC_so <- subset(d14_so, subset = cell_type1 == "fibroblast")
+d14_FRC_all.genes <- rownames(d14_FRC_so)
+d14_FRC_so <- ScaleData(d14_FRC_so, features = d14_FRC_all.genes)
+d14_FRC_so <- FindVariableFeatures(object = d14_FRC_so)
+d14_FRC_so <- RunPCA(d14_FRC_so, features = VariableFeatures(object = d14_FRC_so))
+ElbowPlot(d14_FRC_so)
+
+d14_FRC_so <- FindNeighbors(d14_FRC_so, dims = 1:30)
+d14_FRC_so <- FindClusters(d14_FRC_so, resolution = 1.5)
+d14_FRC_so <- RunUMAP(d14_FRC_so, dims = 1:30)
+plot <- DimPlot(d14_FRC_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+d14FRC_resFRC <- clustify(
+      input = d14_FRC_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lymphnodestromal,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d14FRC_resFRC_type <- FetchData(d14FRC_resFRC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14FRC_resFRC_type
+
+d14FRC.new.cluster.ids <- c("CD34+SC", "CD34+SC", "CD34+SC", "CD34+SC", "FDC", "unassigned", "Nr4a1+SC", "PvC", "CD34+SC", "Nr4a1+SC", "CD34+SC", "CD34+SC", "CD34+SC", "CD34+SC")
+d14_FRC_so@meta.data$cell_typeFRC <- d14FRC.new.cluster.ids[d14_FRC_so$seurat_clusters]
+plot <- DimPlot(d14_FRC_so, reduction = "umap", group.by = "cell_typeFRC")
+
+d14FRC.new.cluster.ids2 <- c("0-CD34+SC", "1-CD34+SC", "2-CD34+SC", "3-CD34+SC", "4-FDC", "5-unassigned", "6-Nr4a1+SC", "7-PvC", "8-CD34+SC", "9-Nr4a1+SC", "10-CD34+SC", "11-CD34+SC", "12-CD34+SC", "13-CD34+SC")
+d14_FRC_so@meta.data$cell_typeFRC2 <- d14FRC.new.cluster.ids2[d14_FRC_so$seurat_clusters]
+
+plot <- VlnPlot(d14_FRC_so, features = c("Pdpn", "Pdgfra", "Pdgfrb", "Cxcl13", "Ccl19", "Ccl21a", "Cxcl12", "Tnfsf13b", "Ch25h", "Cxcl9", "Cxcl10", "H2-Aa", "Tnfsf11", "Madcam1", "Enpp2", "Cd34", "Des", "Inmt", "Bst1", "Nr4a1", "Pthlh", "Pth1r", "Sox9", "Tmem119"), group.by = "cell_typeFRC2", ncol = 1)
+
+FetchData(d14_FRC_so, c("cell_typeFRC", "ovalbumin"), slot = "data") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_typeFRC, vertical = F) +
+  scale_color_OkabeIto() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "CLR normalized", y = NULL) +
+  scale_x_log10()
+#ggsave(paste(plots_folder, "d14/FRC_gex_d14.pdf", sep = ""), plot, width = 6, height = 49, units = c("in"), useDingbats = F)
+#saveRDS(d14_FRC_so, file = paste(so_folder, "d14_FRC_so.rds", sep = ""))
+#d14_FRC_so <- readRDS(file = paste(so_folder, "d14_FRC_so.rds", sep = ""))
+
+#include subclassification cell types
+d14_all_cells <- FetchData(d14_so, c("cell_type1")) %>%
+  rownames_to_column("cell_id")
+d14_LEC <- FetchData(d14_LEC_so, c("cell_typeLEC")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeLEC) %>%
+  filter(cell_type2 != "unassigned")
+d14_DC <- FetchData(d14_DC_so, c("cell_typeDC")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeDC)
+d14_FRC <- FetchData(d14_FRC_so, c("cell_typeFRC")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeFRC) %>%
+  filter(cell_type2 != "unassigned")
+d14_subset <- bind_rows(d14_LEC, d14_DC, d14_FRC)
+d14_celltype2 <- d14_all_cells %>%
+  left_join(d14_subset, by = "cell_id") %>%
+  mutate(cell_type2 = ifelse(is.na(cell_type2), cell_type1, cell_type2))
+d14_so@meta.data$cell_type2 <- d14_celltype2$cell_type2
+plot <- DimPlot(d14_so, reduction = "umap", group.by = "cell_type2", cols = colors)
+ggsave(paste(plots_folder, "d14/celltype2_d14.pdf", sep = ""), plot, width = 8, height = 4, units = c("in"), useDingbats = F)
+
+plot <- FetchData(d14_so, c("cell_type2", "ovalbumin"), slot = "data") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "CLR normalized", y = NULL) +
+  scale_x_log10()
+
+#ggsave(paste(plots_folder, "d14/ova_lognorm_celltype2_d14.pdf", sep = ""), plot + NoLegend(), width = 6, height = 4, units = c("in"), useDingbats = F)
+saveRDS(d14_so, file = paste(so_folder, "d14_so.rds", sep = ""))
+#d14_FRC_so <- readRDS(file = paste(so_folder, "d14_FRC_so.rds", sep = ""))
+
+#sub-classify epithelial cells
+d14_ep_so <- subset(d14_so, subset = cell_type1 == "epithelial")
+d14_ep_all.genes <- rownames(d14_ep_so)
+d14_ep_so <- ScaleData(d14_ep_so, features = d14_ep_all.genes)
+d14_ep_so <- FindVariableFeatures(object = d14_ep_so)
+d14_ep_so <- RunPCA(d14_ep_so, features = VariableFeatures(object = d14_ep_so))
+ElbowPlot(d14_ep_so)
+
+d14_ep_so <- FindNeighbors(d14_ep_so, dims = 1:30)
+d14_ep_so <- FindClusters(d14_ep_so, resolution = 1.5)
+d14_ep_so <- RunUMAP(d14_ep_so, dims = 1:30)
+DimPlot(d14_ep_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+
+d14ep_resLEC <- clustify(
+      input = d14_ep_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = mus_ref_LEC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d14ep_resLEC_type <- FetchData(d14ep_resLEC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14ep_resLEC_type
+
+d14ep_resDC <- clustify(
+      input = d14_ep_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lcDC,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d14ep_resDC_type <- FetchData(d14ep_resDC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14ep_resDC_type
+
+#subclassify migratory DCs
+# find variable genes from data
+d14_ep_norm_data <- M3DropCleanData(as.matrix(d14_ep_so@assays$RNA@counts),
+                                   labels = rownames(d14_ep_so@assays$RNA@counts),
+                                   is.counts = TRUE,
+                                   suppress.plot = TRUE)
+d14_ep_fits <- M3DropDropoutModels(d14_ep_norm_data$data, suppress.plot = TRUE)
+d14_ep_markers_M3Drop <- M3DropDifferentialExpression(d14_ep_norm_data$data,
+                                                     mt_method = "fdr",
+                                                     mt_threshold = 0.01,
+                                                     suppress.plot = TRUE)
+d14_ep_markers <- d14_ep_markers_M3Drop$Gene
+
+d14ep_migDC_res <- clustify(
+  input = d14_ep_so,
+  cluster_col = "seurat_clusters",
+  ref_mat = ref_migDC,
+  query_genes = d14_ep_markers,
+  seurat_out = T, threshold = 0.5, verbose = T)
+d14ep_migDC_res_type <- FetchData(d14ep_migDC_res, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14_migDC_res_type
+
+d14ep_resFRC <- clustify(
+      input = d14_ep_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lymphnodestromal,
+        seurat_out = T, threshold = 0.5, verbose = T)
+d14ep_resFRC_type <- FetchData(d14ep_resFRC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d14ep_resFRC_type
+
+#include subclassification cell types
+d14_all_cells <- FetchData(d14_so, c("cell_type1")) %>%
+  rownames_to_column("cell_id")
+d14_LEC <- FetchData(d14_LEC_so, c("cell_typeLEC", "cell_typeLEC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeLEC, cell_type3 = cell_typeLEC2) %>%
+  filter(cell_type2 != "unassigned")
+d14_DC <- FetchData(d14_DC_so, c("cell_typeDC", "cell_typeDC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeDC, cell_type3 = cell_typeDC2)
+d14_FRC <- FetchData(d14_FRC_so, c("cell_typeFRC", "cell_typeFRC2")) %>%
+  rownames_to_column("cell_id") %>%
+  rename(cell_type2 = cell_typeFRC, cell_type3 = cell_typeFRC2) %>%
+  filter(cell_type2 != "unassigned")
+d14_subset <- bind_rows(d14_LEC, d14_DC, d14_FRC)
+d14_celltype2 <- d14_all_cells %>%
+  left_join(d14_subset, by = "cell_id") %>%
+  mutate(cell_type2 = ifelse(is.na(cell_type2), cell_type1, cell_type2)) %>%
+  mutate(cell_type3 = ifelse(is.na(cell_type3), cell_type1, cell_type3))
+d14_so@meta.data$cell_type2 <- d14_celltype2$cell_type2
+d14_so@meta.data$cell_type3 <- d14_celltype2$cell_type3
+plot <- DimPlot(d14_so, reduction = "umap", group.by = "cell_type2", cols = colors)
+ggsave(paste(plots_folder, "d14/celltype2_d14.pdf", sep = ""), plot, width = 8, height = 4, units = c("in"), useDingbats = F)
+
+plot <- FetchData(d14_so, c("cell_type2", "ovalbumin"), slot = "data") %>%
+  rownames_to_column(var = "cell_id") %>%
+  plot_activity(adt_ovalbumin, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "CLR normalized", y = NULL) +
+  scale_x_log10()
+
+#ggsave(paste(plots_folder, "d14/ova_lognorm_celltype2_d14.pdf", sep = ""), plot + NoLegend(), width = 6, height = 4, units = c("in"), useDingbats = F)
+#saveRDS(d14_so, file = paste(so_folder, "d14_so.rds", sep = ""))
+#d14_so <- readRDS(file = paste(so_folder, "d14_so.rds", sep = ""))
+
+#normalize ova to reads/cell
+d14_ova_data <- FetchData(d14_so, c("cell_type2", "cell_type3", "nCount_RNA", "nCount_adt", "ovalbumin"), slot = "counts") %>%
+  rownames_to_column("cell_id") %>%
+  mutate(sample = ifelse(str_detect(cell_id, "_1"), 1, 
+                         ifelse(str_detect(cell_id, "_2"), 2, NA)))
+
+d14_ova_counts <- d14_ova_data %>%
+  group_by(sample) %>%
+  summarise(sum = sum(adt_ovalbumin))
+
+plot <- d14_ova_data %>%
+  plot_activity(adt_ovalbumin, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "counts", y = NULL) +
+  #facet_grid(~sample, scales = "fixed") +
+  scale_x_log10()
+
+#ova counts / RNA counts for each cell
+plot <- d14_ova_data %>%
+  mutate(ova_RNA = adt_ovalbumin / nCount_RNA) %>%
+  plot_activity(ova_RNA, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "ova count per RNA count", y = NULL) +
+  #facet_grid(~sample, scales = "fixed") +
+  scale_x_log10()
+
+#(ova counts / total ova counts in sample) / RNA counts for each cell
+plot <- d14_ova_data %>%
+  mutate(norm_ova = ifelse(str_detect(cell_id, "_1"), adt_ovalbumin / as.numeric(d14_ova_counts[1,2]),
+                          ifelse(str_detect(cell_id, "_2"), adt_ovalbumin / as.numeric(d14_ova_counts[2,2]), NA))) %>%
+  mutate(norm_ova_rna = norm_ova / nCount_RNA) %>%
+  plot_activity(norm_ova_rna, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "normalized ova per RNA count", y = NULL) +
+  #facet_grid(~sample, scales = "fixed") +
+  scale_x_log10()
+
+#ova counts / total ova counts in sample
+d14_ovanorm <- d14_ova_data %>%
+  mutate(norm_ova = ifelse(str_detect(cell_id, "_1"), adt_ovalbumin / as.numeric(d14_ova_counts[1,2]),
+                          ifelse(str_detect(cell_id, "_2"), adt_ovalbumin / as.numeric(d14_ova_counts[2,2]), NA)))
+  
+d14_ovanorm %>%  
+  plot_activity(norm_ova, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "normalized ova", y = NULL) +
+  facet_grid(~sample, scales = "fixed") +
+  scale_x_log10()
+
+#ova activity fold change plots
+#celltype
+d14_ova_bkgd <- d14_ovanorm %>%
+  filter(cell_type2 %in% c("T cell", "B cell")) %>%
+  group_by(sample) %>%
+  summarise(median = median(norm_ova), mean = mean(norm_ova))
+d14_ova_bkgdcorr <- d14_ovanorm %>%
+  mutate(norm_ova_med = ifelse(str_detect(cell_id, "_1"), norm_ova - as.numeric(d14_ova_bkgd[1,2]),
+                          ifelse(str_detect(cell_id, "_2"), norm_ova - as.numeric(d14_ova_bkgd[2,2]), NA))) %>%
+  mutate(norm_ova_mean = ifelse(str_detect(cell_id, "_1"), norm_ova - as.numeric(d14_ova_bkgd[1,3]),
+                          ifelse(str_detect(cell_id, "_2"), norm_ova - as.numeric(d14_ova_bkgd[2,3]), NA))) %>%
+  mutate(norm_ova_med_fc = ifelse(str_detect(cell_id, "_1"), norm_ova / as.numeric(d14_ova_bkgd[1,2]),
+                          ifelse(str_detect(cell_id, "_2"), norm_ova / as.numeric(d14_ova_bkgd[2,2]), NA))) %>%
+  mutate(norm_ova_mean_fc = ifelse(str_detect(cell_id, "_1"), norm_ova / as.numeric(d14_ova_bkgd[1,3]),
+                          ifelse(str_detect(cell_id, "_2"), norm_ova / as.numeric(d14_ova_bkgd[2,3]), NA)))
+
+plot <- d14_ova_bkgdcorr %>%
+  mutate(cell_type2 = fct_relevel(cell_type2, "epithelial", "B cell", "T cell", "NK", "fibroblast", "FDC", "PvC", "CD34+SC", "Nr4a1+SC", "Siglec-H", "cDC1", "Monocyte", "CCR7hi mig cDC2", "cDC2 Tbet+", "cDC2 Tbet-", "CCR7hi mig cDC1", "LEC", "SC", "BEC", "Floor LECs", "Ceiling LECs", "Medullary LECs")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type2, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  #facet_grid(~sample, scales = "fixed") +
+  scale_x_log10()
+
+#ova activity LEC clusters
+plot <- d14_ova_bkgdcorr %>%  
+  filter(cell_type3 %in% c("0-fLEC", "1-cLEC", "2-cLEC", "3-cLEC", "4-fLEC", "5-BEC", "6-fLEC", "7-mLEC", "8-fLEC", "9-cLEC", "10-BEC", "11-cLEC", "12-SC", "13-cLEC", "14-NA", "15-NA")) %>%
+  mutate(cell_type3 = fct_relevel(cell_type3, "15-NA", "14-NA", "12-SC", "10-BEC", "5-BEC", "4-fLEC", "0-fLEC", "6-fLEC", "8-fLEC", "11-cLEC", "9-cLEC", "3-cLEC", "2-cLEC", "1-cLEC", "13-cLEC", "7-mLEC")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type3, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  scale_x_log10()
+
+#ova activity DC clusters
+plot <- d14_ova_bkgdcorr %>%  
+  filter(cell_type3 %in% c("0-cDC2 Tbet-", "1-cDC2 Tbet-", "2-cDC1", "3-CCR7hi mig cDC2", "4-cDC2 Tbet-", "5-Monocyte", "6-CCR7hi mig cDC2", "7-cDC2 Tbet-", "8-cDC1", "9-cDC2 Tbet+", "10-CCR7hi mig cDC1", "11-CCR7hi mig cDC2", "12-cDC1", "13-Siglec-H", "14-cDC2 Tbet-", "15-Monocyte", "16-Monocyte", "17-cDC2 Tbet-", "18-Monocyte", "19-cDC2 Tbet-")) %>%
+  mutate(cell_type3 = fct_relevel(cell_type3, "13-Siglec-H", "12-cDC1", "8-cDC1", "2-cDC1", "15-Monocyte", "5-Monocyte", "18-Monocyte", "16-Monocyte", "11-CCR7hi mig cDC2", "3-CCR7hi mig cDC2", "6-CCR7hi mig cDC2", "9-cDC2 Tbet+", "4-cDC2 Tbet-",  "7-cDC2 Tbet-", "14-cDC2 Tbet-", "17-cDC2 Tbet-","19-cDC2 Tbet-", "1-cDC2 Tbet-", "0-cDC2 Tbet-", "10-CCR7hi mig cDC1")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type3, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  scale_x_log10()
+
+#ova activity FRC clusters
+plot <- d14_ova_bkgdcorr %>%  
+  filter(cell_type3 %in% c("0-CD34+SC", "1-CD34+SC", "2-CD34+SC", "3-CD34+SC", "4-FDC", "5-unassigned", "6-Nr4a1+SC", "7-PvC", "8-CD34+SC", "9-Nr4a1+SC", "10-CD34+SC", "11-CD34+SC", "12-CD34+SC", "13-CD34+SC")) %>%
+  mutate(cell_type3 = fct_relevel(cell_type3, "5-unassigned", "4-FDC", "7-PvC", "2-CD34+SC", "3-CD34+SC", "8-CD34+SC", "13-CD34+SC", "1-CD34+SC", "0-CD34+SC", "10-CD34+SC", "11-CD34+SC", "12-CD34+SC", "6-Nr4a1+SC", "9-Nr4a1+SC")) %>%
+  plot_activity(norm_ova_med_fc, group = cell_type3, vertical = F) +
+  scale_color_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  labs(x = "fold change", y = NULL) +
+  scale_x_log10()
+
+ggsave(paste(plots_folder, "d14/ova_LEC_d14.pdf", sep = ""), plot + NoLegend(), width = 8, height = 6, units = c("in"), useDingbats = F)
+
+#gene markers
+d14_markers <- FindAllMarkers(d14_so) %>%
+  filter(p_val_adj < 0.01)
+d14_LEC_all_markers <- FindAllMarkers(d14_LEC_so) %>%
+  filter(p_val_adj < 0.01)
+d14_LECsub_markers <- subset(d14_LEC_so, subset = seurat_clusters %in% c(0, 1, 2, 3, 4, 6, 7, 8, 9, 11, 13)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d14_cLEC_markers <- subset(d14_LEC_so, subset = seurat_clusters %in% c(1, 2, 3, 9, 11, 13)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d14_fLEC_markers <- subset(d14_LEC_so, subset = seurat_clusters %in% c(0, 4, 6, 8)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d14_BEC_markers <- subset(d14_LEC_so, subset = seurat_clusters %in% c(5, 10)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d14_DC_all_markers <- FindAllMarkers(d14_DC_so) %>%
+  filter(p_val_adj < 0.01)
+d14_cDC2tbetneg_markers <- subset(d14_DC_so, subset = seurat_clusters %in% c(0, 1, 4, 7, 9, 14, 17, 19)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d14_migcDC2_markers <- subset(d14_DC_so, subset = seurat_clusters %in% c(3, 6, 11)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d14_mono_markers <- subset(d14_DC_so, subset = seurat_clusters %in% c(5, 16, 18)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d14_cDC1_markers <- subset(d14_DC_so, subset = seurat_clusters %in% c(2, 8, 12)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d14_FRC_all_markers <- FindAllMarkers(d14_FRC_so) %>%
+  filter(p_val_adj < 0.01)
+d14_Nr4a1SC_markers <- subset(d14_FRC_so, subset = seurat_clusters %in% c(6, 9)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+d14_FRCcd34pos_markers <- subset(d14_FRC_so, subset = seurat_clusters %in% c(0, 1, 2, 3, 8, 10, 11, 12, 13)) %>%
+  FindAllMarkers() %>%
+  filter(p_val_adj < 0.01)
+
+write_csv(d14_FRCcd34pos_markers, paste(plots_folder, "d14/d14_FRCcd34pos_markers.csv", sep = ""))
+```
+```{r}
+FetchData(d14_so, c("seurat_clusters")) %>%
+  summarise(n = n())
+
+FetchData(d14_so, c("seurat_clusters")) %>%
+  group_by(seurat_clusters) %>%
+  summarise(n = n())
+
+FeaturePlot(d2_so, c("Xcr1"))
+DimPlot(d2_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+```
