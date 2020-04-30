@@ -1,0 +1,240 @@
+
+```{r "{{.y}} Setup", echo = F}
+
+rds_type <- "{{.x}}"
+rds_name <- "{{.y}}"
+
+sobj <- read_rds(str_c(params$rds_dir, "/", rds_name, "_so.rds"))
+
+cell_type_id <- str_c("cell_type", rds_type)
+cluster_id <- str_c("cell_type", rds_type, "2")
+
+```
+
+## **`r rds_name`**
+
+### Cell type markers {.tabset}
+
+```{r "{{.y}} Cell type markers", fig.width = 8.5, fig.height = 16, results = "asis"}
+
+# Cell type colors
+cell_types <- sobj@meta.data %>%
+  pull(!!sym(cell_type_id)) %>%
+  unique()
+
+names(cell_types) <- cell_types
+
+type_cols <- theme_cols
+names(type_cols) <- cell_types
+type_cols <- type_cols[!is.na(names(type_cols))]
+
+# Find all cell type markers
+Idents(sobj) <- sobj %>%
+  FetchData(cell_type_id)
+
+all_type_marks <- sobj %>%
+  FindAllMarkers(only.pos = T) %>%
+  as_tibble() %>%
+  filter(p_val_adj < 0.05)
+
+# Cell type UMAP
+type_umap <- sobj %>%
+  plot_features(
+    feature     = cell_type_id,
+    plot_cols   = type_cols,
+    feat_levels = names(type_cols)
+  ) +
+  guides(color = col_guide) +
+  blank_theme +
+  theme(
+    legend.position = "top",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 10)
+  )
+
+# Marker plots
+for (i in seq_along(type_cols)) {
+  cat("\n#### ", names(type_cols[i]), "\n", sep = "")
+
+  type_marks <- all_type_marks %>%
+    filter(cluster == names(type_cols[i]))
+
+  type_marks_fig <- sobj %>%
+    create_marker_fig(
+      input_markers = type_marks,
+      type_id       = cell_type_id,
+      input_umap    = type_umap,
+      umap_color    = type_cols[[i]],
+      box_colors    = type_cols
+    )
+
+  # type_marks %>%
+  #   kable() %>%
+  #   kable_styling(fixed_thead = T) %>%
+  #   print()
+
+  print(type_marks_fig)
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+}
+
+```
+
+### Cell cluster markers {.tabset}
+
+```{r "{{.y}} Cluster markers", fig.width = 8.5, fig.height = 16, results = "asis"}
+
+# Cell type colors
+cell_clusts <- sobj@meta.data %>%
+  mutate(
+    type_clust = str_extract(!!sym(cluster_id), "^[0-9]+"),
+    type_clust = as.numeric(type_clust)
+  ) %>%
+  arrange(!!sym(cell_type_id), type_clust) %>%
+  pull(!!sym(cluster_id)) %>%
+  unique()
+
+names(cell_clusts) <- cell_clusts
+
+clust_cols <- theme_cols
+names(clust_cols) <- cell_clusts
+clust_cols <- clust_cols[!is.na(names(clust_cols))]
+
+# Find all cell cluster markers
+Idents(sobj) <- sobj %>%
+  FetchData(cluster_id)
+
+all_clust_marks <- sobj %>%
+  FindAllMarkers(only.pos = T) %>%
+  as_tibble() %>%
+  filter(p_val_adj < 0.05)
+
+# Cluster UMAP
+clust_umap <- sobj %>%
+  plot_features(
+    feature     = cluster_id,
+    plot_cols   = clust_cols,
+    feat_levels = names(clust_cols)
+  ) +
+  guides(color = col_guide) +
+  blank_theme +
+  theme(
+    legend.position = "top",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 10)
+  )
+
+# Cluster plots
+for (i in seq_along(clust_cols)) {
+  cat("\n#### ", names(clust_cols[i]), "\n", sep = "")
+
+  clust_marks <- all_clust_marks %>%
+    filter(cluster == names(clust_cols[i]))
+
+  clust_marks_fig <- sobj %>%
+    create_marker_fig(
+      input_markers = clust_marks,
+      type_id       = cluster_id,
+      input_umap    = clust_umap,
+      umap_color    = clust_cols[[i]],
+      box_colors    = clust_cols
+    )
+
+  print(clust_marks_fig)
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+}
+
+```
+
+### Separate cell cluster markers
+
+```{r "{{.y}} Plot OVA counts", fig.width = 8.5, fig.height = 7}
+
+# Plot OVA counts
+ova_data <- sobj %>%
+  FetchData(c("adt_ovalbumin", cell_type_id, cluster_id)) %>%
+  as_tibble(rownames = "cell_id") %>%
+  mutate(!!sym(cluster_id) := fct_relevel(!!sym(cluster_id), rev(names(clust_cols))))
+  
+  # group_by(!!sym(cluster_id)) %>%
+  # mutate(med_ova = median(adt_ovalbumin)) %>%
+  # ungroup() %>%
+  # arrange(!!sym(cluster_id), med_ova) %>%
+  # mutate(!!sym(cluster_id) := fct_inorder(!!sym(cluster_id)))
+  # pull(!!sym(cluster_id)) %>%
+  # unique()
+  
+ova_data %>%
+  ggplot(aes(!!sym(cluster_id), adt_ovalbumin, color = !!sym(cluster_id))) +
+  geom_quasirandom(size = 1) +
+  scale_color_manual(values = clust_cols) +
+  coord_flip() +
+  theme_info +
+  theme(
+    legend.position = "none",
+    axis.title.y = element_blank()
+  )
+
+```
+
+### {.tabset}
+
+```{r "{{.y}} Separate cluster markers", fig.width = 8.5, fig.height = 16, results = "asis"}
+
+# Find cluster markers separately for each cell type
+sep_clust_marks <- cell_types %>%
+  map(find_sep_clust_markers, sobj) %>%
+  compact() %>%
+  bind_rows()
+
+sep_clusts <- sep_clust_marks$cluster %>%
+  unique()
+
+sep_clusts <- clust_cols[names(clust_cols) %in% sep_clusts] %>%
+  names()
+
+# Cluster plots
+for (i in seq_along(sep_clusts)) {
+  cat("\n#### ", sep_clusts[i], "\n", sep = "")
+  
+  sep_marks <- sep_clust_marks %>%
+    filter(cluster == sep_clusts[i])
+  
+  type <- sep_clusts[i] %>%
+    str_remove("^[0-9]+-")
+  
+  sep_cols <- clust_cols[grepl(str_c("-", type), names(clust_cols))]
+  sep_cols <- c( "Other" = "#f0f0f0", sep_cols)
+  
+  sep_clust_umap <- sobj %>%
+    FetchData(c("UMAP_1", "UMAP_2", cell_type_id, cluster_id)) %>%
+    as_tibble(rownames = "cell_id") %>%
+    mutate(!!sym(cluster_id) := if_else(!!sym(cell_type_id) != type, "Other", !!sym(cluster_id))) %>%
+    plot_features(
+      feature     = cluster_id,
+      plot_cols   = sep_cols,
+      feat_levels = names(sep_cols)
+    ) +
+    guides(color = col_guide) +
+    blank_theme +
+    theme(
+      legend.position = "top",
+      legend.title    = element_blank(),
+      legend.text     = element_text(size = 10)
+    )
+  
+  sep_clust_marks_fig <- sobj %>%
+    create_marker_fig(
+      input_markers = sep_marks,
+      type_id       = cluster_id,
+      input_umap    = sep_clust_umap,
+      umap_color    = sep_cols[sep_clusts[i]],
+      box_colors    = sep_cols,
+      cell_type     = type
+    )
+  
+  print(sep_clust_marks_fig)
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+}
+
+```
+
