@@ -82,7 +82,8 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
     scale_color_manual(values = box_cols) +
     theme_info +
     theme(
-      plot.margin      = unit(c(2, 0.2, 0.2, 0.2), "cm"),
+      plot.margin      = unit(c(1.8, 0.2, 0.2, 0.2), "cm"),
+      panel.spacing.x  = unit(0.7, "cm"),
       strip.background = element_blank(),
       strip.text       = element_text(size = 13),
       legend.position  = "none",
