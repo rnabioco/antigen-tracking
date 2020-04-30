@@ -1,0 +1,427 @@
+
+```{r "Functions", echo = F}
+
+# Functions
+
+# Load packages
+install_packages <- function(install_list, name_list = NULL, 
+                             install_cmd = "utils::install.packages", ...) {
+  
+  # If using devtools::install_github(), the package name will be different 
+  # from the repository name in install_list
+  if (is.null(name_list)) {
+    name_list <- install_list
+  }
+  
+  # Install packages
+  for (i in seq_along(install_list)) {
+    # require() returns TRUE invisibly if it was able to load package
+    if (!require(name_list[i], character.only = T)) {
+      
+      install_pkg <- strsplit(install_cmd, "::")[[1]][1]
+      
+      if (!require(install_pkg, character.only = T)) {
+        install.packages(install_pkg, dependencies = T, ...)
+        require(install_pkg)
+      }
+      
+      install_cmd <- paste0(install_cmd, "(install_list[i], ...)")
+      eval(parse(text = install_cmd))
+      
+      require(name_list[i], character.only = T)
+    }
+  }
+}
+
+# Fade input colors
+fade_colors <- function(cols_in, hue_frac = 0.4) {
+  
+  res <- cols_in %>%
+    map_chr(~ {
+      c_mat <- rgb2hsv(col2rgb(.x)) * matrix(c(1, hue_frac, 1))
+      hsv(c_mat[1, ], c_mat[2, ], c_mat[3, ])
+    })
+  
+  res
+}
+
+# Write table
+write_table <- function(df_in, file_name, out_dir, ...) {
+  
+  file_path <- file_name %>%
+    create_link(...) %>%
+    basename() %>%
+    file.path(out_dir, .)
+  
+  df_in %>%
+    write_tsv(
+      path = file_path,
+      col_names = T
+    )
+}
+
+# Overlay feature data on UMAP or tSNE
+# Cannot change number of columns when using FeaturePlot with split.by
+plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size = 0.25,
+                          split_id = NULL, plot_cols = c("#fafafa", "#e31a1c"),
+                          feat_levels = NULL, split_levels = NULL, min_pct = NULL, 
+                          max_pct = NULL, calc_cor = F, lab_size = 3.7, short_feat_name = T,
+                          lab_pos = c(0.8, 0.9), lm_line = F, show_title = F, ...) {
+  
+  # Format imput data
+  counts <- sobj_in
+  short_feat <- feature
+  
+  if (short_feat_name) {
+    short_feat <- feature %>%
+      str_remove("\\-[A-Z][0-9]{4}$")
+  }
+  
+  if ("Seurat" %in% class(sobj_in)) {
+    vars <- c(x, y, feature)
+    
+    if (!is.null(split_id)) {
+      vars <- c(vars, split_id)
+    }
+
+    counts <- sobj_in %>%
+      FetchData(vars = vars) %>%
+      as_tibble(rownames = "cell_ids")
+  }
+  
+  counts <- counts %>%
+    rename(!!sym(short_feat) := !!sym(feature))
+  
+  # Rename features
+  if (!is.null(names(feature))) {
+    names(short_feat) <- names(feature)
+    
+    counts <- counts %>%
+      rename(!!!syms(short_feat))
+    
+    short_feat <- names(short_feat)
+  }
+  
+  if (!is.null(names(x))) {
+    counts <- counts %>%
+      rename(!!!syms(x))
+    
+    x <- names(x)
+  }
+  
+  if (!is.null(names(y))) {
+    counts <- counts %>%
+      renames(!!!syms(y))
+    
+    y <- names(y)
+  }
+  
+  if (show_title) {    
+    counts <- counts %>%
+      gather(key, value, !!sym(short_feat))
+
+    short_feat <- "value"
+  }
+  
+  # Set min and max values for feature
+  if (!is.null(min_pct) || !is.null(max_pct)) {
+    counts <- counts %>%
+      mutate(
+        pct_rank = percent_rank(!!sym(short_feat)),
+        max_val  = ifelse(pct_rank > max_pct, !!sym(short_feat), NA),
+        max_val  = min(max_val, na.rm = T),
+        min_val  = ifelse(pct_rank < min_pct, !!sym(short_feat), NA),
+        min_val  = max(min_val, na.rm = T),
+        value    = ifelse(!!sym(short_feat) > max_val, max_val, !!sym(short_feat)),
+        value    = ifelse(!!sym(short_feat) < min_val, min_val, !!sym(short_feat))
+      )
+  }
+
+  # Set feature order
+  if (!is.null(feat_levels)) {
+    counts <- counts %>%
+      mutate(!!sym(short_feat) := fct_relevel(!!sym(short_feat), feat_levels))
+  }
+  
+  # Set facet order
+  if (!is.null(split_id)) {
+    counts <- counts %>%
+      rename(split_id = !!sym(split_id))
+    
+    if (!is.null(split_levels)) {
+      counts <- counts %>%
+        mutate(split_id = fct_relevel(split_id, split_levels))
+    }
+  }
+  
+  # Calculate correlation
+  if (calc_cor) {
+    if (!is.null(split_id)) {
+      counts <- counts %>%
+        group_by(!!sym(split_id))
+    }
+    
+    counts <- counts %>%
+      mutate(
+        cor_lab = cor(!!sym(x), !!sym(y)),
+        cor_lab = round(cor_lab, digits = 2),
+        cor_lab = str_c("r = ", cor_lab),
+        min_x   = min(!!sym(x)),
+        max_x   = max(!!sym(x)),
+        min_y   = min(!!sym(y)),
+        max_y   = max(!!sym(y)),
+        lab_x   = (max_x - min_x) * lab_pos[1] + min_x,
+        lab_y   = (max_y - min_y) * lab_pos[1] + min_y
+      )
+  }
+  
+  # Create scatter plot
+  res <- counts %>%
+    arrange(!!sym(short_feat)) %>%
+    ggplot(aes(!!sym(x), !!sym(y), color = !!sym(short_feat))) +
+    geom_point(size = pt_size)
+  
+  # Add regression line
+  if (lm_line) {
+    res <- res +
+      geom_smooth(method = "lm", se = F, color = "black", size = 0.5, linetype = 2)
+  }
+  
+  # Add correlation coefficient label
+  if (calc_cor) {
+    res <- res +
+      geom_text(
+        aes(x = lab_x, lab_y, label = cor_lab),
+        color = "black",
+        size  = lab_size,
+        check_overlap = T, 
+        show.legend = F
+      )
+  }
+  
+  # Show facet-style title
+  if (show_title) {
+    res <- res +
+      facet_wrap(~ key, scales = "free") +
+      theme(legend.title = element_blank())
+  }
+  
+  # Set feature colors
+  if (is.numeric(counts[[short_feat]])) {
+    res <- res +
+      scale_color_gradient(low = plot_cols[1], high = plot_cols[2])
+
+  } else {
+    res <- res +
+      scale_color_manual(values = plot_cols)
+  }
+
+  # Split plot into facets
+  if (!is.null(split_id)) {
+    res <- res +
+      facet_wrap(~ split_id, ...)
+  }
+  
+  res
+}
+
+# Run gprofiler
+run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL,
+                          dbases = c("GO:BP", "GO:MF", "GO:CC", "KEGG"), ...) {
+  
+  # Check for empty gene list
+  if (is_empty(gene_list)) {
+    return(NULL)
+  }
+  
+  # Check arguments
+  if (is.null(genome) && is.null(gmt_id)) {
+    stop("ERROR: Must specifiy genome or gmt_id")
+  }
+  
+  # Retrieve organism name for gProfileR
+  if (!is.null(genome)){
+    genomes <- list(
+      GRCm = "mmusculus",
+      GRCh = "hsapiens",
+      BDGP = "dmelanogaster"
+    )
+    
+    org <- genome %>% 
+      str_remove("[0-9]+$") %>%
+      genomes[[.]]
+  }
+  
+  if (!is.null(gmt_id)) {
+    org <- gmt_id
+    dbases <- NULL
+  }
+  
+  # Run gProfileR
+  res <- gene_list %>%
+    gost(
+      organism     = org,
+      sources      = dbases,
+      domain_scope = "annotated",
+      ...
+    )
+    
+  # Format and sort output data.frame
+  res <- res$result %>%
+    as_tibble() %>%
+    arrange(source, p_value)
+  
+  res
+}
+
+# Create GO bubble plot
+create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
+                           id_col = "term_name") {
+  
+  GO_df <- GO_df %>%
+    mutate(term_id = !!sym(id_col))
+  
+  # Check for empty inputs
+  if (is_empty(GO_df) || nrow(GO_df) == 0) {
+    res <- ggplot() +
+      theme_void() +
+      ggtitle("No gene ontology terms were identified.") +
+      theme(
+        plot.margin = unit(c(4, 0.2, 0.2, 0.2), "cm"),
+        plot.title  = element_text(hjust = 0.5)
+      )
+    
+    return(res)
+  }
+  
+  # Shorten GO terms and database names
+  GO_data <- GO_df %>%
+    mutate(
+      term_id = str_trunc(term_id, 20, "right"),
+      source = fct_recode(source,
+        "Biological\nProcess" = "GO:BP",
+        "Cellular\nComponent" = "GO:CC",
+        "Molecular\nFunction" = "GO:MF",
+        "KEGG"                = "KEGG"
+      )
+    )
+  
+  # Reorder database names
+  plot_levels <- c(
+    "Biological\nProcess",
+    "Cellular\nComponent",
+    "Molecular\nFunction",
+    "KEGG"
+  )
+  
+  GO_data <- GO_data %>%
+    mutate(source = fct_relevel(source, plot_levels))
+  
+  # Extract top 10 terms for each database
+  top_GO <- GO_data %>%
+    group_by(source) %>%
+    arrange(p_value) %>%
+    dplyr::slice(1:10) %>%
+    ungroup()
+  
+  # Create bubble plots
+  res <- GO_data %>%
+    ggplot(aes(1.25, -log10(p_value), color = source, size = intersection_size)) +
+    geom_point(alpha = 0.5, show.legend = F) +
+    geom_text_repel(
+      aes(2, -log10(p_value), label = term_id),
+      data         = top_GO,
+      size         = 3,
+      direction    = "y",
+      hjust        = 0,
+      segment.size = NA
+    ) +
+    scale_color_manual(values = plot_colors) +
+    xlim(1, 8) +
+    labs(y = "-log10(p-value)") +
+    theme_info +
+    theme(
+      legend.position = "none",
+      axis.title.x    = element_blank(),
+      axis.text.x     = element_blank(),
+      axis.ticks.x    = element_blank()
+    ) +
+    facet_wrap(~ source, scales = "free", nrow = 1)
+  
+  res
+}
+
+```
+
+```{r "Load_packages", include = F}
+
+# Default chunk options
+knitr::opts_chunk$set(message = F, warning = F)
+
+# Load packages
+R_packages <- c(
+  "tidyverse",  "Matrix",
+  "devtools",   "circlize",
+  "stringr",    "knitr",
+  "cowplot",    "ComplexHeatmap",
+  "Seurat",     "gprofiler2",
+  "ggrepel",    "RColorBrewer",
+  "clustifyr",  "KEGGREST",
+  "R.utils",    "destiny",
+  "gam",        "future",
+  "ggridges",   "colorblindr",
+  "ggbeeswarm", "kableExtra"
+)
+
+install_packages(R_packages)
+
+install_packages(
+  install_list = "clauswilke/colorblindr",
+  name_list    = "colorblindr",
+  install_cmd  = "devtools::install_github" 
+)
+
+install_packages(
+  install_list = "biomaRt",
+  install_cmd  = "BiocManager::install"
+)
+
+# Theme info
+theme_info <- theme_cowplot() +
+  theme(
+    plot.title       = element_text(face = "plain", size = 20),
+    strip.background = element_rect(fill = "#fafafa"),
+    strip.text       = element_text(face = "plain")
+  )
+
+umap_theme <- theme_info +
+  theme(
+    axis.text  = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+blank_theme <- umap_theme +
+  theme(
+    axis.line  = element_blank(),
+    axis.title = element_blank()
+  )
+
+# Create color palette
+theme_cols <- c(
+  "#225ea8",  # blue
+  "#e31a1c",  # red
+  "#238443",  # green
+  "#ec7014",  # orange
+  "#6a51a3",  # purple
+  "#c51b7d",  # pink
+  "#41b6c4",  # aqua
+  "#01665e"   # teal
+)
+
+theme_cols <- theme_cols %>%
+  fade_colors() %>%
+  c(theme_cols[1:5], "#8c510a", "#fec44f", theme_cols[6:8], "#737373", "#000000", .)
+
+col_guide <- guide_legend(override.aes = list(size = 3))
+
+```
