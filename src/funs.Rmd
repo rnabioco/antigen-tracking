@@ -317,17 +317,17 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
   GO_data <- GO_data %>%
     mutate(source = fct_relevel(source, plot_levels))
   
-  # Extract top 10 terms for each database
+  # Extract top 8 terms for each database
   top_GO <- GO_data %>%
     group_by(source) %>%
     arrange(p_value) %>%
-    dplyr::slice(1:10) %>%
+    dplyr::slice(1:8) %>%
     ungroup()
   
   # Create bubble plots
   res <- GO_data %>%
-    ggplot(aes(1.25, -log10(p_value), color = source, size = intersection_size)) +
-    geom_point(alpha = 0.5, show.legend = F) +
+    ggplot(aes(1.25, -log10(p_value), size = intersection_size)) +
+    geom_point(color = plot_colors, alpha = 0.5, show.legend = F) +
     geom_text_repel(
       aes(2, -log10(p_value), label = term_id),
       data         = top_GO,
@@ -336,7 +336,6 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
       hjust        = 0,
       segment.size = NA
     ) +
-    scale_color_manual(values = plot_colors) +
     xlim(1, 8) +
     labs(y = "-log10(p-value)") +
     theme_info +
@@ -351,26 +350,59 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
   res
 }
 
+# Plot percentage of cells in given groups
+plot_cell_count <- function(sobj_in, group_id = "type", split_id = "orig.ident",
+                            fill_id = "type", plot_colors = theme_cols,
+                            x_lab = "Cell type", y_lab = "Fraction of cells",
+                            bar_pos = "fill", ...) {
+  
+  res <- sobj_in@meta.data %>%
+    rownames_to_column("cell_ids") %>%
+    mutate(
+      group_id := !!sym(group_id),
+      fill_id  := !!sym(fill_id)
+    )
+  
+  if (!is.null(split_id)) {
+    res <- res %>%
+      mutate(split_id := !!sym(split_id))
+  }
+  
+  res <- res %>%
+    mutate(fill_id = fct_reorder(fill_id, cell_ids, n_distinct)) %>%
+    ggplot(aes(group_id, fill = fill_id)) +
+    geom_bar(position = bar_pos, size = 1.5) +
+    scale_fill_manual(values = plot_colors) +
+    labs(x = x_lab, y = y_lab) +
+    theme_info
+
+  if (!is.null(split_id)) {
+    res <- res +
+      facet_wrap(~ split_id, ...)
+  }
+  
+  res
+}
+
 ```
 
 ```{r "Load_packages", include = F}
 
 # Default chunk options
-knitr::opts_chunk$set(message = F, warning = F)
+knitr::opts_chunk$set(message = F, warning = F, cache = T)
 
 # Load packages
 R_packages <- c(
-  "tidyverse",  "Matrix",
-  "devtools",   "circlize",
-  "stringr",    "knitr",
-  "cowplot",    "ComplexHeatmap",
-  "Seurat",     "gprofiler2",
-  "ggrepel",    "RColorBrewer",
-  "clustifyr",  "KEGGREST",
-  "R.utils",    "destiny",
-  "gam",        "future",
-  "ggridges",   "colorblindr",
-  "ggbeeswarm", "kableExtra"
+  "tidyverse", "Matrix",
+  "devtools",  "circlize",
+  "stringr",   "knitr",
+  "cowplot",   "ComplexHeatmap",
+  "Seurat",    "gprofiler2",
+  "ggrepel",   "RColorBrewer",
+  "clustifyr", "KEGGREST",
+  "R.utils",   "colorblindr",
+  "ggridges",  "kableExtra",
+  "ggbeeswarm"
 )
 
 install_packages(R_packages)
