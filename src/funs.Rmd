@@ -295,6 +295,7 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
     mutate(
       term_id = str_remove(term_id, "(GO|KEGG):"),
       term_id = str_c(term_id, " ", !!sym(id_col)),
+      term_id = str_to_lower(term_id),
       term_id = str_trunc(term_id, 30, "right"),
       source = fct_recode(source,
         "Biological\nProcess" = "GO:BP",
@@ -462,7 +463,7 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
   # Create boxplots
   res <- box_data %>%
     ggplot(aes(!!sym(type_id), Counts, color = !!sym(type_id))) + 
-    facet_wrap(~ key, nrow = 2, scales = "free") +
+    facet_wrap(~ key, nrow = 2) +
     scale_color_manual(values = box_cols) +
     theme_info +
     theme(
@@ -474,22 +475,24 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
       legend.title     = element_blank(),
       legend.text      = element_text(size = 10),
       axis.title.x     = element_blank(),
-      axis.text.x      = element_blank(),
-      axis.ticks.x     = element_blank(),
       axis.title.y     = element_text(size = 13),
+      axis.text.x      = element_blank(),
+      axis.text.y      = element_text(size = 8),
+      axis.ticks.x     = element_blank(),
       axis.line.x      = element_blank()
     )
   
   if (n_type < 9) {
     res <- res +
-      geom_quasirandom(size = 0.3) +
-      theme(axis.text.y = element_text(size = 8))
+      geom_quasirandom(size = 0.3)
     
   } else {
     res <- res +
-      geom_boxplot(aes(fill = !!sym(type_id)), size = 0.3, color = "white", outlier.color = "#f0f0f0", outlier.size = 0.25) +
-      scale_fill_manual(values = box_cols) +
-      theme(axis.text.y = element_text(size = 6))
+      geom_boxplot(aes(fill = !!sym(type_id), color = !!sym(type_id)), size = 0, outlier.color = "#f0f0f0", outlier.size = 0.25) +
+      stat_summary(fun = "median", geom = "point", shape = 22, size = 1, fill = "white") +
+      scale_fill_manual(values = box_cols)
+      # theme(axis.text.y = element_text(size = 6))
+      # geom_boxplot(aes(fill = !!sym(type_id)), size = 0.3, color = "white", outlier.color = "#f0f0f0", outlier.size = 0.25) +
       # stat_summary(fun = "median", geom = "point", shape = 21, size = 1, color = "white", fill = "white")
       # geom_boxplot(aes(fill = !!sym(type_id)), size = 0.2, color = "white", outlier.color = "#f0f0f0", outlier.size = 0.25) +
   }

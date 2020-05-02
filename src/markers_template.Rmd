@@ -61,7 +61,7 @@ ova_data %>%
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing all cell types. Gene expression signal is shown for the top maker genes for each cell type (top, middle). GO terms were identified for marker genes. The top 8 terms are labeled (bottom).
+Marker genes were identified by comparing all cell types. Gene expression signal is shown for the top maker genes for each cell type (top, middle). GO terms were identified for marker genes, the top 8 terms are labeled (bottom).
 ```{r "{{.y}} Cell type markers", fig.width = 8.5, fig.height = 13, results = "asis"}
 
 # Find all cell type markers
@@ -162,7 +162,7 @@ ova_data %>%
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing all clusters. Gene expression signal is shown for the top maker genes for each cluster (top, middle). GO terms were identified for marker genes. The top 8 terms are labeled (bottom).
+Marker genes were identified by comparing all clusters. Gene expression signal is shown for the top maker genes for each cluster (top, middle). GO terms were identified for marker genes, the top 8 terms are labeled (bottom).
 ```{r "{{.y}} Cluster markers", fig.width = 8.5, fig.height = 13, results = "asis"}
 
 # Find all cell cluster markers
@@ -249,7 +249,7 @@ ova_data %>%
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by splitting the cells based on cell type and comparing the clusters for each cell type. Gene expression signal is shown for the top maker genes for each cell type cluster (top, middle). GO terms were identified for marker genes. The top 8 terms are labeled (bottom).
+Marker genes were identified by splitting the cells based on cell type and comparing the clusters for each cell type. Gene expression signal is shown for the top maker genes for each cell type cluster (top, middle). GO terms were identified for marker genes, the top 8 terms are labeled (bottom).
 ```{r "{{.y}} Cell type cluster markers", fig.width = 8.5, fig.height = 13, results = "asis"}
 
 # Find cluster markers separately for each cell type
@@ -434,7 +434,7 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing all ovalbumin groups. Gene expression signal is shown for the top maker genes for each group (top, middle). GO terms were identified for marker genes. The top 8 terms are labeled (bottom).
+Marker genes were identified by comparing all ovalbumin groups. Gene expression signal is shown for the top maker genes for each group (top, middle). GO terms were identified for marker genes, the top 8 terms are labeled (bottom).
 ```{r "{{.y}} OVA cluster markers", fig.width = 8.5, fig.height = 13, results = "asis"}
 
 # OVA markers
