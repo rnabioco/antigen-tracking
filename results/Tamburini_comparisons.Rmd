@@ -1,0 +1,189 @@
+---
+title: "Tamburini AVID-seq"
+author: "Ryan Sheridan"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    df_print: "paged"
+    code_folding: "hide"
+    self_contained: true
+    highlight: "kate"
+params:
+  template_dir: "../src"
+  rds_dir: "Shannons_sobjs"
+  comparisons:
+    value:
+      - ["d2_DC", "d14_DC"]
+      - ["d2_LEC", "d14_LEC"]
+      - ["d2_FRC", "d14_FRC"]
+---
+
+---
+
+<br>
+
+<br>
+
+`r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
+
+```{r "Run markers chunks", echo = F}
+
+rds_df <- expand.grid(params$time_point, params$cell_types)
+rds_df <- rds_df[file.exists(str_c(params$rds_dir, "/", rds_df$Var1, "_", rds_df$Var2, "_so.rds")), ]
+
+rds_types <- rds_df$Var2
+
+rds_names <- rds_df %>%
+  unite(rds_names, Var1, Var2) %>%
+  pull(rds_names)
+
+mark_chunks <- map2(rds_types, rds_names, ~ {
+  knit_expand(str_c(params$template_dir, "/markers_template.Rmd"))
+})
+
+```
+
+`r knit_child(text = mark_chunks)`
+
+
+```{r "LOAD AND INTEGRATE", eval = F, echo = F}
+
+comparison <- params$comparisons[[1]]
+
+# Load Seurat objects
+rds_files <- str_c(comparison, "_so.rds") %>%
+  file.path(params$rds_dir, .)
+
+names(rds_files) <- comparison
+
+sobjs <- rds_files %>%
+  map(read_rds)
+
+# Add orig.ident and cell_type to meta.data
+sobjs <- sobjs %>%
+  imap(AddMetaData, "orig.ident") %>%
+  imap(~ {
+    col_id <- .y %>%
+      str_extract("[A-Z]+$") %>%
+      str_c("cell_type", .)
+    
+    .x %>%
+      FetchData(col_id) %>%
+      AddMetaData(
+        object   = .x,
+        metadata = .,
+        col.name = "cell_type"
+      )
+  })
+
+# Merge objects and run PCA, UMAP, clustering
+sobj_merge <- sobjs %>%
+  merge_sobj(sample_order = names(sobjs)) %>%
+  cluster_RNA(resolution = 0.6) %>%
+  AddMetaData(
+    metadata = Embeddings(., reduction = "umap"),
+    col.name = c("UMAP_1", "UMAP_2")
+  )
+
+# Integrate samples
+sobj_intg <- sobj_merge %>%
+  SplitObject(split.by = "orig.ident") %>%
+  map(FindVariableFeatures) %>%
+  FindIntegrationAnchors(dims = 1:40) %>%
+  IntegrateData(dims = 1:40) %>%
+  ScaleData(assay = "integrated") %>%
+  cluster_RNA(
+    assay      = "integrated",
+    resolution = 1,
+    features   = rownames(.),
+    prefix     = "int_"
+  ) %>%
+  AddMetaData(
+    metadata = Embeddings(., reduction = "int_umap"),
+    col.name = c("int_UMAP_1", "int_UMAP_2")
+  )
+
+```
+
+```{r "INTEGRATED UMAPS"}
+
+# Prepare data for UMAPs
+umap_data <- sobj_intg %>%
+  FetchData(c(
+    "orig.ident", "cell_type",
+    "UMAP_1",     "UMAP_2", 
+    "int_UMAP_1", "int_UMAP_2",
+    "integrated_clusters"
+  )) %>%
+  as_tibble(rownames = "cell_id") %>%
+  pivot_longer(
+    cols      = c(UMAP_1, UMAP_2, int_UMAP_1, int_UMAP_2), 
+    names_to  = "UMAP_key", 
+    values_to = "UMAP_coords"
+  ) %>%
+  mutate(
+    UMAP_type = if_else(
+      str_detect(UMAP_key, "^UMAP"), 
+      "RNA",
+      str_extract(UMAP_key, "^[a-zA-Z]+")
+    ),
+    UMAP_key = if_else(
+      str_detect(UMAP_key, "^UMAP"),
+      UMAP_key, 
+      str_remove(UMAP_key, "^[a-zA-Z]+_")
+    ),
+    UMAP_type = if_else(UMAP_type == "int", "Integrated", UMAP_type)
+  ) %>%
+  pivot_wider(names_from = UMAP_key, values_from = UMAP_coords)
+
+# Create UMAPs
+sam_umap <- umap_data %>%
+  plot_features(
+    feature = "orig.ident",
+    split_id = "UMAP_type",
+    plot_cols = theme_cols,
+    feat_levels = names(sobjs),
+    split_levels = c("RNA", "Integrated")
+  ) +
+  guides(color = col_guide) +
+  blank_theme +
+  theme(legend.title = element_blank())
+  
+clust_umap <- umap_data %>%
+  plot_features(
+    feature = "integrated_clusters",
+    split_id = "UMAP_type",
+    plot_cols = theme_cols,
+    split_levels = c("RNA", "Integrated")
+  ) +
+  guides(color = col_guide) +
+  blank_theme +
+  theme(
+    strip.background = element_blank(),
+    strip.text       = element_blank(),
+    legend.title     = element_blank()
+  )
+
+# Create final figure
+plot_grid(
+  sam_umap, clust_umap,
+  nrow  = 2,
+  align = "vh",
+  axis  = "trbl"
+)
+
+```
+
+```{r}
+
+
+```
+
+
+
+
+
+

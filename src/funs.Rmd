@@ -60,6 +60,216 @@ write_table <- function(df_in, file_name, out_dir, ...) {
     )
 }
 
+# Import matrices and create Seurat object
+create_sobj <- function(matrix_dir, proj_name, hash_ids = NULL,
+                        gene_min = 250, gene_max = 5000, mito_max = 15, ...) {
+  
+  # Load matrices
+  mat_list <- Read10X(matrix_dir)
+  rna_mat <- mat_list
+  
+  # Create Seurat object using gene expression data
+  if (is_list(mat_list)) {
+    rna_mat <- mat_list[["Gene Expression"]]
+  }
+  
+  res <- rna_mat %>%
+    CreateSeuratObject(
+      project = proj_name,
+      min.cells = 5
+    )
+  
+  # Add antibody capture data to Seurat object
+  if (is_list(mat_list)) {
+    adt_mat <- res %>%
+      colnames() %>%
+      mat_list[["Antibody Capture"]][, .]
+    
+    res[["ADT"]] <- CreateAssayObject(adt_mat)
+  }
+  
+  # If hash.ids are given divide into ADT and HTO assays
+  if (!is_null(hash_ids[[1]])) {
+    res <- res %>%
+      add_HTO_assay(
+        ADT_mat  = adt_mat,
+        HTO_list = hash_ids
+      ) %>%
+      NormalizeData(
+        assay = "HTO",
+        normalization.method = "CLR"
+      ) %>%
+      HTODemux(...)
+    
+  } else {
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_ids") %>%
+      mutate(hash.ID = names(hash_ids)) %>%
+      column_to_rownames("cell_ids")
+  }
+  
+  # Calculate percentage of mitochondrial reads
+  res <- res %>%
+    PercentageFeatureSet(
+      pattern  = "^MT-", 
+      col.name = "Percent_mito"
+    )
+  
+  # Add QC classifications to meta.data
+  res@meta.data <- res@meta.data %>%
+    rownames_to_column("cell_ids") %>%
+    mutate(qc_class = "Pass filters") %>%
+    column_to_rownames("cell_ids")
+  
+  if (!is.null(hash_ids[[1]])) {
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_ids") %>%
+      mutate(qc_class = HTO_classification.global) %>%
+      column_to_rownames("cell_ids")
+  }
+  
+  res@meta.data <- res@meta.data %>%
+    rownames_to_column("cell_id") %>%
+    mutate(
+      qc_class = str_replace(qc_class, "Singlet", "Pass filters"),
+      qc_class = ifelse(nFeature_RNA < gene_min, "Low gene count", qc_class),
+      qc_class = ifelse(nFeature_RNA > gene_max, "High gene count", qc_class),
+      qc_class = ifelse(Percent_mito > mito_max, "High mito reads", qc_class)
+    ) %>%
+    column_to_rownames("cell_id")
+  
+  res
+}
+
+# Filter and normalize matrices
+norm_sobj <- function(sobj_in, sample_order = NULL) {
+  res <- sobj_in %>%
+    subset(qc_class == "Pass filters") %>%
+    NormalizeData(normalization.method = "LogNormalize")
+  
+  if ("ADT" %in% names(res)) {
+    res <- res %>%
+      NormalizeData(
+        assay = "ADT",
+        normalization.method = "CLR"
+      )
+  }
+  
+  # Add meta.data columns
+  res@meta.data <- res@meta.data %>%
+    rownames_to_column("cell_ids") %>%
+    mutate(
+      orig.ident = fct_relevel(orig.ident, sample_order)
+    ) %>%
+    column_to_rownames("cell_ids")
+  
+  res
+}
+
+# Filter list of Seurat objects for patient, normalize and merge objects 
+merge_sobj <- function(sobj_list, sample_order = NULL) {
+
+  res <- merge(
+    x = sobj_list[[1]],
+    y = sobj_list[2:length(sobj_list)],
+    add.cell.ids = names(sobj_list)
+  ) %>%
+    ScaleData(assay = "RNA") %>%
+    ScaleData(assay = "adt") %>%
+    FindVariableFeatures(assay = "RNA")
+  
+  # Set sample order
+  res@meta.data <- res@meta.data %>%
+    rownames_to_column("cell_ids") %>%
+    mutate(orig.ident = fct_relevel(orig.ident, sample_order)) %>%
+    column_to_rownames("cell_ids")
+  
+  res
+}
+
+# Run PCA, cluster, and run UMAP using gene expression data
+cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6, 
+                        dims = 1:40, prefix = "", ...) {
+  # Use FindNeighbors to construct a K-nearest neighbors graph based on the euclidean distance in 
+  # PCA space, and refine the edge weights between any two cells based on the
+  # shared overlap in their local neighborhoods (Jaccard similarity).
+  # Use FindClusters to apply modularity optimization techniques such as the Louvain algorithm 
+  # (default) or SLM, to iteratively group cells together
+  
+  # Perform PCA
+  # By default only variable features are used for PCA
+  res <- sobj_in %>%
+    RunPCA(assay = assay, ...) %>%
+    AddMetaData(
+      metadata = FetchData(., c("PC_1", "PC_2")),
+      col.name = str_c(prefix, c("PC_1", "PC_2"))
+    )
+    
+    # Create nearest neighbors graph and find clusters
+  res <- res %>%
+    FindNeighbors(
+      assay     = assay,
+      reduction = "pca",
+      dims      = dims
+    ) %>%
+    FindClusters(
+      resolution = resolution,
+      verbose    = F
+    ) %>%
+    AddMetaData(
+      metadata = Idents(.),
+      col.name = str_c(assay, "_clusters")
+    )
+    
+    # Run UMAP, UMAP coordinates will get added to the meta.data by clustifyr
+  res <- res %>%
+    RunUMAP(
+      assay = assay,
+      dims  = dims,
+      reduction.name = str_c(prefix, "umap"),
+      reduction.key  = str_c(prefix, "UMAP_")
+    )
+  
+  res
+}
+
+# Create shared nearest neighbors graph, cluster, and run UMAP using CITE-seq
+# data
+cluster_ADT <- function(sobj_in, assay = "ADT", resolution = 0.2) {
+  # Since there are usually <20 antibodies, instead of doing PCA just use a
+  # standard euclidean distance matrix
+  adt_dist <- sobj_in %>%
+    GetAssayData(assay = assay) %>%
+    t() %>%
+    dist()
+  
+  # Create shared nearest neighbors graph
+  sobj_in[["adt_snn"]] <- FindNeighbors(adt_dist)$snn
+  
+  # Find clusters
+  res <- sobj_in %>%
+    FindClusters(
+      resolution = resolution,
+      graph.name = "adt_snn",
+      verbose    = F
+    ) %>%
+    AddMetaData(
+      metadata = Idents(.),
+      col.name = str_c(assay, "_clusters")
+    ) %>%
+    
+    # Run UMAP
+    RunUMAP(
+      reduction.name = "adt_umap",
+      reduction.key  = "ADTUMAP_",
+      graph          = "adt_snn",
+      verbose        = F 
+    ) %>%
+    AddMetaData(metadata = FetchData(., c("ADTUMAP_1", "ADTUMAP_2")))
+  
+  res
+}
+
 # Overlay feature data on UMAP or tSNE
 # Cannot change number of columns when using FeaturePlot with split.by
 plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size = 0.25,

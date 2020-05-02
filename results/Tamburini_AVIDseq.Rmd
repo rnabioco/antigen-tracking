@@ -1,5 +1,5 @@
 ---
-title: "Tamburini_AVIDseq"
+title: "Tamburini AVID-seq"
 author: "Ryan Sheridan"
 date: "`r Sys.Date()`"
 output:
@@ -24,6 +24,8 @@ params:
 ---
 
 ---
+
+<br>
 
 <br>
 
