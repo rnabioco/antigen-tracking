@@ -393,8 +393,8 @@ type_bar <- sobj %>%
     legend.position = "bottom",
     legend.title    = element_blank(),
     legend.text     = element_text(size = 8),
-    axis.title      = element_text(size = 13),
-    axis.text       = element_text(size = 8)
+    axis.title.x    = element_text(size = 13),
+    axis.text       = element_text(size = 8),
   )
 
 # OVA cluster bar graphs
@@ -412,12 +412,17 @@ clust_bar <- sobj %>%
     legend.title    = element_blank(),
     legend.text     = element_text(size = 8),
     axis.title      = element_text(size = 13),
-    axis.text       = element_text(size = 8)
+    axis.text.x     = element_text(size = 8),
+    axis.title.y    = element_blank(),
+    axis.text.y     = element_blank(),
+    axis.ticks.y    = element_blank(),
+    axis.line.y     = element_blank()
   )
 
 # Create final figure
 plot_grid(
   ova_boxes, type_bar, clust_bar,
+  rel_widths = c(0.38, 0.365, 0.305),
   nrow  = 1,
   align = "h",
   axis  = "tb"
