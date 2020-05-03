@@ -104,11 +104,6 @@ for (i in seq_along(type_cols)) {
       box_colors    = type_cols
     )
 
-  # type_marks %>%
-  #   kable() %>%
-  #   kable_styling(fixed_thead = T) %>%
-  #   print()
-
   print(type_marks_fig)
   cat("\n\n---\n\n<br>\n\n<br>\n\n")
 }
@@ -265,11 +260,10 @@ sep_clust_marks <- cell_types %>%
   compact() %>%
   bind_rows()
 
+# Set cluster order
 sep_clusts <- unique(sep_clust_marks$cluster)
 sep_clusts <- clust_cols[names(clust_cols) %in% sep_clusts] %>%
   names()
-
-GO_list <- list()
 
 # Cluster plots
 for (i in seq_along(sep_clusts)) {
@@ -304,30 +298,9 @@ for (i in seq_along(sep_clusts)) {
       legend.text     = element_text(size = 10)
     )
   
-  GO_df <- sep_marks$gene %>%
-    run_gprofiler(genome = "GRCm38")
-  
-  if (nrow(GO_df) > 0) {
-    GO_df <- GO_df %>%
-      mutate(
-        sample = rds_name,
-        cluster = sep_clusts[i]
-      ) %>%
-      dplyr::select(
-        sample,     cluster, 
-        source,     term_id, 
-        term_name,  p_value,
-        query_size, intersection_size,
-        effective_domain_size
-      )
-  }
-  
-  GO_list[[i]] <- GO_df
-  
   sep_clust_marks_fig <- sobj %>%
     create_marker_fig(
       input_markers = sep_marks,
-      input_GO      = GO_df,
       type_id       = cluster_id,
       input_umap    = sep_clust_umap,
       umap_color    = sep_cols[sep_clusts[i]],

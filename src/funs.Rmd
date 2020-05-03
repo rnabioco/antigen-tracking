@@ -563,7 +563,7 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
 plot_cell_count <- function(sobj_in, group_id = "type", split_id = "orig.ident",
                             fill_id = "type", plot_colors = theme_cols,
                             x_lab = "Cell type", y_lab = "Fraction of cells",
-                            bar_pos = "fill", ...) {
+                            bar_pos = "fill", order_count = T, ...) {
   
   res <- sobj_in@meta.data %>%
     rownames_to_column("cell_ids") %>%
@@ -577,8 +577,12 @@ plot_cell_count <- function(sobj_in, group_id = "type", split_id = "orig.ident",
       mutate(split_id := !!sym(split_id))
   }
   
+  if (order_count) {
+    res <- res %>%
+      mutate(fill_id = fct_reorder(fill_id, cell_ids, n_distinct))
+  }
+
   res <- res %>%
-    mutate(fill_id = fct_reorder(fill_id, cell_ids, n_distinct)) %>%
     ggplot(aes(group_id, fill = fill_id)) +
     geom_bar(position = bar_pos, size = 1.5) +
     scale_fill_manual(values = plot_colors) +
@@ -653,7 +657,7 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
   box_data <- input_sobj %>%
     FetchData(c(type_id, input_markers)) %>%
     as_tibble(rownames = "cell_id") %>%
-    mutate(type = str_remove(!!sym(type_id), "^[0-9]+-"))
+    mutate(type = str_remove(!!sym(type_id), "^[a-zA-Z0-9_]+-"))
   
   if (!is.null(cell_type)) {
     box_data <- box_data %>%
@@ -805,7 +809,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
 ```{r "Load_packages", include = F}
 
 # Default chunk options
-knitr::opts_chunk$set(message = F, warning = F, cache = T)
+knitr::opts_chunk$set(message = F, warning = F)
 
 # Load packages
 R_packages <- c(

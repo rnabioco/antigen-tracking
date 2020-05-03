@@ -17,8 +17,8 @@ params:
   comparisons:
     value:
       - ["d2_DC", "d14_DC"]
-      - ["d2_LEC", "d14_LEC"]
-      - ["d2_FRC", "d14_FRC"]
+      # - ["d2_LEC", "d14_LEC"]
+      # - ["d2_FRC", "d14_FRC"]
 ---
 
 ---
@@ -31,17 +31,11 @@ params:
 
 ```{r "Run markers chunks", echo = F}
 
-rds_df <- expand.grid(params$time_point, params$cell_types)
-rds_df <- rds_df[file.exists(str_c(params$rds_dir, "/", rds_df$Var1, "_", rds_df$Var2, "_so.rds")), ]
+comp_lengths <- params$comparisons %>%
+  map_dbl(length)
 
-rds_types <- rds_df$Var2
-
-rds_names <- rds_df %>%
-  unite(rds_names, Var1, Var2) %>%
-  pull(rds_names)
-
-mark_chunks <- map2(rds_types, rds_names, ~ {
-  knit_expand(str_c(params$template_dir, "/markers_template.Rmd"))
+mark_chunks <- map2(params$comparison, comp_lengths, ~ {
+  knit_expand(str_c(params$template_dir, "/comparisons_template.Rmd"))
 })
 
 ```
