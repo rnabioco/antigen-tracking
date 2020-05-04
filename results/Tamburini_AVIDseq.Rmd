@@ -21,6 +21,7 @@ params:
   time_points:
     - "d2"
     - "d14"
+    - "n14"
 ---
 
 ---

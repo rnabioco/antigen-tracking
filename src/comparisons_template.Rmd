@@ -32,6 +32,7 @@ UMAPs showing the sample identity or ovalbumin signal is included on the left, o
 sobjs <- rds_files %>%
   map(read_rds)
 
+
 # Add orig.ident and cell_type to meta.data
 sobjs <- sobjs %>%
   imap(AddMetaData, "orig.ident") %>%
@@ -40,13 +41,25 @@ sobjs <- sobjs %>%
       str_extract("[A-Z]+$") %>%
       str_c("cell_type", .)
     
-    .x %>%
+    res <- .x %>%
       FetchData(col_id) %>%
       AddMetaData(
         object   = .x,
         metadata = .,
         col.name = "cell_type"
       )
+    
+    if ("ova" %in% rownames(res@assays$adt)) {
+      res <- res %>%
+        FetchData("adt_ova") %>%
+        AddMetaData(
+          object = res,
+          metadata = .,
+          col.name = "adt_ovalbumin"
+        )
+    }
+    
+    res
   })
 
 # Merge objects and run PCA, UMAP, clustering
@@ -144,10 +157,10 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing cells from each sample. Gene expression signal is shown for the top maker genes for each sample (top, middle). GO terms were identified for marker genes, the top 8 terms are labeled (bottom).
-```{r "{{.x}} Sample markers", fig.width = 8.5, fig.height = 13, results = "asis"}
+Marker genes were identified by comparing cells from each sample. Gene expression signal is shown for the top marker genes for each sample (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
+```{r "{{.x}} Sample markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
-# Find all cell type markers
+# Find all sample markers
 Idents(sobj) <- sobj %>%
   FetchData("orig.ident")
 
@@ -156,20 +169,9 @@ sample_marks <- sobj %>%
   as_tibble() %>%
   filter(p_val_adj < 0.05)
 
-# Cell type UMAP
-sample_umap <- sobj %>%
-  plot_features(
-    feature     = "orig.ident",
-    plot_cols   = sample_cols,
-    feat_levels = names(sobjs)
-  ) +
-  guides(color = col_guide) +
-  blank_theme +
-  theme(
-    legend.position = "top",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 10)
-  )
+# Sample UMAP
+sample_umap <- sample_umap +
+  theme(legend.text = element_text(size = 10))
 
 # Marker plots
 for (i in seq_along(sample_cols)) {
@@ -197,7 +199,7 @@ for (i in seq_along(sample_cols)) {
 
 ### Cell Type Markers
 
-Ovalbumin signal for each cell type is shown on the left and the composition of each sample is shown on the right.
+UMAPs colored based on cell type or ovalbumin signal are shown below. Ovalbumin signal for each cell type is shown on the left and the composition of each sample is shown on the right.
 ```{r "{{.x}} Cell type OVA", fig.width = 8.5, fig.height = 7.3}
 
 # Set cell type order and colors
@@ -222,15 +224,6 @@ sam_type_cols <- type_cols %>%
     colors <- colors[!is.na(names(colors))]
   }) %>%
   reduce(c)
-
-# Plot OVA counts
-ova_data <- sobj %>%
-  FetchData(c("adt_ovalbumin", "orig.ident", "cell_type")) %>%
-  as_tibble(rownames = "cell_id") %>%
-  mutate(
-    orig.ident = fct_relevel(orig.ident, names(sample_cols)),
-    cell_type  = fct_reorder(cell_type, adt_ovalbumin, median, .desc = T)
-  )
 
 # Cell type UMAP
 type_umap <- sobj %>%
@@ -269,6 +262,11 @@ ova_umap <- sobj %>%
   )
 
 # OVA boxplots
+ova_data <- sobj %>%
+  FetchData(c("adt_ovalbumin", "orig.ident", "cell_type")) %>%
+  as_tibble(rownames = "cell_id") %>%
+  mutate(cell_type  = fct_reorder(cell_type, adt_ovalbumin, median, .desc = T))
+
 ova_boxes <- ova_data %>%
   ggplot(aes(orig.ident, adt_ovalbumin + 0.01, color = cell_type)) +
   geom_quasirandom(size = 0.5, color = "black") +
@@ -290,11 +288,7 @@ ova_boxes <- ova_data %>%
   )
 
 # Create OVA bar graphs
-ova_bars <- sobj@meta.data %>%
-  rownames_to_column("cell_id") %>%
-  mutate(orig.ident = fct_relevel(orig.ident, names(sample_cols))) %>%
-  column_to_rownames("cell_id") %>%
-  AddMetaData(sobj, metadata = .) %>%
+ova_bars <- sobj %>%  
   plot_cell_count(
     group_id    = "orig.ident",
     split_id    = NULL,
@@ -342,8 +336,8 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by splitting the cells based on cell type and comparing each sample. Gene expression signal is shown for the top maker genes for each cell type cluster (top, middle). GO terms were identified for marker genes, the top 8 terms are labeled (bottom).
-```{r "{{.x}} Cell type cluster markers", fig.width = 8.5, fig.height = 13, results = "asis"}
+Marker genes were identified by splitting the cells based on cell type and comparing each sample. Gene expression signal is shown for the top marker genes for each cell type cluster (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
+```{r "{{.x}} Cell type cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Find cluster markers separately for each cell type
 cell_type_marks <- cell_types %>%
@@ -358,24 +352,22 @@ cell_type_marks <- cell_types %>%
   compact() %>%
   bind_rows()
 
-type_clusts <- unique(cell_type_marks$cluster)
-
 # Cluster plots
-for (i in seq_along(type_clusts)) {
-  cat("\n#### ", type_clusts[i], "\n", sep = "")
+for (i in seq_along(sam_type_cols)) {
+  cat("\n#### ", names(sam_type_cols)[i], "\n", sep = "")
   
   sep_marks <- cell_type_marks %>%
-    filter(cluster == type_clusts[i])
+    filter(cluster == names(sam_type_cols)[i])
 
-  type <- type_clusts[i] %>%
+  type <- names(sam_type_cols)[i] %>%
     str_remove("^[a-zA-Z0-9_]+-")
   
   regex_type <- str_c("-", type) %>%
     str_replace("\\+", "\\\\+")
   
   sep_cols <- sam_type_cols[grepl(regex_type, names(sam_type_cols))]
-  sep_cols <- c( "Other" = "#f0f0f0", sep_cols)
-  
+  sep_cols <- c( "Other" = "#fafafa", sep_cols)
+
   sep_clust_umap <- sobj %>%
     FetchData(c("UMAP_1", "UMAP_2", "cell_type", "sample_types")) %>%
     as_tibble(rownames = "cell_id") %>%
@@ -383,9 +375,12 @@ for (i in seq_along(type_clusts)) {
     plot_features(
       feature     = "sample_types",
       plot_cols   = sep_cols,
+      pt_size    = 0.1,
+      pt_outline = 0.4,
       feat_levels = names(sep_cols)
     ) +
-    guides(color = col_guide) +
+    guides(color = guide_legend(override.aes = list(size = 3.5, shape = 21, color = "black", stroke = 0.25))) +
+    scale_fill_manual(values = sep_cols) +
     blank_theme +
     theme(
       legend.position = "top",
@@ -398,7 +393,7 @@ for (i in seq_along(type_clusts)) {
       input_markers = sep_marks,
       type_id       = "sample_types",
       input_umap    = sep_clust_umap,
-      umap_color    = sam_type_cols[type_clusts[i]],
+      umap_color    = sam_type_cols[[i]],
       box_colors    = sep_cols,
       cell_type     = type,
       n_boxes       = 18,
@@ -413,8 +408,8 @@ for (i in seq_along(type_clusts)) {
 
 ### Ovalbumin Markers
 
-Cells were divided into groups based on ovalbumin signal. The fraction of cells belonging to each group is shown for each sample. 
-```{r "{{.x}} OVA cluster summary", fig.width = 6.4, fig.height = 4}
+Cells were divided into groups based on ovalbumin signal. A UMAP projection showing the ovalbumin groups included on the left and the fraction of cells belonging to each group is shown on the right. 
+```{r "{{.x}} OVA cluster summary", fig.width = 6.4, fig.height = 4.3}
 
 # Determine number of OVA groups
 n_grps <- floor(ncol(sobj) / 100)
@@ -428,7 +423,15 @@ if (n_grps < 2) {
 }
 
 # Set OVA colors
-ova_cols <- theme_cols[c(1:5, 9)]
+ova_cols <- c(
+  "#e31a1c",  # red
+  "#fec44f",  # yellow
+  "#6a51a3",  # purple
+  "#225ea8",  # blue
+  "#ec7014",  # orange
+  "#238443"   # green
+)
+
 names(ova_cols) <- as.character(1:n_grps)
 
 # Divide cells based on OVA signal
@@ -457,8 +460,10 @@ ova_umap <- sobj %>%
   ) +
   guides(color = guide_legend(override.aes = list(size = 3.5, shape = 21, color = "black", stroke = 0.25), nrow = 1)) +
   scale_fill_manual(values = ova_cols) +
+  ggtitle("Ovalbumin Group") +
   blank_theme +
   theme(
+    plot.title       = element_text(size = 13),
     legend.position = "top",
     legend.title    = element_blank(),
     legend.text     = element_text(size = 8)
@@ -520,8 +525,8 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing the samples for each ovalbumin group. Gene expression signal is shown for the top maker genes for each group (top, middle). GO terms were identified for marker genes, the top 8 terms are labeled (bottom).
-```{r "{{.x}} OVA cluster markers", fig.width = 8.5, fig.height = 13, results = "asis"}
+Marker genes were identified by comparing the samples for each ovalbumin group. Gene expression signal is shown for the top marker genes for each group (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
+```{r "{{.x}} OVA cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Set OVA group sample colors
 ova_sam_cols <- ova_cols %>%
@@ -549,27 +554,27 @@ ova_sam_markers <- names(ova_cols) %>%
   compact() %>%
   bind_rows()
 
-ova_clusts <- sobj %>%
-  FetchData(c("ova_group", "ova_sam_grp")) %>%
-  unique() %>%
-  arrange(ova_group) %>%
-  pull(ova_sam_grp)
+# ova_clusts <- ova_sam_markers %>%
+#   mutate(ova_num = str_extract(cluster, "[0-9]+$")) %>%
+#   arrange(ova_num) %>%
+#   pull(cluster) %>%
+#   unique()
 
 # OVA group plots
-for (i in seq_along(ova_clusts)) {
-  cat("\n#### ", ova_clusts[i], "\n", sep = "")
+for (i in seq_along(ova_sam_cols)) {
+  cat("\n#### ", names(ova_sam_cols)[i], "\n", sep = "")
   
   sep_marks <- ova_sam_markers %>%
-    filter(cluster == ova_clusts[i])
+    filter(cluster == names(ova_sam_cols)[i])
 
-  type <- ova_clusts[i] %>%
+  type <- names(ova_sam_cols)[i] %>%
     str_remove("^[a-zA-Z0-9_]+-")
   
   regex_type <- str_c("-", type) %>%
     str_replace("\\+", "\\\\+")
   
   sep_cols <- ova_sam_cols[grepl(regex_type, names(ova_sam_cols))]
-  sep_cols <- c( "Other" = "#f0f0f0", sep_cols)
+  sep_cols <- c( "Other" = "#fafafa", sep_cols)
   
   sep_clust_umap <- sobj %>%
     FetchData(c("UMAP_1", "UMAP_2", "ova_group", "ova_sam_grp")) %>%
@@ -578,9 +583,12 @@ for (i in seq_along(ova_clusts)) {
     plot_features(
       feature     = "ova_sam_grp",
       plot_cols   = sep_cols,
+      pt_size    = 0.1,
+      pt_outline = 0.4,
       feat_levels = names(sep_cols)
     ) +
-    guides(color = col_guide) +
+    guides(color = guide_legend(override.aes = list(size = 3.5, shape = 21, color = "black", stroke = 0.25))) +
+    scale_fill_manual(values = sep_cols) +
     blank_theme +
     theme(
       legend.position = "top",
@@ -593,7 +601,7 @@ for (i in seq_along(ova_clusts)) {
       input_markers = sep_marks,
       type_id       = "ova_sam_grp",
       input_umap    = sep_clust_umap,
-      umap_color    = ova_sam_cols[ova_clusts[i]],
+      umap_color    = ova_sam_cols[[i]],
       box_colors    = sep_cols,
       cell_type     = type,
       n_boxes       = 18,

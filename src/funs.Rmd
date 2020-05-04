@@ -500,11 +500,10 @@ run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL,
 
 # Create GO bubble plot
 create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
-                           id_col = "term_name") {
-  
-  GO_df <- GO_df %>%
-    mutate(
-    )
+                           id_col = "term_name", n_terms = 20) {
+
+  # GO_df <- GO_df %>%
+    # mutate(term_id = !!sym(id_col))
   
   # Check for empty inputs
   if (is_empty(GO_df) || nrow(GO_df) == 0) {
@@ -544,7 +543,7 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
   top_GO <- GO_data %>%
     group_by(source) %>%
     arrange(p_value) %>%
-    dplyr::slice(1:8) %>%
+    dplyr::slice(1:n_terms) %>%
     ungroup()
   
   # Create bubble plots
@@ -665,8 +664,9 @@ create_marker_umaps <- function(input_sobj, input_markers, umap_cols, add_outlin
 }
 
 # Create boxplots showing marker gene signal
-create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols, 
-                                cell_type = NULL, include_legend = F, all_boxes = F) {
+create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
+                                cell_type = NULL, include_legend = F, all_boxes = F,
+                                order_boxes = T) {
   
   # Retrieve and format data for boxplots
   box_data <- input_sobj %>%
@@ -681,10 +681,12 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
   
   box_data <- box_data %>%
     pivot_longer(cols = c(-cell_id, -type, -!!sym(type_id)), names_to = "key", values_to = "Counts") %>%
-    mutate(
-      key = fct_relevel(key, input_markers),
-      !!sym(type_id) := fct_reorder(!!sym(type_id), Counts, mean, .desc = T)
-    )
+    mutate(key = fct_relevel(key, input_markers))
+  
+  if (order_boxes) {
+    box_data <- box_data %>%
+      mutate(!!sym(type_id) := fct_reorder(!!sym(type_id), Counts, mean, .desc = T))
+  }
   
   n_type <- box_data[, type_id] %>%
     n_distinct()
@@ -696,7 +698,7 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
     scale_color_manual(values = box_cols) +
     theme_info +
     theme(
-      plot.margin      = unit(c(1, 0.2, 0.2, 0.2), "cm"),
+      plot.margin      = unit(c(0.9, 0.2, 0.2, 0.2), "cm"),
       panel.spacing.x  = unit(0.7, "cm"),
       strip.background = element_blank(),
       strip.text       = element_text(size = 13),
@@ -715,11 +717,11 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
     
   } else if (all_boxes) {
     res <- res +
-      # geom_boxplot(aes(fill = !!sym(type_id)), color = "black", size = 0.2, outlier.color = "#f0f0f0", outlier.size = 0.25, fatten = 1) +
       geom_violin(aes(fill = !!sym(type_id)), color = "black", size = 0.2) +
       stat_summary(fun = "median", geom = "point", color = "black", shape = 22, size = 1, fill = "white") +
       scale_fill_manual(values = box_cols) +
-      theme(panel.spacing.x = unit(0, "cm"))
+      theme(panel.spacing.x = unit(0.2, "cm"))
+      # geom_boxplot(aes(fill = !!sym(type_id)), color = "black", size = 0.2, outlier.color = "#f0f0f0", outlier.size = 0.25, fatten = 1) +
     
   } else {
     res <- res +
@@ -739,8 +741,9 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
 
 # Create figure summarizing marker genes
 create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_id, 
-                              input_umap, umap_color, fig_heights = c(0.44, 0.33, 0.23), 
+                              input_umap, umap_color, fig_heights = c(0.46, 0.3, 0.25), 
                               box_colors, n_boxes = 10, umap_outline = NULL, ...) {
+                              # input_umap, umap_color, fig_heights = c(0.44, 0.33, 0.23), 
   
   marks_umap <- ggplot() +
     geom_blank()
@@ -801,7 +804,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
       GO_bubbles <- input_GO %>%
         create_bubbles(plot_colors = umap_color) +
         theme(
-          plot.margin      = unit(c(1.1, 0.2, 0.2, 0.2), "cm"),
+          plot.margin      = unit(c(1, 0.2, 0.2, 0.2), "cm"),
           strip.background = element_blank(),
           strip.text       = element_text(size = 13),
           axis.title.y     = element_text(size = 13),
