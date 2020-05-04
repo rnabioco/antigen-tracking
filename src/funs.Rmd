@@ -276,7 +276,8 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
                           split_id = NULL, plot_cols = c("#fafafa", "#e31a1c"),
                           feat_levels = NULL, split_levels = NULL, min_pct = NULL, 
                           max_pct = NULL, calc_cor = F, lab_size = 3.7, short_feat_name = T,
-                          lab_pos = c(0.8, 0.9), lm_line = F, show_title = F, ...) {
+                          lab_pos = c(0.8, 0.9), lm_line = F, pt_outline = NULL, 
+                          show_title = F, ...) {
   
   # Format imput data
   counts <- sobj_in
@@ -388,7 +389,20 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
   # Create scatter plot
   res <- counts %>%
     arrange(!!sym(short_feat)) %>%
-    ggplot(aes(!!sym(x), !!sym(y), color = !!sym(short_feat))) +
+    ggplot(aes(!!sym(x), !!sym(y), color = !!sym(short_feat)))
+  
+  if (!is.null(pt_outline)) {
+    pt_out_legend <- T
+    
+    if (is.numeric(counts[[short_feat]])) {
+      pt_out_legend <- F 
+    }
+    
+    res <- res +
+      geom_point(aes(fill = !!sym(short_feat)), size = pt_outline, color = "black", show.legend = pt_out_legend)
+  }
+
+  res <- res +
     geom_point(size = pt_size)
   
   # Add regression line
@@ -563,7 +577,7 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
 plot_cell_count <- function(sobj_in, group_id = "type", split_id = "orig.ident",
                             fill_id = "type", plot_colors = theme_cols,
                             x_lab = "Cell type", y_lab = "Fraction of cells",
-                            bar_pos = "fill", order_count = T, ...) {
+                            bar_pos = "fill", order_count = T, bar_line = 0, ...) {
   
   res <- sobj_in@meta.data %>%
     rownames_to_column("cell_ids") %>%
@@ -584,7 +598,7 @@ plot_cell_count <- function(sobj_in, group_id = "type", split_id = "orig.ident",
 
   res <- res %>%
     ggplot(aes(group_id, fill = fill_id)) +
-    geom_bar(position = bar_pos, size = 1.5) +
+    geom_bar(position = bar_pos, size = bar_line, color = "black") +
     scale_fill_manual(values = plot_colors) +
     labs(x = x_lab, y = y_lab) +
     theme_info
@@ -623,14 +637,15 @@ find_sep_clust_markers <- function(input_type, input_sobj, type_col = "cell_type
 }
 
 # Create UMAPs showing marker gene signal
-create_marker_umaps <- function(input_sobj, input_markers, umap_cols) {
+create_marker_umaps <- function(input_sobj, input_markers, umap_cols, add_outline = NULL) {
   
   res <- input_markers %>%
     map(~ {
       input_sobj %>%
         plot_features(
-          feature = .x,
-          plot_cols = c("#fafafa", umap_cols)
+          feature    = .x, 
+          plot_cols  = c("#fafafa", umap_cols),
+          pt_outline = add_outline
         ) +
         ggtitle(.x) +
         blank_theme +
@@ -651,7 +666,7 @@ create_marker_umaps <- function(input_sobj, input_markers, umap_cols) {
 
 # Create boxplots showing marker gene signal
 create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols, 
-                                cell_type = NULL, include_legend = F) {
+                                cell_type = NULL, include_legend = F, all_boxes = F) {
   
   # Retrieve and format data for boxplots
   box_data <- input_sobj %>%
@@ -686,8 +701,6 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
       strip.background = element_blank(),
       strip.text       = element_text(size = 13),
       legend.position  = "none",
-      legend.title     = element_blank(),
-      legend.text      = element_text(size = 10),
       axis.title.x     = element_blank(),
       axis.title.y     = element_text(size = 13),
       axis.text.x      = element_blank(),
@@ -696,19 +709,23 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
       axis.line.x      = element_blank()
     )
   
-  if (n_type < 9) {
+  if (n_type < 9 && !all_boxes) {
     res <- res +
       geom_quasirandom(size = 0.3)
+    
+  } else if (all_boxes) {
+    res <- res +
+      # geom_boxplot(aes(fill = !!sym(type_id)), color = "black", size = 0.2, outlier.color = "#f0f0f0", outlier.size = 0.25, fatten = 1) +
+      geom_violin(aes(fill = !!sym(type_id)), color = "black", size = 0.2) +
+      stat_summary(fun = "median", geom = "point", color = "black", shape = 22, size = 1, fill = "white") +
+      scale_fill_manual(values = box_cols) +
+      theme(panel.spacing.x = unit(0, "cm"))
     
   } else {
     res <- res +
       geom_boxplot(aes(fill = !!sym(type_id), color = !!sym(type_id)), size = 0, outlier.color = "#f0f0f0", outlier.size = 0.25) +
       stat_summary(fun = "median", geom = "point", shape = 22, size = 1, fill = "white") +
       scale_fill_manual(values = box_cols)
-      # theme(axis.text.y = element_text(size = 6))
-      # geom_boxplot(aes(fill = !!sym(type_id)), size = 0.3, color = "white", outlier.color = "#f0f0f0", outlier.size = 0.25) +
-      # stat_summary(fun = "median", geom = "point", shape = 21, size = 1, color = "white", fill = "white")
-      # geom_boxplot(aes(fill = !!sym(type_id)), size = 0.2, color = "white", outlier.color = "#f0f0f0", outlier.size = 0.25) +
   }
   
   if (include_legend) {
@@ -721,9 +738,9 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
 }
 
 # Create figure summarizing marker genes
-create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_id, input_umap, 
-                              umap_color, box_colors, fig_heights = c(0.44, 0.33, 0.23), ...) {
-                              # umap_color, box_colors, fig_heights = c(0.42, 0.34, 0.24), ...) {
+create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_id, 
+                              input_umap, umap_color, fig_heights = c(0.44, 0.33, 0.23), 
+                              box_colors, n_boxes = 10, umap_outline = NULL, ...) {
   
   marks_umap <- ggplot() +
     geom_blank()
@@ -737,7 +754,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
   # Create UMAPs showing marker gene signal
   if (nrow(input_markers) >= 8) {
     top_marks <- input_markers$gene %>%
-      head(10)
+      head(n_boxes)
     
     type_legend <- get_legend(input_umap)
     
@@ -747,7 +764,8 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
     marks_umap <- input_sobj %>%
       create_marker_umaps(
         input_markers = top_marks[1:7],
-        umap_col      = umap_color
+        umap_col      = umap_color,
+        add_outline   = umap_outline
       ) %>%
       append(list(input_umap), .)
     
