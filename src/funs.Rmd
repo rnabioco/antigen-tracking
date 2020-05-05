@@ -755,7 +755,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
     geom_blank()
   
   # Create UMAPs showing marker gene signal
-  if (nrow(input_markers) >= 8) {
+  if (nrow(input_markers) > 0) {
     top_marks <- input_markers$gene %>%
       head(n_boxes)
     
@@ -766,7 +766,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
     
     marks_umap <- input_sobj %>%
       create_marker_umaps(
-        input_markers = top_marks[1:7],
+        input_markers = head(top_marks, 7),
         umap_col      = umap_color,
         add_outline   = umap_outline
       ) %>%
@@ -775,6 +775,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
     marks_umap <- plot_grid(
       plotlist = marks_umap,
       ncol     = 4,
+      nrow     = 2,
       align    = "vh",
       axis     = "trbl"
     )
@@ -821,6 +822,15 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
     align       = "v",
     axis        = "rl"
   )
+  
+  res
+}
+
+# Get colors for markers
+get_marker_cols <- function(input_cols, input_marks) {
+  marks <- unique(input_marks$cluster)
+  res   <- names(input_cols)
+  res   <- res[res %in% marks]
   
   res
 }
