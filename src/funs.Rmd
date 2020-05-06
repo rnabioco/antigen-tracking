@@ -662,7 +662,7 @@ create_marker_umaps <- function(input_sobj, input_markers, umap_cols, add_outlin
 # Create boxplots showing marker gene signal
 create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
                                 cell_type = NULL, include_legend = F, all_boxes = F,
-                                order_boxes = T) {
+                                order_boxes = T, n_boxes = 10) {
   
   # Retrieve and format data for boxplots
   box_data <- input_sobj %>%
@@ -670,15 +670,18 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
     as_tibble(rownames = "cell_id") %>%
     mutate(type = str_remove(!!sym(type_id), "^[a-zA-Z0-9_]+-"))
   
+  # Filter based on input cell_type
   if (!is.null(cell_type)) {
     box_data <- box_data %>%
       filter(type == cell_type)
   }
   
+  # Format data for plots
   box_data <- box_data %>%
     pivot_longer(cols = c(-cell_id, -type, -!!sym(type_id)), names_to = "key", values_to = "Counts") %>%
     mutate(key = fct_relevel(key, input_markers))
   
+  # Order boxes by mean signal
   if (order_boxes) {
     box_data <- box_data %>%
       mutate(!!sym(type_id) := fct_reorder(!!sym(type_id), Counts, mean, .desc = T))
@@ -687,10 +690,12 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
   n_type <- box_data[, type_id] %>%
     n_distinct()
   
-  # Create boxplots
+  # Create plots
+  n_cols <- ceiling(n_boxes / 2)
+  
   res <- box_data %>%
     ggplot(aes(!!sym(type_id), Counts, color = !!sym(type_id))) + 
-    facet_wrap(~ key, nrow = 2) +
+    facet_wrap(~ key, ncol = n_cols) +
     scale_color_manual(values = box_cols) +
     theme_info +
     theme(
@@ -707,6 +712,7 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
       axis.line.x      = element_blank()
     )
   
+  # Adjust output plot type
   if (n_type < 9 && !all_boxes) {
     res <- res +
       geom_quasirandom(size = 0.3)
@@ -717,7 +723,6 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
       stat_summary(fun = "median", geom = "point", color = "black", shape = 22, size = 1, fill = "white") +
       scale_fill_manual(values = box_cols) +
       theme(panel.spacing.x = unit(0.2, "cm"))
-      # geom_boxplot(aes(fill = !!sym(type_id)), color = "black", size = 0.2, outlier.color = "#f0f0f0", outlier.size = 0.25, fatten = 1) +
     
   } else {
     res <- res +
@@ -726,10 +731,34 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
       scale_fill_manual(values = box_cols)
   }
   
+  # Add legend
   if (include_legend) {
     res <- res +
       guides(color = col_guide) +
       theme(legend.position = "top")
+  }
+  
+  # Add blank space for missing facets
+  n_key <- n_distinct(box_data$key)
+  
+  if (n_key <= n_cols) {
+    res_f <- n_key / n_cols
+    blank_f <- 1 - res_f
+
+    blank <- ggplot() +
+      geom_blank() +
+      theme_void()
+
+    top_panel <- plot_grid(
+      res, blank,
+      rel_widths = c(res_f, blank_f),
+      nrow = 1
+    )
+
+    res <- plot_grid(
+      top_panel, blank,
+      nrow = 2
+    )
   }
   
   res
@@ -787,6 +816,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
         input_markers = top_marks,
         type_id       = type_id,
         box_cols      = box_colors,
+        n_boxes       = n_boxes,
         ...
       )
     
