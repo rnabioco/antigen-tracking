@@ -106,52 +106,24 @@ plot_grid(
 Marker genes were identified by comparing all cell types. Gene expression signal is shown for the top marker genes for each cell type (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
 ```{r "{{.y}} Cell type markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
-# Find all cell type markers
-Idents(sobj) <- sobj %>%
-  FetchData(cell_type_id)
-
-fig_markers <- sobj %>%
-  FindAllMarkers(only.pos = T) %>%
-  as_tibble() %>%
-  filter(p_val_adj < 0.05)
-
-# Figure colors and order
-fig_colors <- type_cols
-
-fig_grps <- fig_colors %>%
-  get_marker_cols(fig_markers)
-
-# Cell type UMAP
+# Create figures
 fig_umap <- type_umap +
   guides(color = col_guide) +
   theme(legend.text = element_text(size = 10))
 
-# Marker plots
-for (i in seq_along(fig_grps)) {
-  cat("\n#### ", fig_grps[i], "\n", sep = "")
-
-  fig_marks <- fig_markers %>%
-    filter(cluster == fig_grps[i])
-
-  markers_fig <- sobj %>%
-    create_marker_fig(
-      input_markers = fig_marks,
-      type_id       = cell_type_id,
-      input_umap    = fig_umap,
-      umap_color    = fig_colors[i],
-      box_colors    = fig_colors
-    )
-
-  print(markers_fig)
-  cat("\n\n---\n\n<br>\n\n<br>\n\n")
-}
+create_marker_panel_v1(
+  input_sobj   = sobj,
+  input_cols   = type_cols,
+  input_umap   = fig_umap,
+  clust_column = cell_type_id
+)
 
 ```
 
 ### Cluster markers
 
 A UMAP projection colored by cell cluster is shown on the left and ovalbumin signal for each cluster is shown on the right.
-```{r "{{.y}} Cluster OVA", fig.width = 9, fig.height = 6.2}
+```{r "{{.y}} Cluster OVA", fig.width = 9, fig.height = 4.2}
 
 # Set cluster order and colors
 cell_clusts <- sobj@meta.data %>%
@@ -178,11 +150,7 @@ clust_umap <- sobj %>%
   ) +
   guides(color = guide_legend(override.aes = list(size = 3.5), nrow = 10)) +
   blank_theme +
-  theme(
-    legend.position = "bottom",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 8)
-  )
+  theme(legend.position = "none")
 
 # OVA boxes
 ova_data <- sobj %>%
@@ -222,52 +190,24 @@ plot_grid(
 Marker genes were identified by comparing all clusters. Gene expression signal is shown for the top marker genes for each cluster (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
 ```{r "{{.y}} Cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
-# Find all cell cluster markers
-Idents(sobj) <- sobj %>%
-  FetchData(cluster_id)
-
-fig_markers <- sobj %>%
-  FindAllMarkers(only.pos = T) %>%
-  as_tibble() %>%
-  filter(p_val_adj < 0.05)
-
-# Figure colors and order
-fig_colors <- clust_cols
-
-fig_grps <- fig_colors %>%
-  get_marker_cols(fig_markers)
-
-# Cluster UMAP
-clust_umap_2 <- clust_umap +
+# Create figures
+fig_umap <- clust_umap +
   guides(color = col_guide) +
   theme(legend.text = element_text(size = 10))
 
-# Cluster plots
-for (i in seq_along(fig_grps)) {
-  cat("\n#### ", fig_grps[i], "\n", sep = "")
-
-  fig_marks <- fig_markers %>%
-    filter(cluster == fig_grps[i])
-  
-  markers_fig <- sobj %>%
-    create_marker_fig(
-      input_markers = fig_marks,
-      type_id       = cluster_id,
-      input_umap    = clust_umap_2,
-      umap_color    = fig_colors[i],
-      box_colors    = fig_colors
-    )
-
-  print(markers_fig)
-  cat("\n\n---\n\n<br>\n\n<br>\n\n")
-}
+create_marker_panel_v1(
+  input_sobj   = sobj,
+  input_cols   = clust_cols,
+  input_umap   = fig_umap,
+  clust_column = cluster_id
+)
 
 ```
 
 ### Cell type cluster markers
 
 A UMAP projection colored by cell cluster is shown on the left and ovalbumin signal for each cluster is shown on the right. Clusters are grouped by cell type.
-```{r "{{.y}} Cell type cluster OVA", fig.width = 9, fig.height = 6.2}
+```{r "{{.y}} Cell type cluster OVA", fig.width = 9, fig.height = 4.2}
 
 # Plot OVA counts
 ova_data <- sobj %>%
@@ -317,73 +257,24 @@ Marker genes were identified by splitting the cells based on cell type and compa
 # Find cluster markers separately for each cell type
 fig_markers <- cell_types %>%
   map(~ {
-    find_sep_clust_markers(
-      input_type = .x,
+    find_group_markers(
+      input_grp  = .x,
       input_sobj = sobj,
-      type_col   = cell_type_id,
+      grp_col    = cell_type_id,
       clust_col  = cluster_id
     )
   }) %>%
   compact() %>%
   bind_rows()
 
-# Set cluster order
-fig_colors <- clust_cols
-
-fig_grps <- fig_colors %>%
-  get_marker_cols(fig_markers)
-
-# Cluster plots
-for (i in seq_along(fig_grps)) {
-  cat("\n#### ", fig_grps, "\n", sep = "")
-  
-  # Set colors
-  grp <- fig_grps[i]
-  umap_col <- fig_colors[grp]
-  
-  fig_marks <- fig_markers %>%
-    filter(cluster == grp)
-
-  type <- grp %>%
-    str_remove("^[a-zA-Z0-9_]+-")
-  
-  regex_type <- str_c("-", type, "$") %>%
-    str_replace("\\+", "\\\\+")       # include this to escape "+" in names
-  
-  fig_cols <- fig_colors[grepl(regex_type, names(fig_colors))]
-  fig_cols <- c( "Other" = "#fafafa", fig_cols)
-  
-  # Create UMAP
-  fig_umap <- sobj %>%
-    FetchData(c("UMAP_1", "UMAP_2", cell_type_id, cluster_id)) %>%
-    as_tibble(rownames = "cell_id") %>%
-    mutate(!!sym(cluster_id) := if_else(!!sym(cell_type_id) != type, "Other", !!sym(cluster_id))) %>%
-    plot_features(
-      feature     = cluster_id,
-      plot_cols   = fig_cols,
-      feat_levels = names(fig_cols)
-    ) +
-    guides(color = col_guide) +
-    blank_theme +
-    theme(
-      legend.position = "top",
-      legend.title    = element_blank(),
-      legend.text     = element_text(size = 10)
-    )
-  
-  marker_fig <- sobj %>%
-    create_marker_fig(
-      input_markers = fig_marks,
-      type_id       = cluster_id,
-      input_umap    = fig_umap,
-      umap_color    = umap_col,
-      box_colors    = fig_cols,
-      cell_type     = type
-    )
-  
-  print(marker_fig)
-  cat("\n\n---\n\n<br>\n\n<br>\n\n")
-}
+# Create figures
+create_marker_panel_v2(
+  input_sobj    = sobj,
+  input_markers = fig_markers,
+  input_cols    = clust_cols,
+  grp_column    = cell_type_id,
+  clust_column  = cluster_id
+)
 
 ```
 
@@ -563,65 +454,13 @@ plot_grid(
 Marker genes were identified by comparing all ovalbumin groups. Gene expression signal is shown for the top marker genes for each group (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
 ```{r "{{.y}} OVA cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
-# OVA markers
-Idents(sobj) <- sobj %>%
-  FetchData("ova_group")
+# Create figures
+create_marker_panel_v1(
+  input_sobj    = sobj,
+  input_cols    = ova_cols,
+  clust_column  = "ova_group"
+)
 
-fig_markers <- sobj %>%
-  FindAllMarkers(only.pos = T) %>%
-  as_tibble() %>%
-  filter(p_val_adj < 0.05)
-
-# Figure colors and order
-fig_colors <- ova_cols
-
-fig_grps <- fig_colors %>%
-  get_marker_cols(fig_markers)
-
-# OVA cluster plots
-for (i in seq_along(fig_grps)) {
-  cat("\n#### ova_group-", fig_grps[i], "\n", sep = "")
-  
-  grp <- fig_grps[i]
-  umap_col <- fig_colors[grp]
-  
-  umap_levels <- fig_colors[names(fig_colors) != fig_grps[i]]
-  umap_levels <- c(umap_levels, umap_col) %>%
-    names()
-  
-  # OVA groups UMAP
-  fig_umap <- sobj %>%
-    plot_features(
-      feature     = "ova_group",
-      plot_cols   = fig_colors,
-      feat_levels = umap_levels
-    ) +
-    guides(color = col_guide) +
-    blank_theme +
-    theme(
-      legend.position = "top",
-      legend.title    = element_blank(),
-      legend.text     = element_text(size = 10)
-    )
-
-  # Create figures
-  fig_marks <- fig_markers %>%
-    filter(cluster == grp)
-  
-  marker_fig <- sobj %>%
-    create_marker_fig(
-      input_markers = fig_marks,
-      type_id       = "ova_group",
-      input_umap    = fig_umap,
-      umap_color    = umap_col,
-      box_colors    = fig_colors,
-      order_boxes   = F
-    )
-
-  print(marker_fig)
-  cat("\n\n---\n\n<br>\n\n<br>\n\n")
-}
-  
 ```
 
 ```{r, eval = F, echo = F}
