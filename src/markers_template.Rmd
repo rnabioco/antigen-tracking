@@ -7,8 +7,9 @@ rds_file <- str_c(rds_name, "_so.rds")
 
 sobj <- read_rds(file.path(params$rds_dir, rds_file))
 
+umap_pt_size <- if_else(ncol(sobj) > 500, 0.25, 1)
 cell_type_id <- str_c("cell_type", rds_type)
-cluster_id <- str_c("cell_type", rds_type, "2")
+cluster_id   <- str_c(cell_type_id, "2")
 
 # Fix column names
 if (!cluster_id %in% names(sobj@meta.data)) {
@@ -30,7 +31,11 @@ if ("ova" %in% rownames(sobj@assays$adt)) {
 
 sobj@meta.data <- sobj@meta.data %>%
   rownames_to_column("cell_id") %>%
-  mutate(!!sym(cell_type_id) := str_remove(!!sym(cluster_id), "^[0-9]+-")) %>%
+  mutate(
+    cluster_id = !!sym(cluster_id),
+    cluster_id = str_replace(cluster_id, "-NA$", "-unassigned"),
+    cell_type  = str_remove(cluster_id, "^[0-9]+-")
+  ) %>%
   column_to_rownames("cell_id")
 
 ```
@@ -44,7 +49,7 @@ A UMAP projection colored by cell type is shown on the left and ovalbumin signal
 
 # Set cell type order and colors
 cell_types <- sobj@meta.data %>%
-  pull(!!sym(cell_type_id)) %>%
+  pull(cell_type) %>%
   unique()
 
 names(cell_types) <- cell_types
@@ -56,9 +61,10 @@ type_cols <- type_cols[!is.na(names(type_cols))]
 # Cell type UMAP
 type_umap <- sobj %>%
   plot_features(
-    feature     = cell_type_id,
+    feature     = "cell_type",
     plot_cols   = type_cols,
-    feat_levels = names(type_cols)
+    feat_levels = names(type_cols),
+    pt_size     = umap_pt_size
   ) +
   guides(color = guide_legend(override.aes = list(size = 3.5), nrow = 3)) +
   blank_theme +
@@ -70,12 +76,12 @@ type_umap <- sobj %>%
 
 # OVA boxplots
 ova_data <- sobj %>%
-  FetchData(c("adt_ovalbumin", cell_type_id, cluster_id)) %>%
+  FetchData(c("adt_ovalbumin", "cell_type", "cluster_id")) %>%
   as_tibble(rownames = "cell_id") %>%
-  mutate(!!sym(cell_type_id) := fct_reorder(!!sym(cell_type_id), adt_ovalbumin, median))
+  mutate(cell_type = fct_reorder(cell_type, adt_ovalbumin, median))
   
 ova_boxes <-ova_data %>%
-  ggplot(aes(!!sym(cell_type_id), adt_ovalbumin + 0.01, color = !!sym(cell_type_id))) +
+  ggplot(aes(cell_type, adt_ovalbumin + 0.01, color = cell_type)) +
   geom_quasirandom(size = 0.5) +
   scale_color_manual(values = type_cols) +
   scale_y_log10() +
@@ -115,7 +121,7 @@ create_marker_panel_v1(
   input_sobj   = sobj,
   input_cols   = type_cols,
   input_umap   = fig_umap,
-  clust_column = cell_type_id
+  clust_column = "cell_type"
 )
 
 ```
@@ -128,11 +134,11 @@ A UMAP projection colored by cell cluster is shown on the left and ovalbumin sig
 # Set cluster order and colors
 cell_clusts <- sobj@meta.data %>%
   mutate(
-    type_clust = str_extract(!!sym(cluster_id), "^[0-9]+"),
+    type_clust = str_extract(cluster_id, "^[0-9]+"),
     type_clust = as.numeric(type_clust)
   ) %>%
-  arrange(!!sym(cell_type_id), type_clust) %>%
-  pull(!!sym(cluster_id)) %>%
+  arrange(cell_type, type_clust) %>%
+  pull(cluster_id) %>%
   unique()
 
 names(cell_clusts) <- cell_clusts
@@ -144,9 +150,10 @@ clust_cols <- clust_cols[!is.na(names(clust_cols))]
 # Cluster UMAP
 clust_umap <- sobj %>%
   plot_features(
-    feature     = cluster_id,
+    feature     = "cluster_id",
     plot_cols   = clust_cols,
-    feat_levels = names(clust_cols)
+    feat_levels = names(clust_cols),
+    pt_size     = umap_pt_size
   ) +
   guides(color = guide_legend(override.aes = list(size = 3.5), nrow = 10)) +
   blank_theme +
@@ -154,12 +161,12 @@ clust_umap <- sobj %>%
 
 # OVA boxes
 ova_data <- sobj %>%
-  FetchData(c("adt_ovalbumin", cell_type_id, cluster_id)) %>%
+  FetchData(c("adt_ovalbumin", "cell_type", "cluster_id")) %>%
   as_tibble(rownames = "cell_id") %>%
-  mutate(!!sym(cluster_id) := fct_reorder(!!sym(cluster_id), adt_ovalbumin, median))
+  mutate(cluster_id = fct_reorder(cluster_id, adt_ovalbumin, median))
   
 ova_boxes <- ova_data %>%
-  ggplot(aes(!!sym(cluster_id), adt_ovalbumin + 0.01, color = !!sym(cluster_id))) +
+  ggplot(aes(cluster_id, adt_ovalbumin + 0.01, color = cluster_id)) +
   geom_quasirandom(size = 0.25) +
   scale_color_manual(values = clust_cols) +
   scale_y_log10() +
@@ -193,13 +200,17 @@ Marker genes were identified by comparing all clusters. Gene expression signal i
 # Create figures
 fig_umap <- clust_umap +
   guides(color = col_guide) +
-  theme(legend.text = element_text(size = 10))
+  theme(
+    legend.position = "top",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 10)
+  )
 
 create_marker_panel_v1(
   input_sobj   = sobj,
   input_cols   = clust_cols,
   input_umap   = fig_umap,
-  clust_column = cluster_id
+  clust_column = "cluster_id"
 )
 
 ```
@@ -211,18 +222,18 @@ A UMAP projection colored by cell cluster is shown on the left and ovalbumin sig
 
 # Plot OVA counts
 ova_data <- sobj %>%
-  FetchData(c("adt_ovalbumin", cell_type_id, cluster_id)) %>%
+  FetchData(c("adt_ovalbumin", "cell_type", "cluster_id")) %>%
   as_tibble(rownames = "cell_id") %>%
-  group_by(!!sym(cell_type_id)) %>%
+  group_by(cell_type) %>%
   mutate(type_med = median(adt_ovalbumin)) %>%
-  group_by(!!sym(cluster_id)) %>%
+  group_by(cluster_id) %>%
   mutate(clust_med = median(adt_ovalbumin)) %>%
   ungroup() %>%
   arrange(type_med, clust_med) %>%
-  mutate(!!sym(cluster_id) := fct_inorder(!!sym(cluster_id)))
+  mutate(cluster_id = fct_inorder(cluster_id))
   
 ova_boxes <- ova_data %>%
-  ggplot(aes(!!sym(cluster_id), adt_ovalbumin + 0.01, color = !!sym(cluster_id))) +
+  ggplot(aes(cluster_id, adt_ovalbumin + 0.01, color = cluster_id)) +
   geom_quasirandom(size = 0.5) +
   scale_color_manual(values = clust_cols) +
   scale_y_log10() +
@@ -260,8 +271,8 @@ fig_markers <- cell_types %>%
     find_group_markers(
       input_grp  = .x,
       input_sobj = sobj,
-      grp_col    = cell_type_id,
-      clust_col  = cluster_id
+      grp_col    = "cell_type",
+      clust_col  = "cluster_id"
     )
   }) %>%
   compact() %>%
@@ -272,8 +283,8 @@ create_marker_panel_v2(
   input_sobj    = sobj,
   input_markers = fig_markers,
   input_cols    = clust_cols,
-  grp_column    = cell_type_id,
-  clust_column  = cluster_id
+  grp_column    = "cell_type",
+  clust_column  = "cluster_id"
 )
 
 ```
@@ -285,6 +296,12 @@ Cells were divided into groups based on ovalbumin signal. The ovalbumin groups a
 
 # Determine number of OVA groups
 n_grps <- floor(ncol(sobj) / 100)
+
+n_grps <- case_when(
+  n_grps > 6 ~ 6,
+  n_grps < 2 ~ 2,
+  TRUE ~ n_grps
+)
 
 if (n_grps > 6) {
   n_grps <- 6
@@ -325,7 +342,8 @@ sobj <- sobj %>%
 ova_grp_umap <- sobj %>%
   plot_features(
     feature    = "ova_group",
-    plot_cols  = ova_cols
+    plot_cols  = ova_cols,
+    pt_size    = umap_pt_size
   ) +
   guides(color = col_guide) +
   ggtitle("Ovalbumin Group") +
@@ -341,7 +359,8 @@ ova_grp_umap <- sobj %>%
 ova_umap <- sobj %>%
   plot_features(
     feature   = "adt_ovalbumin",
-    plot_cols = c("#fafafa", type_cols[2])
+    plot_cols = c("#fafafa", type_cols[2]),
+    pt_size   = umap_pt
   ) +
   ggtitle("adt_ovalbumin") +
   blank_theme +
@@ -377,7 +396,7 @@ type_bar <- sobj %>%
   plot_cell_count(
     group_id = "ova_group",
     split_id = NULL,
-    fill_id = cell_type_id,
+    fill_id = "cell_type",
     plot_colors = type_cols
   ) +
   labs(x = "ova_group") +
@@ -397,7 +416,7 @@ clust_bar <- sobj %>%
   plot_cell_count(
     group_id = "ova_group",
     split_id = NULL,
-    fill_id = cluster_id,
+    fill_id = "cluster_id",
     plot_colors = clust_cols
   ) +
   labs(x = "ova_group") +
@@ -490,9 +509,9 @@ GO_ova_data <- top_terms %>%
       pull(cluster)
     
     ova_counts <- sobj %>%
-      FetchData(c(cluster_id, "adt_ovalbumin")) %>%
+      FetchData(c("cluster_id", "adt_ovalbumin")) %>%
       as_tibble(rownames = "cell_id") %>%
-      filter(!!sym(cluster_id) %in% clusts) %>%
+      filter(cluster_id %in% clusts) %>%
       mutate(term_name = .x)
   }) %>%
   compact() %>%
@@ -525,5 +544,114 @@ GO_box_data %>%
   # mutate(term_name = fct_inorder(term_name)) %>%
 
 ```
+
+```{r "{{.y}} GO TEST", eval = F, echo = F}
+
+# Find markers
+Idents(sobj) <- sobj %>%
+  FetchData("ova_group")
+
+test_markers <- sobj %>%
+  FindAllMarkers(only.pos = T) %>%
+  as_tibble() %>%
+  filter(p_val_adj < 0.05)
+
+# Filter markers for OVA group
+grp_markers <- test_markers %>%
+  filter(cluster == 6) %>%
+  pull(gene)
+
+# Run gprofiler2
+test_GO <- grp_markers %>%
+  run_gprofiler(
+    genome        = "GRCm",
+    ordered_query = T,
+    evcodes       = T
+  )
+
+# Extract intersecting genes
+antigen_genes <- test_GO[[1, "intersection"]] %>%
+  str_split(",") %>%
+  .[[1]]
+
+# Add module score
+test_so <- sobj %>%
+  AddModuleScore(
+    assay    = "RNA",
+    features = list(antigen_genes),
+    name     = "antigen",
+    ctrl     = 50
+  )
+
+# UMAP showing antigen module score
+test_so %>%
+  plot_features(
+    feature   = "antigen1",
+    pt_size   = 1
+  ) +
+  guides(color = col_guide) +
+  blank_theme
+
+# UMAP showing OVA signal
+test_so %>%
+  plot_features(
+    feature   = "adt_ovalbumin",
+    pt_size   = 1
+  ) +
+  guides(color = col_guide) +
+  blank_theme
+
+# UMAP showing OVA group
+test_so %>%
+  plot_features(
+    feature   = "ova_group",
+    plot_cols = theme_cols,
+    pt_size   = 1,
+    feat_levels = c("6", "5", "4", "3", "2", "1")
+  ) +
+  guides(color = col_guide) +
+  blank_theme
+
+
+
+# mart_obj <- useMart(
+#   biomart = "ensembl", 
+#   dataset = "mmusculus_gene_ensembl",
+#   verbose = T
+# )
+
+# antigen_genes <- getBM(
+#   attributes = c("ensembl_gene_id","external_gene_name"), 
+#   filters    = "go",
+#   values     = "GO:0002495",
+#   mart       = mart_obj
+# )
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

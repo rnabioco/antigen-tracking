@@ -451,7 +451,7 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
 
 # Run gprofiler
 run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL,
-                          dbases = c("GO:BP", "GO:MF", "GO:CC", "KEGG"), ...) {
+                          dbases = c("GO:BP", "GO:MF", "KEGG"), ...) {
   
   # Check for empty gene list
   if (is_empty(gene_list)) {
@@ -516,7 +516,7 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
       term_id = str_remove(term_id, "(GO|KEGG):"),
       term_id = str_c(term_id, " ", term_name),
       term_id = str_to_lower(term_id),
-      term_id = str_trunc(term_id, 29, "right"),
+      term_id = str_trunc(term_id, 40, "right"),
       source = fct_recode(source,
         "Biological\nProcess" = "GO:BP",
         "Cellular\nComponent" = "GO:CC",
@@ -739,26 +739,14 @@ create_marker_boxes <- function(input_sobj, input_markers, type_id, box_cols,
   }
   
   # Add blank space for missing facets
-  n_key <- n_distinct(box_data$key)
+  n_keys <- n_distinct(box_data$key)
   
-  if (n_key <= n_cols) {
-    res_f <- n_key / n_cols
-    blank_f <- 1 - res_f
-
-    blank <- ggplot() +
-      geom_blank() +
-      theme_void()
-
-    top_panel <- plot_grid(
-      res, blank,
-      rel_widths = c(res_f, blank_f),
-      nrow = 1
-    )
-
-    res <- plot_grid(
-      top_panel, blank,
-      nrow = 2
-    )
+  if (n_keys <= n_cols) {
+    res <- res %>%
+      plot_grid(
+        ncol = floor(n_cols / n_keys),
+        nrow = 2
+      )
   }
   
   res
@@ -848,6 +836,14 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, type_i
     axis        = "rl"
   )
   
+  if (nrow(input_markers) < n_boxes) {
+    res <- plot_grid(
+      marks_umap, marks_boxes, GO_bubbles,
+      rel_heights = fig_heights,
+      ncol        = 1
+    )
+  }
+  
   res
 }
 
@@ -862,7 +858,7 @@ set_cluster_order <- function(input_cols, input_marks) {
 
 
 # Create v1 panel for marker genes
-create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, 
+create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, order_boxes = T,
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)), ...) {
   
   # Find marker genes
@@ -875,8 +871,6 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
     filter(p_val_adj < 0.05)
   
   # Set cluster order
-  order_boxes <- T
-  
   fig_clusters <- input_cols %>%
     set_cluster_order(markers)
   

@@ -16,17 +16,15 @@ params:
   rds_dir: "Shannons_sobjs"
   cell_types:
     - "DC"
-    - "LEC"
-    - "FRC"
+    # - "LEC"
+    # - "FRC"
   time_points:
-    - "d2"
-    - "d14"
+    # - "d2"
+    # - "d14"
     - "n14"
 ---
 
 ---
-
-<br>
 
 <br>
 

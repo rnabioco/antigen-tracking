@@ -346,7 +346,7 @@ create_marker_panel_v2(
 ### Ovalbumin Markers
 
 Cells were divided into groups based on ovalbumin signal. A UMAP projection showing the ovalbumin groups included on the left and the fraction of cells belonging to each group is shown on the right. 
-```{r "{{.x}} OVA cluster summary", fig.width = 6.4, fig.height = 4.3}
+```{r "{{.x}} OVA cluster summary", fig.width = 7, fig.height = 4.3}
 
 # Determine number of OVA groups
 n_grps <- floor(ncol(sobj) / 100)
@@ -450,7 +450,7 @@ ova_bars <- sobj %>%
 # Create final figure
 plot_grid(
   ova_umap, ova_boxes, ova_bars,
-  rel_widths = c(0.55, 0.25, 0.2),
+  rel_widths = c(0.55, 0.3, 0.3),
   nrow       = 1,
   align      = "h",
   axis       = "trbl"
