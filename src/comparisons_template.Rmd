@@ -3,14 +3,6 @@
 
 comparison <- c("{{.x[1]}}", "{{.x[2]}}")
 
-if ({{.y}} > 2) {
-  comparison[{{.y}}] <- c("{{.x[3]}}")
-}
-
-if ({{.y}} > 3) {
-  stop("Comparisons cannot include more than three groups.")
-}
-
 rds_files <- str_c(comparison, "_so.rds") %>%
   file.path(params$rds_dir, .)
 
@@ -124,9 +116,9 @@ ova_boxes <- sobj %>%
   FetchData(c("orig.ident", "adt_ovalbumin")) %>%
   as_tibble(rownames = "cell_id") %>%
   ggplot(aes(orig.ident, adt_ovalbumin + 0.01, color = orig.ident)) +
-  geom_quasirandom(size = 1, color = "black") +
-  geom_quasirandom(size = 0.5) +
-  stat_summary(fun = "median", geom = "point", shape = 21, size = 2, show.legend = F, fill = "white", color = "black", stroke = 0.5) +
+  geom_quasirandom(size = 0.5, color = "black") +
+  geom_quasirandom(size = 0.25) +
+  stat_summary(fun = "median", geom = "point", shape = 22, size = 1.5, show.legend = F, fill = "white", color = "black", stroke = 0.5) +
   scale_color_manual(values = sample_cols) +
   scale_y_log10() +
   guides(color = col_guide) +
@@ -351,13 +343,11 @@ Cells were divided into groups based on ovalbumin signal. A UMAP projection show
 # Determine number of OVA groups
 n_grps <- floor(ncol(sobj) / 100)
 
-if (n_grps > 6) {
-  n_grps <- 6
-}
-
-if (n_grps < 2) {
-  n_grps <- 2
-}
+n_grps <- case_when(
+  n_grps > 6 ~ 6,
+  n_grps < 2 ~ 2,
+  TRUE ~ n_grps
+)
 
 # Set OVA colors
 ova_cols <- c(
@@ -411,8 +401,8 @@ ova_boxes <- sobj %>%
   FetchData(c("adt_ovalbumin", "orig.ident", "ova_group")) %>%
   as_tibble(rownames = "cell_id") %>%
   ggplot(aes(orig.ident, adt_ovalbumin + 0.01, color = ova_group)) +
-  geom_quasirandom(size = 1, color = "black") +
-  geom_quasirandom(size = 0.5) +
+  geom_quasirandom(size = 0.5, color = "black") +
+  geom_quasirandom(size = 0.25) +
   scale_color_manual(values = ova_cols) +
   guides(color = col_guide) +
   scale_y_log10() +
@@ -450,7 +440,7 @@ ova_bars <- sobj %>%
 # Create final figure
 plot_grid(
   ova_umap, ova_boxes, ova_bars,
-  rel_widths = c(0.55, 0.3, 0.3),
+  rel_widths = c(0.55, 0.33, 0.27),
   nrow       = 1,
   align      = "h",
   axis       = "trbl"
@@ -505,18 +495,13 @@ create_marker_panel_v2(
 
 ```
 
-
-
 ```{r "{{.x}} OVA CLUSTERS", fig.width = 8.5, fig.height = 13, results = "asis", eval = F, echo = F}
 
 # OVA markers
 Idents(sobj) <- sobj %>%
   FetchData("ova_group")
 
-ova_markers <- sobj %>%
-  FindAllMarkers(only.pos = T) %>%
-  as_tibble() %>%
-  filter(p_val_adj < 0.05)
+ova_markers <- find_markers(sobj)
 
 # OVA cluster plots
 for (i in seq_along(ova_cols)) {

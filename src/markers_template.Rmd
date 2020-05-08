@@ -7,7 +7,9 @@ rds_file <- str_c(rds_name, "_so.rds")
 
 sobj <- read_rds(file.path(params$rds_dir, rds_file))
 
-umap_pt_size <- if_else(ncol(sobj) > 500, 0.25, 1)
+mtplyr_1 <- if_else(ncol(sobj) < 500, 3, 1)
+mtplyr_2 <- if_else(ncol(sobj) < 500, 6, 1)
+
 cell_type_id <- str_c("cell_type", rds_type)
 cluster_id   <- str_c(cell_type_id, "2")
 
@@ -64,7 +66,7 @@ type_umap <- sobj %>%
     feature     = "cell_type",
     plot_cols   = type_cols,
     feat_levels = names(type_cols),
-    pt_size     = umap_pt_size
+    pt_size     = 0.25 * mtplyr_2
   ) +
   guides(color = guide_legend(override.aes = list(size = 3.5), nrow = 3)) +
   blank_theme +
@@ -82,7 +84,7 @@ ova_data <- sobj %>%
   
 ova_boxes <-ova_data %>%
   ggplot(aes(cell_type, adt_ovalbumin + 0.01, color = cell_type)) +
-  geom_quasirandom(size = 0.5) +
+  geom_quasirandom(size = 0.5 * mtplyr_1) +
   scale_color_manual(values = type_cols) +
   scale_y_log10() +
   coord_flip() +
@@ -153,7 +155,7 @@ clust_umap <- sobj %>%
     feature     = "cluster_id",
     plot_cols   = clust_cols,
     feat_levels = names(clust_cols),
-    pt_size     = umap_pt_size
+    pt_size     = 0.25 * mtplyr_2
   ) +
   guides(color = guide_legend(override.aes = list(size = 3.5), nrow = 10)) +
   blank_theme +
@@ -167,7 +169,7 @@ ova_data <- sobj %>%
   
 ova_boxes <- ova_data %>%
   ggplot(aes(cluster_id, adt_ovalbumin + 0.01, color = cluster_id)) +
-  geom_quasirandom(size = 0.25) +
+  geom_quasirandom(size = 0.25 * mtplyr_2) +
   scale_color_manual(values = clust_cols) +
   scale_y_log10() +
   coord_flip() +
@@ -234,7 +236,7 @@ ova_data <- sobj %>%
   
 ova_boxes <- ova_data %>%
   ggplot(aes(cluster_id, adt_ovalbumin + 0.01, color = cluster_id)) +
-  geom_quasirandom(size = 0.5) +
+  geom_quasirandom(size = 0.25 * mtplyr_2) +
   scale_color_manual(values = clust_cols) +
   scale_y_log10() +
   coord_flip() +
@@ -303,14 +305,6 @@ n_grps <- case_when(
   TRUE ~ n_grps
 )
 
-if (n_grps > 6) {
-  n_grps <- 6
-}
-
-if (n_grps < 2) {
-  n_grps <- 2
-}
-
 # Set OVA colors
 ova_cols <- c(
   "#e31a1c",  # red
@@ -343,7 +337,7 @@ ova_grp_umap <- sobj %>%
   plot_features(
     feature    = "ova_group",
     plot_cols  = ova_cols,
-    pt_size    = umap_pt_size
+    pt_size    = 0.25 * mtplyr_2
   ) +
   guides(color = col_guide) +
   ggtitle("Ovalbumin Group") +
@@ -360,7 +354,7 @@ ova_umap <- sobj %>%
   plot_features(
     feature   = "adt_ovalbumin",
     plot_cols = c("#fafafa", type_cols[2]),
-    pt_size   = umap_pt
+    pt_size   = 0.25 * mtplyr_2
   ) +
   ggtitle("adt_ovalbumin") +
   blank_theme +
@@ -551,10 +545,7 @@ GO_box_data %>%
 Idents(sobj) <- sobj %>%
   FetchData("ova_group")
 
-test_markers <- sobj %>%
-  FindAllMarkers(only.pos = T) %>%
-  as_tibble() %>%
-  filter(p_val_adj < 0.05)
+test_markers <- find_markers(sobj)
 
 # Filter markers for OVA group
 grp_markers <- test_markers %>%
