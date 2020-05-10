@@ -161,7 +161,7 @@ create_marker_panel_v1(
   input_umap   = fig_umap,
   clust_column = "orig.ident",
   n_boxes      = 18,
-  all_boxes    = T
+  all_violins    = T
 )
 
 ```
@@ -330,7 +330,7 @@ create_marker_panel_v2(
   clust_column  = "sample_types", 
   color_guide   = outline_guide,
   n_boxes       = 18,
-  all_boxes     = T
+  all_violins     = T
 )
 
 ```
@@ -351,12 +351,12 @@ n_grps <- case_when(
 
 # Set OVA colors
 ova_cols <- c(
-  "#e31a1c",  # red
-  "#fec44f",  # yellow
-  "#6a51a3",  # purple
-  "#225ea8",  # blue
-  "#ec7014",  # orange
-  "#238443"   # green
+  "#6a51a3",  # purple 1
+  "#8073ac",  # purple 2
+  "#9e9ac8",  # purple 3
+  "#ECBA96",  # red 3
+  "#fb6a4a",  # red 2
+  "#e31a1c"   # red 1
 )
 
 names(ova_cols) <- as.character(1:n_grps)
@@ -490,7 +490,7 @@ create_marker_panel_v2(
   clust_column  = "ova_sam_grp", 
   color_guide   = outline_guide,
   n_boxes       = 18,
-  all_boxes     = T
+  all_violins     = T
 )
 
 ```

@@ -1,5 +1,5 @@
 
-```{r "Functions"}
+```{r "Functions", echo = F}
 
 # Functions
 
@@ -41,6 +41,21 @@ fade_colors <- function(cols_in, hue_frac = 0.4) {
       c_mat <- rgb2hsv(col2rgb(.x)) * matrix(c(1, hue_frac, 1))
       hsv(c_mat[1, ], c_mat[2, ], c_mat[3, ])
     })
+  
+  res
+}
+
+# Plot color palette
+plot_color_palette <- function(input_cols) {
+  
+  col_data <- tibble(color = input_cols) %>%
+    mutate(color =  fct_inorder(color))
+  
+  res <- col_data %>%
+    ggplot(aes(x = "color", fill = color)) +
+    geom_bar() +
+    scale_fill_manual(values = input_cols) +
+    theme_void()
   
   res
 }
@@ -378,7 +393,7 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
   GO_data <- GO_data %>%
     mutate(source = fct_relevel(source, plot_levels))
   
-  # Extract top 8 terms for each database
+  # Extract top terms for each database
   top_GO <- GO_data %>%
     group_by(source) %>%
     arrange(p_value) %>%
@@ -388,7 +403,7 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
   # Create bubble plots
   res <- GO_data %>%
     ggplot(aes(1.25, -log10(p_value), size = intersection_size)) +
-    geom_point(color = plot_colors, alpha = 0.5, show.legend = F) +
+    geom_point(color = plot_colors, alpha = 0.5, show.legend = T) +
     geom_text_repel(
       aes(2, -log10(p_value), label = term_id),
       data         = top_GO,
@@ -401,7 +416,6 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
     labs(y = "-log10(p-value)") +
     theme_info +
     theme(
-      legend.position = "none",
       axis.title.x    = element_blank(),
       axis.text.x     = element_blank(),
       axis.ticks.x    = element_blank()
@@ -503,7 +517,9 @@ create_marker_umaps <- function(input_sobj, input_markers, umap_col, add_outline
           legend.title      = element_blank(),
           legend.text       = element_text(size = 8),
           legend.key.height = unit(0.1, "cm"),
-          legend.key.width  = unit(0.3, "cm")
+          legend.key.width  = unit(0.3, "cm"),
+          axis.title.y      = element_text(size = 13, color = "white"),
+          axis.text.y       = element_text(size = 8, color = "white")
         )
     })
   
@@ -513,7 +529,8 @@ create_marker_umaps <- function(input_sobj, input_markers, umap_col, add_outline
 # Create boxplots showing marker gene signal
 create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_cols,
                                 group = NULL, include_legend = F, all_boxes = F,
-                                order_boxes = T, n_boxes = 10, pt_mtplyr = 1) {
+                                all_violins = F, order_boxes = T, n_boxes = 10, 
+                                pt_mtplyr = 1, ...) {
   
   # Retrieve and format data for boxplots
   box_data <- input_sobj %>%
@@ -551,7 +568,6 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
     scale_color_manual(values = box_cols) +
     theme_info +
     theme(
-      plot.margin      = unit(c(0.9, 0.2, 0.2, 0.2), "cm"),
       panel.spacing.x  = unit(0.7, "cm"),
       strip.background = element_blank(),
       strip.text       = element_text(size = 13),
@@ -565,24 +581,30 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
     )
   
   # Adjust output plot type
-  if (n_clust < 9 && !all_boxes) {
-    pt_size <- 0.3 * pt_mtplyr
-    
+  if (n_clust > 9 || all_boxes) {
     res <- res +
-      geom_quasirandom(size = pt_size)
+      geom_boxplot(aes(fill = !!sym(clust_column), color = !!sym(clust_column)), size = 0, outlier.color = "#f0f0f0", outlier.size = 0.25) +
+      stat_summary(fun = "median", geom = "point", shape = 22, size = 1, fill = "white") +
+      scale_fill_manual(values = box_cols) +
+      theme(...)
     
-  } else if (all_boxes) {
+  } else if (all_violins) {
     res <- res +
       geom_violin(aes(fill = !!sym(clust_column)), color = "black", size = 0.2) +
       stat_summary(fun = "median", geom = "point", color = "black", shape = 22, size = 1, fill = "white") +
       scale_fill_manual(values = box_cols) +
-      theme(panel.spacing.x = unit(0.2, "cm"))
+      theme(
+        strip.text = element_text(size = 11),
+        panel.spacing.x = unit(0.2, "cm"),
+        ...
+      )
     
   } else {
+    pt_size <- 0.3 * pt_mtplyr
+    
     res <- res +
-      geom_boxplot(aes(fill = !!sym(clust_column), color = !!sym(clust_column)), size = 0, outlier.color = "#f0f0f0", outlier.size = 0.25) +
-      stat_summary(fun = "median", geom = "point", shape = 22, size = 1, fill = "white") +
-      scale_fill_manual(values = box_cols)
+      geom_quasirandom(size = pt_size) +
+      theme(...)
   }
   
   # Add legend
@@ -598,7 +620,7 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
   if (n_keys <= n_cols) {
     res <- res %>%
       plot_grid(
-        ncol = floor(n_cols / n_keys),
+        ncol = floor(n_cols / n_keys) - 1,
         nrow = 2
       )
   }
@@ -608,7 +630,7 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
 
 # Create figure summarizing marker genes
 create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_column, 
-                              input_umap, umap_color, fig_heights = c(0.46, 0.3, 0.25), 
+                              input_umap, umap_color, fig_heights = c(0.46, 0.3, 0.3), 
                               box_colors, n_boxes = 10, umap_outline = NULL,
                               umap_mtplyr = 1, ...) {
   
@@ -664,6 +686,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_
         clust_column  = clust_column,
         box_cols      = box_colors,
         n_boxes       = n_boxes,
+        plot.margin   = unit(c(0.8, 0.2, 0.2, 0.2), "cm"),
         ...
       )
     
@@ -677,12 +700,16 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_
       GO_bubbles <- input_GO %>%
         create_bubbles(plot_colors = umap_color) +
         theme(
-          plot.margin      = unit(c(1, 0.2, 0.2, 0.2), "cm"),
+          plot.margin      = unit(c(0.8, 0.2, 0.2, 0.2), "cm"),
           strip.background = element_blank(),
           strip.text       = element_text(size = 13),
           axis.title.y     = element_text(size = 13),
           axis.text.y      = element_text(size = 8),
-          axis.line.x      = element_blank()
+          axis.line.x      = element_blank(),
+          
+          legend.position = "bottom",
+          legend.title    = element_blank(),
+          legend.text     = element_text(size = 8)
         )
     }
   }
@@ -706,15 +733,19 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_
   res
 }
 
-# Get colors for markers
-set_cluster_order <- function(input_cols, input_marks) {
+# Filter clusters, set colors and order
+set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
+  input_marks %>%
+    group_by(cluster) %>%
+    filter(n() >= n_cutoff) %>%
+    ungroup()
+  
   marks <- unique(input_marks$cluster)
   res   <- names(input_cols)
   res   <- res[res %in% marks]
   
   res
 }
-
 
 # Create v1 panel for marker genes
 create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, order_boxes = T,
@@ -771,7 +802,7 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
     }
     
     # Create panel
-    marker_fig <- sobj %>%
+    marker_fig <- input_sobj %>%
       create_marker_fig(
         input_markers = fig_marks,
         clust_column  = clust_column,
@@ -846,7 +877,7 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
       )
     
     # Create panel
-    marker_fig <- sobj %>%
+    marker_fig <- input_sobj %>%
       create_marker_fig(
         input_markers = fig_marks,
         clust_column  = clust_column,
@@ -866,7 +897,7 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
 
 ```
 
-```{r "Load_packages", include = F}
+```{r "Packages", include = F}
 
 # Default chunk options
 knitr::opts_chunk$set(message = F, warning = F)
@@ -874,15 +905,14 @@ knitr::opts_chunk$set(message = F, warning = F)
 # Load packages
 R_packages <- c(
   "tidyverse", "Matrix",
-  "devtools",  "circlize",
-  "stringr",   "knitr",
+  "devtools",  "Seurat",
+  "stringr",   "gprofiler2",
+  "R.utils",   "circlize",  
+  "knitr",     "ggridges",
   "cowplot",   "ComplexHeatmap",
-  "Seurat",    "gprofiler2",
   "ggrepel",   "RColorBrewer",
-  "clustifyr", "KEGGREST",
-  "R.utils",   "colorblindr",
-  "ggridges",  "kableExtra",
-  "ggbeeswarm"
+  "clustifyr", "ggbeeswarm",
+  "colorblindr"
 )
 
 install_packages(R_packages)
@@ -898,7 +928,11 @@ install_packages(
   install_cmd  = "BiocManager::install"
 )
 
-# Theme info
+```
+
+```{r "Themes", echo = F}
+
+# ggplot2 themes
 theme_info <- theme_cowplot() +
   theme(
     plot.title       = element_text(face = "plain", size = 20),
@@ -918,7 +952,17 @@ blank_theme <- umap_theme +
     axis.title = element_blank()
   )
 
-# Create color palette
+# Legend guides
+col_guide <- guide_legend(override.aes = list(size = 3.5, shape = 16))
+
+outline_guide <- guide_legend(override.aes = list(
+  size   = 3.5,
+  shape  = 21,
+  color  = "black",
+  stroke = 0.25
+))
+
+# Create color palettes
 theme_cols <- c(
   "#225ea8",  # blue
   "#e31a1c",  # red
@@ -932,15 +976,68 @@ theme_cols <- c(
 
 theme_cols <- theme_cols %>%
   fade_colors() %>%
-  c(theme_cols[1:5], "#8c510a", "#fec44f", theme_cols[6:8], "#737373", "#000000", .)
+  c(
+    theme_cols[1:5], "#8c510a", "#fec44f", 
+    theme_cols[6:8], "#737373", "#000000",
+    palette_OkabeIto, .
+  )
 
-col_guide <- guide_legend(override.aes = list(size = 3.5, shape = 16))
-
-outline_guide <- guide_legend(override.aes = list(
-  size   = 3.5,
-  shape  = 21,
-  color  = "black",
-  stroke = 0.25
-))
+theme_cols_threes <- list(
+  neon = c(
+    "#c51b7d",
+    "#fec44f",
+    "#000000"
+  ),
+  
+  oranges_blue = c(
+    "#ec7014",
+    "#fec44f",
+    "#225ea8"
+  ),
+  
+  light_blues_red = c(
+    "#e31a1c",
+    "#728AA8",
+    "#90BEC4"
+  ),
+  
+  green_aqua_purple = c(
+    "#41b6c4",
+    "#01665e",
+    "#6a51a3"
+  ),
+  
+  sky_purple_pink = c(
+    "#56B4E9", 
+    "#8C82A3",
+    "#C581AB"
+  ),
+  
+  pinks_grey = c(
+    "#E39393",
+    "#8c510a",
+    "#737373"
+  ),
+  
+  OkabeIto = c(
+    "#F0E442",
+    "#0072B2",
+    "#D55E00"
+  ),
+  
+  pink_grey_yellow = c(
+    "#CC79A7",
+    "#3E6663",
+    "#E69F00"
+  ),
+  
+  beige_grey_green = c(
+    "#ECBA96",
+    "#999999",
+    "#238443"    
+  )
+)
 
 ```
+
+```{r "Functions, packages, theme", ref.label = c("Functions", "Packages", "Themes"), eval = F, echo = T}
