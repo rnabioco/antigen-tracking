@@ -618,9 +618,12 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
   n_keys <- n_distinct(box_data$key)
   
   if (n_keys <= n_cols) {
+    n_keys <- if_else(n_keys == 1, 2, as.double(n_keys))
+    n_cols <- floor(n_cols / n_keys)
+    
     res <- res %>%
       plot_grid(
-        ncol = floor(n_cols / n_keys) - 1,
+        ncol = n_cols,
         nrow = 2
       )
   }
@@ -785,12 +788,15 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
       umap_levels <- c(umap_levels, umap_col) %>%
         names()
       
+      ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
+      
       ref_umap <- input_sobj %>%
         plot_features(
           feature     = clust_column,
+          pt_size     = 0.1 * ref_mtplyr,
+          pt_outline  = 0.4,
           plot_cols   = input_cols,
-          feat_levels = umap_levels,
-          pt_size     = 0.25 * umap_mtplyr
+          feat_levels = umap_levels
         ) +
         guides(color = color_guide) +
         blank_theme +

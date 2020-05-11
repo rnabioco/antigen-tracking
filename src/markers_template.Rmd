@@ -65,11 +65,8 @@ type_cols <- type_cols[!is.na(names(type_cols))]
 type_umap <- sobj %>%
   plot_features(
     feature     = "cell_type",
-    
-    pt_size    = 0.1 * mtplyr_3,
-    pt_outline = 0.4,
-    # pt_size     = 0.25 * mtplyr_2
-    
+    pt_size     = 0.1 * mtplyr_3,
+    pt_outline  = 0.4,
     plot_cols   = type_cols,
     feat_levels = names(type_cols)
   ) +
@@ -156,11 +153,8 @@ clust_cols <- clust_cols[!is.na(names(clust_cols))]
 clust_umap <- sobj %>%
   plot_features(
     feature     = "cluster_id",
-    
     pt_size     = 0.1 * mtplyr_3,
     pt_outline  = 0.4,
-    # pt_size     = 0.25 * mtplyr_2
-    
     plot_cols   = clust_cols,
     feat_levels = names(clust_cols),
   ) +
@@ -341,11 +335,8 @@ sobj <- sobj %>%
 ova_grp_umap <- sobj %>%
   plot_features(
     feature    = "ova_group",
-    
     pt_size    = 0.1 * mtplyr_3,
     pt_outline = 0.4,
-    # pt_size  = 0.25 * mtplyr_2,
-    
     plot_cols  = ova_cols
   ) +
   guides(color = col_guide) +
@@ -361,13 +352,10 @@ ova_grp_umap <- sobj %>%
 # OVA UMAP
 ova_umap <- sobj %>%
   plot_features(
-    feature   = "adt_ovalbumin",
-    
+    feature    = "adt_ovalbumin",
     pt_size    = 0.1 * mtplyr_3,
     pt_outline = 0.4,
-    # pt_size  = 0.25 * mtplyr_2,
-    
-    plot_cols = c("#fafafa", type_cols[2])
+    plot_cols  = c("#fafafa", type_cols[2])
   ) +
   ggtitle("adt_ovalbumin") +
   blank_theme +
@@ -383,9 +371,7 @@ ova_umap <- sobj %>%
 # OVA hist
 ova_hist <- sobj@meta.data %>%
   ggplot(aes(adt_ovalbumin + 0.01, fill = ova_group)) +
-  
   geom_histogram(position = "identity", bins = 30) +
-  
   scale_fill_manual(values = ova_cols) +
   scale_x_log10() +
   guides(fill = guide_legend(ncol = 1)) +

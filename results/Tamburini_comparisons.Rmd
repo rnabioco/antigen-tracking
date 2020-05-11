@@ -13,13 +13,12 @@ output:
     highlight: "kate"
 params:
   template_dir: "../src"
-  rds_dir: "Shannons_sobjs"
+  rds_dir: "../sobjs/so"
   comparisons:
     value:
       - ["d2_DC", "d14_DC"]
       - ["d2_LEC", "d14_LEC"]
       - ["d2_FRC", "d14_FRC"]
-      - ["n14_LEC", "d14_LEC"]
 ---
 
 ---
