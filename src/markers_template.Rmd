@@ -530,7 +530,7 @@ ova_grp_umap <- sobj %>%
     plot_cols   = type_ova_cols,
     feat_levels = names(type_ova_cols)
   ) +
-  guides(color = guide_legend(override.aes = list(size = 3.5, shape = 16), ncol = 2)) +
+  guides(color = guide_legend(override.aes = list(size = 3.5, shape = 16), nrow = 10)) +
   blank_theme +
   theme(
     legend.position = "bottom",
@@ -682,22 +682,33 @@ Idents(sobj) <- sobj %>%
   FetchData("ova_group")
 
 test_markers <- find_markers(sobj)
-
-# Filter markers for OVA group
-grp_markers <- test_markers %>%
-  filter(cluster == 6) %>%
-  pull(gene)
+clusts <- unique(test_markers$cluster)
 
 # Run gprofiler2
-test_GO <- grp_markers %>%
-  run_gprofiler(
-    genome        = "GRCm",
-    ordered_query = T,
-    evcodes       = T
+test_GO <- clusts %>%
+  map(~ {
+    test_markers %>%
+      filter(cluster == .x) %>%
+      pull(gene) %>%
+      run_gprofiler(
+        genome = "GRCm",
+        evcodes = T
+      ) %>%
+      mutate(key = .x)
+  }) %>%
+  bind_rows() %>%
+  dplyr::select(
+    p_value,    term_size, 
+    query_size, intersection_size, 
+    term_id,    source, 
+    term_name,  intersection,
+    key
   )
 
 # Extract intersecting genes
-antigen_genes <- test_GO[[1, "intersection"]] %>%
+antigen_genes <- test_GO %>%
+  filter(key == 1) %>%
+  .[[2, "intersection"]] %>%
   str_split(",") %>%
   .[[1]]
 
