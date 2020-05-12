@@ -1,6 +1,7 @@
 
 ```{r "{{.y}} Setup", echo = F}
 
+# Load Seurat object
 rds_type <- "{{.x}}"
 rds_name <- "{{.y}}"
 rds_file <- str_c(rds_name, "_so.rds")
@@ -41,16 +42,20 @@ sobj@meta.data <- sobj@meta.data %>%
   ) %>%
   column_to_rownames("cell_id")
 
+# Section descriptions
+marker_desc <- "Gene expression signal is shown for the top marker genes (top, middle)."
+GO_desc <- "GO terms were identified for marker genes, the top terms are labeled, the size of each point indicates the number of overlapping genes (bottom)."
+
 ```
 
 ## **`r rds_name`**
 
-### Cell Type Markers
+### Subtype Markers
 
-A UMAP projection colored by cell type is shown on the left and ovalbumin signal for each cell type is shown on the right.
-```{r "{{.y}} Cell type OVA", fig.width = 9, fig.height = 5}
+A UMAP projection colored by subtype is shown on the left and ovalbumin signal for each subtype is shown on the right.
+```{r "{{.y}} Subtype OVA", fig.width = 9, fig.height = 5}
 
-# Set cell type order and colors
+# Set subtype order and colors
 cell_types <- sobj@meta.data %>%
   pull(cell_type) %>%
   unique()
@@ -61,7 +66,7 @@ type_cols <- theme_cols
 names(type_cols) <- cell_types
 type_cols <- type_cols[!is.na(names(type_cols))]
 
-# Cell type UMAP
+# Subtype UMAP
 type_umap <- sobj %>%
   plot_features(
     feature     = "cell_type",
@@ -111,8 +116,8 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing all cell types. Gene expression signal is shown for the top marker genes for each cell type (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
-```{r "{{.y}} Cell type markers", fig.width = 8.5, fig.height = 14, results = "asis"}
+Marker genes were identified by comparing all subtypes. `r marker_desc` `r GO_desc`
+```{r "{{.y}} Subtype markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
 fig_umap <- type_umap +
@@ -195,7 +200,7 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing all clusters. Gene expression signal is shown for the top marker genes for each cluster (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
+Marker genes were identified by comparing all clusters. `r marker_desc` `r GO_desc`
 ```{r "{{.y}} Cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
@@ -216,10 +221,10 @@ create_marker_panel_v1(
 
 ```
 
-### Cell Type Cluster Markers
+### Subtype Cluster Markers
 
-A UMAP projection colored by cell cluster is shown on the left and ovalbumin signal for each cluster is shown on the right. Clusters are grouped by cell type.
-```{r "{{.y}} Cell type cluster OVA", fig.width = 9, fig.height = 4.2}
+A UMAP projection colored by cell cluster is shown on the left and ovalbumin signal for each cluster is shown on the right. Clusters are grouped by subtype.
+```{r "{{.y}} Subtype cluster OVA", fig.width = 9, fig.height = 4.2}
 
 # Plot OVA counts
 ova_data <- sobj %>%
@@ -263,10 +268,10 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by splitting the cells based on cell type and comparing the clusters for each cell type. Gene expression signal is shown for the top marker genes for each cell type cluster (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
-```{r "{{.y}} Cell type cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
+Marker genes were identified by splitting the cells based on subtype and comparing the clusters for each subtype. `r marker_desc` `r GO_desc`
+```{r "{{.y}} Subtype cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
-# Find cluster markers separately for each cell type
+# Find cluster markers separately for each subtype
 fig_markers <- cell_types %>%
   map(~ {
     find_group_markers(
@@ -292,7 +297,7 @@ create_marker_panel_v2(
 
 ### Ovalbumin Markers
 
-Cells were divided into groups based on ovalbumin signal. The ovalbumin groups are shown on the left and ovalbumin signal is shown on the right. The proportion of cell types and cell clusters that make up each group is shown at the bottom.
+Cells were divided into groups based on ovalbumin signal. The ovalbumin groups are shown on the left and ovalbumin signal is shown on the right. The proportion of subtypes and cell clusters that make up each group is shown at the bottom.
 ```{r "{{.y}} OVA cluster summary", fig.width = 8.5, fig.height = 9}
 
 # Determine number of OVA groups
@@ -386,7 +391,7 @@ ova_hist <- sobj@meta.data %>%
     axis.text       = element_text(size = 8),
   )
 
-# OVA cell type bar graphs
+# OVA subtype bar graphs
 type_bar <- sobj %>%
   plot_cell_count(
     group_id = "ova_group",
@@ -396,7 +401,7 @@ type_bar <- sobj %>%
   ) +
   labs(x = "ova_group") +
   guides(fill = guide_legend(ncol = 1)) +
-  ggtitle("Cell Type") +
+  ggtitle("Subtype") +
   theme(
     plot.title      = element_text(size = 13),
     legend.position = "bottom",
@@ -465,7 +470,7 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing all ovalbumin groups. Gene expression signal is shown for the top marker genes for each group (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
+Marker genes were identified by comparing all ovalbumin groups. `r marker_desc` `r GO_desc`
 ```{r "{{.y}} OVA cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
@@ -477,11 +482,12 @@ create_marker_panel_v1(
 
 ```
 
-### Cell Type Ovalbumin Markers
+### Subtype Ovalbumin Markers
 
-```{r "{{.y}} Cell type OVA groups summary", fig.width = 8.5, fig.height = 6}
+Each subtype was divided into groups based on ovalbumin signal. A UMAP projection colored by the subtype ovalbumin groups is shown on the left and ovalbumin signal is shown on the right.
+```{r "{{.y}} Subtype OVA groups summary", fig.width = 8.5, fig.height = 6}
 
-# Divide cell types based on OVA signal
+# Divide subtypes based on OVA signal
 sobj <- sobj %>%
   FetchData(c("cell_type", "adt_ovalbumin")) %>%
   rownames_to_column("cell_id") %>%
@@ -500,8 +506,7 @@ sobj <- sobj %>%
   )
 
 # Set OVA colors
-type_ova_cols <- theme_cols_threes %>%
-  sample(length(cell_types)) %>%
+type_ova_cols <- theme_cols_threes[1:length(cell_types)] %>%
   reduce(c)
 
 names(type_ova_cols) <- cell_types %>%
@@ -564,9 +569,10 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-```{r "{{.y}} Cell type OVA markers", fig.width = 8.5, fig.height = 14, results = "asis"}
+Marker genes were identified by splitting the cells based on subtype and comparing the ovalbumin groups within the subtype. `r marker_desc` `r GO_desc`
+```{r "{{.y}} Subtype OVA markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
-# Find OVA markers separately for each cell type
+# Find OVA markers separately for each subtype
 fig_markers <- cell_types %>%
   map(~ {
     find_group_markers(

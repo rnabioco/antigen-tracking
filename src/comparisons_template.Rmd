@@ -1,6 +1,7 @@
 
 ```{r "{{.x}} Setup", echo = F}
 
+# Load Seurat objects
 comparison <- c("{{.x[1]}}", "{{.x[2]}}")
 
 rds_files <- str_c(comparison, "_so.rds") %>%
@@ -11,13 +12,17 @@ names(rds_files) <- comparison
 sect_title <- comparison %>%
   reduce(str_c, sep = " ")
 
+# Section descriptions
+marker_desc <- "Gene expression signal is shown for the top marker genes (top, middle)."
+GO_desc <- "GO terms were identified for marker genes, the top terms are labeled, the size of each point indicates the number of overlapping genes (bottom)."
+
 ```
 
 ## **`r sect_title`**
 
 ### Sample Markers
 
-UMAPs showing the sample identity or ovalbumin signal is included on the left, ovalbumin signal for each sample is shown on the right
+UMAPs showing the sample identity or ovalbumin signal are included on the left, ovalbumin signal for each sample is shown on the right
 ```{r "{{.x}} Sample OVA summary", fig.width = 8.5, fig.height = 4}
 
 # Load Seurat objects
@@ -66,7 +71,7 @@ sobj <- sobjs %>%
 sample_cols <- theme_cols[1:length(sobjs)]
 names(sample_cols) <- names(sobjs)
 
-# Add cell type cluster column
+# Add subtype cluster column
 sobj@meta.data <- sobj@meta.data %>%
   rownames_to_column("cell_id") %>%
   mutate(
@@ -148,7 +153,7 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing cells from each sample. Gene expression signal is shown for the top marker genes for each sample (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
+Marker genes were identified by comparing cells from each sample. `r marker_desc` `r GO_desc`
 ```{r "{{.x}} Sample markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
@@ -166,12 +171,12 @@ create_marker_panel_v1(
 
 ```
 
-### Cell Type Markers
+### Subtype Markers
 
-UMAPs colored based on cell type or ovalbumin signal are shown below. Ovalbumin signal for each cell type is shown on the left and the composition of each sample is shown on the right.
-```{r "{{.x}} Cell type OVA summary", fig.width = 8.5, fig.height = 7.3}
+UMAPs colored based on subtype or ovalbumin signal are shown below. Ovalbumin signal for each subtype is shown on the left and the composition of each sample is shown on the right.
+```{r "{{.x}} Subtype OVA summary", fig.width = 8.5, fig.height = 7.3}
 
-# Set cell type order and colors
+# Set subtype order and colors
 cell_types <- sobj@meta.data %>%
   pull(cell_type) %>%
   unique()
@@ -194,7 +199,7 @@ sam_type_cols <- type_cols %>%
   }) %>%
   reduce(c)
 
-# Cell type UMAP
+# Subtype UMAP
 type_umap <- sobj %>%
   plot_features(
     feature    = "cell_type",
@@ -305,10 +310,10 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by splitting the cells based on cell type and comparing each sample. Gene expression signal is shown for the top marker genes for each cell type cluster (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
-```{r "{{.x}} Cell type markers", fig.width = 8.5, fig.height = 14, results = "asis"}
+Marker genes were identified by splitting the cells based on subtype and comparing each sample. `r marker_desc` `r GO_desc`
+```{r "{{.x}} Subtype markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
-# Find cell type markers
+# Find subtype markers
 fig_markers <- cell_types %>%
   map(~ {
     find_group_markers(
@@ -452,7 +457,7 @@ plot_grid(
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing the samples for each ovalbumin group. Gene expression signal is shown for the top marker genes for each group (top, middle). GO terms were identified for marker genes, the top terms are labeled (bottom).
+Marker genes were identified by comparing the samples for each ovalbumin group. `r marker_desc` `r GO_desc`
 ```{r "{{.x}} OVA cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Find markers for each OVA group
@@ -492,6 +497,90 @@ create_marker_panel_v2(
   n_boxes       = 18,
   all_violins     = T
 )
+
+```
+
+
+```{r "{{.x}} INTEGRATE ADT", eval = F, echo = F}
+
+# Load Seurat objects
+sobjs <- rds_files %>%
+  map(read_rds)
+
+# Add orig.ident and cell_type to meta.data
+sobjs <- sobjs %>%
+  imap(AddMetaData, "orig.ident") %>%
+  imap(~ {
+    col_id <- .y %>%
+      str_extract("[A-Z]+$") %>%
+      str_c("cell_type", .)
+    
+    res <- .x %>%
+      FetchData(col_id) %>%
+      AddMetaData(
+        object   = .x,
+        metadata = .,
+        col.name = "cell_type"
+      )
+    
+    if ("ova" %in% rownames(res@assays$adt)) {
+      res <- res %>%
+        FetchData("adt_ova") %>%
+        AddMetaData(
+          object = res,
+          metadata = .,
+          col.name = "adt_ovalbumin"
+        )
+    }
+    
+    res
+  })
+
+# Merge objects and run PCA, UMAP, clustering
+sobj <- sobjs %>%
+  map(norm_sobj) %>%
+  merge_sobj(sample_order = names(sobjs)) %>%
+  cluster_RNA(resolution = 0.6)
+
+
+
+
+# sobj <- sobj %>%
+#   cluster_ADT(assay = "adt")
+
+# Integrate expression and CITE-seq data
+# sobj <- sobj %>%
+#   SplitObject(split.by = "patient") %>%
+#   map(FindVariableFeatures) %>%
+#   FindIntegrationAnchors(dims = 1:40) %>%
+#   IntegrateData(
+#     new.assay.name = "RNA",
+#     dims = 1:40
+#   )
+
+# sobj[["ADT"]] <- sobj %>%
+#   SplitObject(split.by = "patient") %>%
+#   map(FindVariableFeatures, assay = "ADT") %>%
+#   FindIntegrationAnchors(assay = rep("ADT", n_patients)) %>%
+#   IntegrateData(
+#     new.assay.name = "ADT",
+#     dims = 1:10
+#   ) %>%
+#   GetAssay("ADT")
+
+# sobj <- sobj %>%
+#   ScaleData(assay = "RNA") %>%
+#   ScaleData(assay = "ADT") %>%
+#   cluster_RNA(
+#     assay      = "RNA",
+#     resolution = 0.4,
+#     dims       = 1:40,
+#     features   = rownames(.)
+#   ) %>%
+#   cluster_ADT(
+#     assay = "ADT", 
+#     resolution = 0.3
+#   )
 
 ```
 
@@ -547,7 +636,7 @@ for (i in seq_along(ova_cols)) {
 
 ```{r "{{.x}} INTEGRATE DATA", fig.width = 8.5, fig.height = 6.7, eval = F, echo = F}
 
-# Samples were integrated to correct for batch effects. UMAPs are colored by sample identity or cell type.
+# Samples were integrated to correct for batch effects. UMAPs are colored by sample identity or subtype.
 # Load Seurat objects
 sobjs <- rds_files %>%
   map(read_rds)
@@ -596,7 +685,7 @@ sobj <- sobj %>%
     col.name = c("int_UMAP_1", "int_UMAP_2")
   )
 
-# Add cell type cluster column
+# Add subtype cluster column
 sobj@meta.data <- sobj@meta.data %>%
   rownames_to_column("cell_id") %>%
   mutate(

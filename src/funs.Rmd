@@ -60,6 +60,22 @@ plot_color_palette <- function(input_cols) {
   res
 }
 
+# Filter and normalize matrices
+norm_sobj <- function(sobj_in, sample_order = NULL, adt_assay = "adt") {
+  res <- sobj_in %>%
+    NormalizeData(normalization.method = "LogNormalize")
+  
+  if (adt_assay %in% names(res)) {
+    res <- res %>%
+      NormalizeData(
+        assay = adt_assay,
+        normalization.method = "CLR"
+      )
+  }
+  
+  res
+}
+
 # Filter list of Seurat objects for patient, normalize and merge objects 
 merge_sobj <- function(sobj_list, sample_order = NULL) {
 
@@ -123,6 +139,42 @@ cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6,
       reduction.name = str_c(prefix, "umap"),
       reduction.key  = str_c(prefix, "UMAP_")
     )
+  
+  res
+}
+
+# Create shared nearest neighbors graph, cluster, and run UMAP using CITE-seq data
+cluster_ADT <- function(sobj_in, assay = "adt", resolution = 0.2) {
+  # Since there are usually <20 antibodies, instead of doing PCA just use a
+  # standard euclidean distance matrix
+  adt_dist <- sobj_in %>%
+    GetAssayData(assay = assay) %>%
+    t() %>%
+    dist()
+  
+  # Create shared nearest neighbors graph
+  sobj_in[["adt_snn"]] <- FindNeighbors(adt_dist)$snn
+  
+  # Find clusters
+  res <- sobj_in %>%
+    FindClusters(
+      resolution = resolution,
+      graph.name = "adt_snn",
+      verbose    = F
+    ) %>%
+    AddMetaData(
+      metadata = Idents(.),
+      col.name = str_c(assay, "_clusters")
+    ) %>%
+    
+    # Run UMAP
+    RunUMAP(
+      reduction.name = "adt_umap",
+      reduction.key  = "ADTUMAP_",
+      graph          = "adt_snn",
+      verbose        = F 
+    ) %>%
+    AddMetaData(metadata = FetchData(., c("ADTUMAP_1", "ADTUMAP_2")))
   
   res
 }
@@ -1019,12 +1071,6 @@ theme_cols_threes <- list(
     "#C581AB"
   ),
   
-  pinks_grey = c(
-    "#E39393",
-    "#8c510a",
-    "#737373"
-  ),
-  
   OkabeIto = c(
     "#F0E442",
     "#0072B2",
@@ -1041,6 +1087,12 @@ theme_cols_threes <- list(
     "#ECBA96",
     "#999999",
     "#238443"    
+  ),
+  
+  pinks_grey = c(
+    "#E39393",
+    "#8c510a",
+    "#737373"
   )
 )
 
