@@ -120,7 +120,8 @@ ova_umap <- sobj %>%
 ova_boxes <- sobj %>%
   FetchData(c("orig.ident", "adt_ovalbumin")) %>%
   as_tibble(rownames = "cell_id") %>%
-  ggplot(aes(orig.ident, adt_ovalbumin + 0.01, color = orig.ident)) +
+  mutate(adt_ovalbumin = adt_ovalbumin + 0.01) %>%
+  ggplot(aes(orig.ident, adt_ovalbumin, color = orig.ident)) +
   geom_quasirandom(size = 0.5, color = "black") +
   geom_quasirandom(size = 0.25) +
   stat_summary(fun = "median", geom = "point", shape = 22, size = 1.5, show.legend = F, fill = "white", color = "black", stroke = 0.5) +
@@ -242,7 +243,8 @@ ova_data <- sobj %>%
   mutate(cell_type  = fct_reorder(cell_type, adt_ovalbumin, median, .desc = T))
 
 ova_boxes <- ova_data %>%
-  ggplot(aes(orig.ident, adt_ovalbumin + 0.01, color = cell_type)) +
+  mutate(adt_ovalbumin = adt_ovalbumin + 0.01) %>%
+  ggplot(aes(orig.ident, adt_ovalbumin, color = cell_type)) +
   geom_quasirandom(size = 0.5, color = "black") +
   geom_quasirandom(size = 0.25) +
   facet_wrap(~ cell_type, nrow = 1) +
@@ -405,7 +407,8 @@ ova_umap <- sobj %>%
 ova_boxes <- sobj %>%
   FetchData(c("adt_ovalbumin", "orig.ident", "ova_group")) %>%
   as_tibble(rownames = "cell_id") %>%
-  ggplot(aes(orig.ident, adt_ovalbumin + 0.01, color = ova_group)) +
+  mutate(adt_ovalbumin = adt_ovalbumin + 0.01) %>%
+  ggplot(aes(orig.ident, adt_ovalbumin, color = ova_group)) +
   geom_quasirandom(size = 0.5, color = "black") +
   geom_quasirandom(size = 0.25) +
   scale_color_manual(values = ova_cols) +
