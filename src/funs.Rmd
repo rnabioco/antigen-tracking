@@ -970,7 +970,8 @@ R_packages <- c(
   "cowplot",   "ComplexHeatmap",
   "ggrepel",   "RColorBrewer",
   "clustifyr", "ggbeeswarm",
-  "colorblindr"
+  "ggforce",   "colorblindr",
+  "broom",     "emmeans"
 )
 
 install_packages(R_packages)
