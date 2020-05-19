@@ -307,6 +307,322 @@ create_marker_panel_v2(
 Cells were divided into groups based on ovalbumin signal. The ovalbumin groups are shown on the left and ovalbumin signal is shown on the right. The proportion of subtypes and cell clusters that make up each group is shown at the bottom.
 ```{r "{{.y}} OVA cluster summary", fig.width = 8.5, fig.height = 9}
 
+# Fit gaussian mixture model for OVA
+gmm_res <- fit_GMM(
+  sobj_in = sobj,
+  data_column = "adt_ovalbumin"
+)
+
+sobj <- sobj %>% 
+  AddMetaData(gmm_res$res)
+
+# Set OVA colors
+ova_cols <- c(
+  neg = "#6a51a3",  # purple
+  pos = "#e31a1c"   # red
+)
+
+# OVA group UMAP
+ova_grp_umap <- sobj %>%
+  plot_features(
+    feature    = "GMM_grp",
+    pt_size    = 0.1 * mtplyr_3,
+    pt_outline = 0.4,
+    plot_cols  = ova_cols
+  ) +
+  guides(color = col_guide) +
+  ggtitle("Ovalbumin Group") +
+  blank_theme +
+  theme(
+    plot.title      = element_text(size = 13),
+    legend.position = "right",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 8)
+  )
+
+# OVA UMAP
+ova_umap <- sobj %>%
+  plot_features(
+    feature    = "adt_ovalbumin",
+    pt_size    = 0.1 * mtplyr_3,
+    pt_outline = 0.4,
+    plot_cols  = c("#fafafa", type_cols[2])
+  ) +
+  ggtitle("adt_ovalbumin") +
+  blank_theme +
+  theme(
+    plot.title        = element_text(size = 13),
+    legend.position   = "bottom",
+    legend.key.height = unit(0.1, "cm"),
+    legend.key.width  = unit(0.3, "cm"),
+    legend.title      = element_blank(),
+    legend.text       = element_text(size = 8)
+  )
+
+# OVA hist
+# dnorm provides density for the normal distribution given the mean and
+# standard deviation. Lambda is used to adjust for the mixture composition.
+# mu: Mean of component
+# sig: Standard deviation of component
+# lam: Lambda of component (mixture weight)
+plot_mix_comps <- function(x, mu, sigma, lam) {
+  lam * dnorm(x, mu, sigma)
+}
+
+# Intersection between components
+x_coord <- gmm_res$res %>%
+  filter(GMM_grp == "neg") %>%
+  pull(adt_ovalbumin) %>%
+  max()
+
+# Create histogram
+ova_hist <- gmm_res$res %>%
+  ggplot() +
+  geom_histogram(aes(adt_ovalbumin, ..density..), bins = 50, fill = "#d9d9d9") +
+  geom_vline(xintercept = x_coord, size = 0.5, linetype = 2) +
+  stat_function(
+    geom  = "line",
+    fun   = plot_mix_comps,
+    args  = list(gmm_res$mu[1], gmm_res$sigma[1], gmm_res$lambda[1]),
+    color = ova_cols[1],
+    lwd   = 1
+  ) +
+  stat_function(
+    geom  = "line",
+    fun   = plot_mix_comps,
+    args  = list(gmm_res$mu[2], gmm_res$sigma[2], gmm_res$lambda[2]),
+    color = ova_cols[2],
+    lwd   = 1
+  ) +
+  labs(title = "Ovalbumin Group", y = "Density") +
+  theme_info +
+  theme(
+    plot.title      = element_text(size = 13),
+    legend.position = "bottom",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 8),
+    axis.title      = element_text(size = 13),
+    axis.text       = element_text(size = 8),
+  )
+
+# OVA subtype bar graphs
+type_bar <- sobj %>%
+  plot_cell_count(
+    group_id = "GMM_grp",
+    split_id = NULL,
+    fill_id = "cell_type",
+    plot_colors = type_cols
+  ) +
+  labs(x = "GMM_grp") +
+  guides(fill = guide_legend(ncol = 1)) +
+  ggtitle("Subtype") +
+  theme(
+    plot.title      = element_text(size = 13),
+    legend.position = "bottom",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 8),
+    axis.title.x    = element_blank(),
+    axis.text.x     = element_text(size = 10),
+    axis.text.y     = element_text(size = 8),
+  )
+
+# OVA cluster bar graphs
+clust_bar <- sobj %>%
+  plot_cell_count(
+    group_id = "GMM_grp",
+    split_id = NULL,
+    fill_id = "cluster_id",
+    plot_colors = clust_cols
+  ) +
+  labs(x = "GMM_grp") +
+  guides(fill = guide_legend(nrow = 10)) +
+  ggtitle("Cluster") +
+  theme(
+    plot.title      = element_text(size = 13),
+    legend.position = "bottom",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 8),
+    axis.title      = element_blank(),
+    axis.text.x     = element_text(size = 10),
+    axis.text.y     = element_blank(),
+    axis.ticks.y    = element_blank(),
+    axis.line.y     = element_blank()
+  )
+
+# Create final figure
+umaps <- plot_grid(
+  ova_grp_umap, ova_umap,
+  nrow  = 1,
+  align = "hv",
+  axis  = "trbl"
+)
+
+bars <- plot_grid(
+  ova_hist, type_bar, clust_bar,
+  rel_widths = c(0.7, 0.365, 0.305),
+  nrow  = 1,
+  align = "h",
+  axis  = "tb"
+)
+
+plot_grid(
+  umaps, bars,
+  rel_heights = c(0.45, 0.55),
+  nrow = 2,
+  align = "vh",
+  axis  = "trbl"
+)
+
+```
+
+<br>
+
+### {.tabset .tabset-pills}
+
+Marker genes were identified by comparing all ovalbumin groups. `r marker_desc` `r GO_desc`
+```{r "{{.y}} OVA cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
+
+# Create figures
+create_marker_panel_v1(
+  input_sobj    = sobj,
+  input_cols    = ova_cols,
+  clust_column  = "GMM_grp"
+)
+
+```
+
+### Subtype Ovalbumin Markers
+
+Each subtype was divided into groups based on ovalbumin signal. A UMAP projection colored by the subtype ovalbumin groups is shown on the left and ovalbumin signal is shown on the right.
+```{r "{{.y}} Subtype OVA groups summary", fig.width = 8.5, fig.height = 6}
+
+# Use GMM to divide subtypes based on OVA signal
+GMM_res <- NULL
+
+cell_types %>%
+  walk(~ {
+    GMM_res <<- sobj %>%
+      subset(cell_type == .x) %>%
+      fit_GMM(data_column = "adt_ovalbumin") %>%
+      .$res %>%
+      rownames_to_column("cell_id") %>%
+      bind_rows(GMM_res)
+  })
+
+# Add OVA groups to meta.data
+GMM_res <- GMM_res %>%
+  column_to_rownames("cell_id")
+
+sobj <- sobj %>%
+  AddMetaData(GMM_res)
+
+sobj@meta.data <- sobj@meta.data %>%
+  rownames_to_column("cell_id") %>%
+  mutate(type_ova_grp = str_c(GMM_grp, "-", cell_type)) %>%
+  column_to_rownames("cell_id")
+
+# Set OVA colors
+type_ova_cols <- theme_cols_threes[1:length(cell_types)] %>%
+  reduce(c)
+
+names(type_ova_cols) <- cell_types %>%
+  map(~ str_c(c("neg", "pos"), "-", .x)) %>%
+  reduce(c)
+
+# OVA group UMAP
+ova_grp_umap <- sobj %>%
+  plot_features(
+    feature     = "type_ova_grp",
+    pt_size     = 0.1 * mtplyr_3,
+    pt_outline  = 0.4,
+    plot_cols   = type_ova_cols,
+    feat_levels = names(type_ova_cols)
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 3.5, shape = 16), nrow = 10)) +
+  blank_theme +
+  theme(
+    legend.position = "bottom",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 8)
+  )
+
+# OVA boxes
+ova_data <- sobj %>%
+  FetchData(c("adt_ovalbumin", "cell_type", "type_ova_grp")) %>%
+  as_tibble(rownames = "cell_id") %>%
+  group_by(cell_type) %>%
+  mutate(type_med = median(adt_ovalbumin)) %>%
+  group_by(type_ova_grp) %>%
+  mutate(clust_med = median(adt_ovalbumin)) %>%
+  ungroup() %>%
+  arrange(type_med, clust_med) %>%
+  mutate(type_ova_grp = fct_inorder(type_ova_grp))
+  
+ova_boxes <- ova_data %>%
+  mutate(adt_ovalbumin = adt_ovalbumin + 0.01) %>%
+  ggplot(aes(cell_type, adt_ovalbumin, color = type_ova_grp)) +
+  geom_quasirandom(size = 0.25 * mtplyr_2) +
+  scale_color_manual(values = type_ova_cols) +
+  scale_y_log10() +
+  coord_flip() +
+  theme_info +
+  theme(
+    legend.position = "none",
+    axis.title.y    = element_blank(),
+    axis.title.x    = element_text(size = 13),
+    axis.text       = element_text(size = 10)
+  )
+
+# Create final figure
+plot_grid(
+  ova_grp_umap, ova_boxes,
+  rel_widths = c(0.44, 0.56),
+  nrow  = 1,
+  align = "h",
+  axis  = "trbl"
+)
+
+```
+
+### {.tabset .tabset-pills}
+
+Marker genes were identified by splitting the cells based on subtype and comparing the ovalbumin groups within the subtype. `r marker_desc` `r GO_desc`
+```{r "{{.y}} Subtype OVA markers", fig.width = 8.5, fig.height = 14, results = "asis"}
+
+# Find OVA markers separately for each OVA group
+fig_markers <- cell_types %>%
+  map(~ {
+    find_group_markers(
+      input_grp  = .x,
+      input_sobj = sobj,
+      grp_col    = "cell_type",
+      clust_col  = "type_ova_grp"
+    )
+  }) %>%
+  compact() %>%
+  bind_rows()
+
+# Create figures
+create_marker_panel_v2(
+  input_sobj       = sobj,
+  input_markers    = fig_markers,
+  input_cols       = type_ova_cols,
+  grp_column       = "cell_type",
+  clust_column     = "type_ova_grp",
+  n_boxes          = 34,
+  all_boxes        = T,
+  panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
+  panel.spacing.y  = unit(0, "cm"),
+  panel.spacing.x  = unit(0.2, "cm"),
+  strip.text       = element_text(size = 10, angle = 90, hjust = 0)
+)
+
+```
+
+
+
+```{r "{{.y}} OLD OVA cluster summary", fig.width = 8.5, fig.height = 9, eval = F, echo = F}
+
 # Determine number of OVA groups
 n_grps <- floor(ncol(sobj) / 100)
 
@@ -473,144 +789,6 @@ plot_grid(
 )
 
 ```
-
-<br>
-
-### {.tabset .tabset-pills}
-
-Marker genes were identified by comparing all ovalbumin groups. `r marker_desc` `r GO_desc`
-```{r "{{.y}} OVA cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
-
-# Create figures
-create_marker_panel_v1(
-  input_sobj    = sobj,
-  input_cols    = ova_cols,
-  clust_column  = "ova_group"
-)
-
-```
-
-### Subtype Ovalbumin Markers
-
-Each subtype was divided into groups based on ovalbumin signal. A UMAP projection colored by the subtype ovalbumin groups is shown on the left and ovalbumin signal is shown on the right.
-```{r "{{.y}} Subtype OVA groups summary", fig.width = 8.5, fig.height = 6}
-
-# Divide subtypes based on OVA signal
-sobj <- sobj %>%
-  FetchData(c("cell_type", "adt_ovalbumin")) %>%
-  rownames_to_column("cell_id") %>%
-  group_by(cell_type) %>%
-  mutate(
-    n_grps       = if_else(n() < 300, 2, 3),
-    ova_group    = ntile(adt_ovalbumin, n_grps),
-    ova_group    = as.character(ova_group),
-    type_ova_grp = str_c(ova_group, "-", cell_type)
-  ) %>%
-  ungroup() %>%
-  column_to_rownames("cell_id") %>%
-  AddMetaData(
-    object = sobj,
-    metadata = .
-  )
-
-# Set OVA colors
-type_ova_cols <- theme_cols_threes[1:length(cell_types)] %>%
-  reduce(c)
-
-names(type_ova_cols) <- cell_types %>%
-  map(~ str_c(1:3, "-", .x)) %>%
-  reduce(c)
-
-# OVA group UMAP
-ova_grp_umap <- sobj %>%
-  plot_features(
-    feature     = "type_ova_grp",
-    pt_size     = 0.1 * mtplyr_3,
-    pt_outline  = 0.4,
-    plot_cols   = type_ova_cols,
-    feat_levels = names(type_ova_cols)
-  ) +
-  guides(color = guide_legend(override.aes = list(size = 3.5, shape = 16), nrow = 10)) +
-  blank_theme +
-  theme(
-    legend.position = "bottom",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 8)
-  )
-
-# OVA boxes
-ova_data <- sobj %>%
-  FetchData(c("adt_ovalbumin", "cell_type", "type_ova_grp")) %>%
-  as_tibble(rownames = "cell_id") %>%
-  group_by(cell_type) %>%
-  mutate(type_med = median(adt_ovalbumin)) %>%
-  group_by(type_ova_grp) %>%
-  mutate(clust_med = median(adt_ovalbumin)) %>%
-  ungroup() %>%
-  arrange(type_med, clust_med) %>%
-  mutate(type_ova_grp = fct_inorder(type_ova_grp))
-  
-ova_boxes <- ova_data %>%
-  mutate(adt_ovalbumin = adt_ovalbumin + 0.01) %>%
-  ggplot(aes(cell_type, adt_ovalbumin, color = type_ova_grp)) +
-  geom_quasirandom(size = 0.25 * mtplyr_2) +
-  scale_color_manual(values = type_ova_cols) +
-  scale_y_log10() +
-  coord_flip() +
-  theme_info +
-  theme(
-    legend.position = "none",
-    axis.title.y    = element_blank(),
-    axis.title.x    = element_text(size = 13),
-    axis.text       = element_text(size = 10)
-  )
-
-# Create final figure
-plot_grid(
-  ova_grp_umap, ova_boxes,
-  rel_widths = c(0.44, 0.56),
-  nrow  = 1,
-  align = "h",
-  axis  = "trbl"
-)
-
-```
-
-### {.tabset .tabset-pills}
-
-Marker genes were identified by splitting the cells based on subtype and comparing the ovalbumin groups within the subtype. `r marker_desc` `r GO_desc`
-```{r "{{.y}} Subtype OVA markers", fig.width = 8.5, fig.height = 14, results = "asis"}
-
-# Find OVA markers separately for each subtype
-fig_markers <- cell_types %>%
-  map(~ {
-    find_group_markers(
-      input_grp  = .x,
-      input_sobj = sobj,
-      grp_col    = "cell_type",
-      clust_col  = "type_ova_grp"
-    )
-  }) %>%
-  compact() %>%
-  bind_rows()
-
-# Create figures
-create_marker_panel_v2(
-  input_sobj       = sobj,
-  input_markers    = fig_markers,
-  input_cols       = type_ova_cols,
-  grp_column       = "cell_type",
-  clust_column     = "type_ova_grp",
-  n_boxes          = 34,
-  all_boxes        = T,
-  panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
-  panel.spacing.y  = unit(0, "cm"),
-  panel.spacing.x  = unit(0.2, "cm"),
-  strip.text       = element_text(size = 10, angle = 90, hjust = 0)
-)
-
-```
-
 
 ```{r, eval = F, echo = F}
 

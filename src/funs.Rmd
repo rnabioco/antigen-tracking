@@ -179,6 +179,37 @@ cluster_ADT <- function(sobj_in, assay = "adt", resolution = 0.2) {
   res
 }
 
+# Fit gaussian mixture model for given signal
+fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin") {
+  
+  # Fit GMM for OVA signal
+  data_df <- sobj_in %>%
+    FetchData(data_column)
+  
+  mixmdl <- data_df %>%
+    pull(data_column) %>%
+    normalmixEM()
+
+  # Divide into OVA groups
+  res <- data.frame(
+    cell_id = rownames(data_df),
+    data = data_df[, data_column],
+    mixmdl$posterior
+  ) %>%
+    dplyr::rename(!!sym(data_column) := data) %>%
+    mutate(GMM_grp = if_else(comp.1 > 0.5, "neg", "pos")) %>%
+    column_to_rownames("cell_id")
+  
+  res <- list(
+    res    = res,
+    mu     = mixmdl$mu,
+    sigma  = mixmdl$sigma,
+    lambda = mixmdl$lambda
+  )
+  
+  res
+}
+
 # Overlay feature data on UMAP or tSNE
 # Cannot change number of columns when using FeaturePlot with split.by
 plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size = 0.25,
@@ -971,7 +1002,8 @@ R_packages <- c(
   "ggrepel",   "RColorBrewer",
   "clustifyr", "ggbeeswarm",
   "ggforce",   "colorblindr",
-  "broom",     "emmeans"
+  "broom",     "emmeans",
+  "mixtools"
 )
 
 install_packages(R_packages)
