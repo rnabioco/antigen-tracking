@@ -305,7 +305,7 @@ create_marker_panel_v2(
 ### Ovalbumin Markers
 
 Cells were divided into groups based on ovalbumin signal. The ovalbumin groups are shown on the left and ovalbumin signal is shown on the right. The proportion of subtypes and cell clusters that make up each group is shown at the bottom.
-```{r "{{.y}} OVA cluster summary", fig.width = 8.5, fig.height = 9}
+```{r "{{.y}} OVA groups summary 1", include = F}
 
 # Fit gaussian mixture model for OVA
 gmm_res <- fit_GMM(
@@ -465,7 +465,7 @@ bars <- plot_grid(
   axis  = "tb"
 )
 
-plot_grid(
+ova_fig <- plot_grid(
   umaps, bars,
   rel_heights = c(0.45, 0.55),
   nrow = 2,
@@ -475,18 +475,32 @@ plot_grid(
 
 ```
 
+```{r, ref.label = "{{.y}} OVA groups summary 1", eval = F}
+# Divide into two chunks to omit GMM messages
+```
+
+```{r "{{.y}} OVA groups summary 2", fig.width = 8.5, fig.height = 9, echo = F}
+ova_fig
+```
+
 <br>
 
 ### {.tabset .tabset-pills}
 
 Marker genes were identified by comparing all ovalbumin groups. `r marker_desc` `r GO_desc`
-```{r "{{.y}} OVA cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
+```{r "{{.y}} OVA groups markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
 create_marker_panel_v1(
-  input_sobj    = sobj,
-  input_cols    = ova_cols,
-  clust_column  = "GMM_grp"
+  input_sobj       = sobj,
+  input_cols       = ova_cols,
+  clust_column     = "GMM_grp",
+  n_boxes          = 34,
+  all_boxes        = T,
+  panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
+  panel.spacing.y  = unit(0, "cm"),
+  panel.spacing.x  = unit(0.2, "cm"),
+  strip.text       = element_text(size = 10, angle = 90, hjust = 0)
 )
 
 ```
@@ -494,7 +508,7 @@ create_marker_panel_v1(
 ### Subtype Ovalbumin Markers
 
 Each subtype was divided into groups based on ovalbumin signal. A UMAP projection colored by the subtype ovalbumin groups is shown on the left and ovalbumin signal is shown on the right.
-```{r "{{.y}} Subtype OVA groups summary", fig.width = 8.5, fig.height = 6}
+```{r "{{.y}} Subtype OVA groups summary 1", include = F}
 
 # Use GMM to divide subtypes based on OVA signal
 GMM_res <- NULL
@@ -574,7 +588,7 @@ ova_boxes <- ova_data %>%
   )
 
 # Create final figure
-plot_grid(
+ova_fig <- plot_grid(
   ova_grp_umap, ova_boxes,
   rel_widths = c(0.44, 0.56),
   nrow  = 1,
@@ -582,6 +596,14 @@ plot_grid(
   axis  = "trbl"
 )
 
+```
+
+```{r, ref.label = "{{.y}} Subtype OVA groups summary 1", eval = F}
+# Divide into two chunks to omit GMM messages
+```
+
+```{r "{{.y}} Subtype OVA groups summary 2", fig.width = 8.5, fig.height = 6, echo = F}
+ova_fig
 ```
 
 ### {.tabset .tabset-pills}
