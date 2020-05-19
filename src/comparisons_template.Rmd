@@ -167,7 +167,7 @@ create_marker_panel_v1(
   input_umap   = fig_umap,
   clust_column = "orig.ident",
   n_boxes      = 18,
-  all_violins    = T
+  all_violins  = T
 )
 
 ```
@@ -337,7 +337,7 @@ create_marker_panel_v2(
   clust_column  = "sample_types", 
   color_guide   = outline_guide,
   n_boxes       = 18,
-  all_violins     = T
+  all_violins   = T
 )
 
 ```
@@ -498,7 +498,7 @@ create_marker_panel_v2(
   clust_column  = "ova_sam_grp", 
   color_guide   = outline_guide,
   n_boxes       = 18,
-  all_violins     = T
+  all_violins   = T
 )
 
 ```

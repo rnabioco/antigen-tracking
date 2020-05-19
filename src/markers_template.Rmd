@@ -13,7 +13,7 @@ mtplyr_2 <- if_else(ncol(sobj) < 500, 6, 1)
 mtplyr_3 <- if_else(ncol(sobj) < 500, mtplyr_2 * 2.5, 1)
 
 cell_type_id <- str_c("cell_type", rds_type)
-cluster_id   <- str_c(cell_type_id, "2")
+cluster_id <- str_c(cell_type_id, "2")
 
 # Fix column names
 if (!cluster_id %in% names(sobj@meta.data)) {
@@ -127,11 +127,24 @@ fig_umap <- type_umap +
   guides(color = col_guide) +
   theme(legend.text = element_text(size = 10))
 
+xlsx_name <- params$xlsx_dir
+
+if (!is.null(xlsx_name)) {
+  xlsx_name <- xlsx_name %>%
+    str_c("/", rds_name, "_subtype")
+}
+
 create_marker_panel_v1(
-  input_sobj   = sobj,
-  input_cols   = type_cols,
-  input_umap   = fig_umap,
-  clust_column = "cell_type"
+  input_sobj       = sobj,
+  input_cols       = type_cols,
+  input_umap       = fig_umap,
+  clust_column     = "cell_type",
+  xlsx_name        = xlsx_name,
+  n_boxes          = 18,
+  all_boxes        = T,
+  panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
+  panel.spacing.x  = unit(0.2, "cm"),
+  strip.text       = element_text(size = 11)
 )
 
 ```
@@ -218,11 +231,19 @@ fig_umap <- clust_umap +
     legend.text     = element_text(size = 10)
   )
 
+xlsx_name <- params$xlsx_dir
+
+if (!is.null(xlsx_name)) {
+  xlsx_name <- xlsx_name %>%
+    str_c("/", rds_name, "_cluster")
+}
+
 create_marker_panel_v1(
   input_sobj   = sobj,
   input_cols   = clust_cols,
   input_umap   = fig_umap,
-  clust_column = "cluster_id"
+  clust_column = "cluster_id",
+  xlsx_name    = xlsx_name
 )
 
 ```
@@ -292,12 +313,25 @@ fig_markers <- cell_types %>%
   bind_rows()
 
 # Create figures
+xlsx_name <- params$xlsx_dir
+
+if (!is.null(xlsx_name)) {
+  xlsx_name <- xlsx_name %>%
+    str_c("/", rds_name, "_subtype_cluster")
+}
+
 create_marker_panel_v2(
-  input_sobj    = sobj,
-  input_markers = fig_markers,
-  input_cols    = clust_cols,
-  grp_column    = "cell_type",
-  clust_column  = "cluster_id"
+  input_sobj       = sobj,
+  input_markers    = fig_markers,
+  input_cols       = clust_cols,
+  grp_column       = "cell_type",
+  clust_column     = "cluster_id",
+  xlsx_name        = xlsx_name,
+  n_boxes          = 20,
+  all_boxes        = T,
+  panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
+  panel.spacing.x  = unit(0.2, "cm"),
+  strip.text       = element_text(size = 11)
 )
 
 ```
@@ -318,8 +352,8 @@ sobj <- sobj %>%
 
 # Set OVA colors
 ova_cols <- c(
-  neg = "#6a51a3",  # purple
-  pos = "#e31a1c"   # red
+  low = theme_cols[8],
+  high = theme_cols[2]
 )
 
 # OVA group UMAP
@@ -413,7 +447,6 @@ type_bar <- sobj %>%
     fill_id = "cell_type",
     plot_colors = type_cols
   ) +
-  labs(x = "GMM_grp") +
   guides(fill = guide_legend(ncol = 1)) +
   ggtitle("Subtype") +
   theme(
@@ -434,7 +467,6 @@ clust_bar <- sobj %>%
     fill_id = "cluster_id",
     plot_colors = clust_cols
   ) +
-  labs(x = "GMM_grp") +
   guides(fill = guide_legend(nrow = 10)) +
   ggtitle("Cluster") +
   theme(
@@ -491,10 +523,18 @@ Marker genes were identified by comparing all ovalbumin groups. `r marker_desc` 
 ```{r "{{.y}} OVA groups markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
+xlsx_name <- params$xlsx_dir
+
+if (!is.null(xlsx_name)) {
+  xlsx_name <- xlsx_name %>%
+    str_c("/", rds_name, "_ova")
+}
+
 create_marker_panel_v1(
   input_sobj       = sobj,
   input_cols       = ova_cols,
   clust_column     = "GMM_grp",
+  xlsx_name        = xlsx_name,
   n_boxes          = 34,
   all_boxes        = T,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
@@ -536,12 +576,14 @@ sobj@meta.data <- sobj@meta.data %>%
   column_to_rownames("cell_id")
 
 # Set OVA colors
-type_ova_cols <- theme_cols_threes[1:length(cell_types)] %>%
+type_ova_cols <- theme_cols_threes %>%
   reduce(c)
 
 names(type_ova_cols) <- cell_types %>%
-  map(~ str_c(c("neg", "pos"), "-", .x)) %>%
+  map(~ str_c(names(ova_cols), "-", .x)) %>%
   reduce(c)
+
+type_ova_cols <- type_ova_cols[!is.na(names(type_ova_cols))]
 
 # OVA group UMAP
 ova_grp_umap <- sobj %>%
@@ -570,7 +612,10 @@ ova_data <- sobj %>%
   mutate(clust_med = median(adt_ovalbumin)) %>%
   ungroup() %>%
   arrange(type_med, clust_med) %>%
-  mutate(type_ova_grp = fct_inorder(type_ova_grp))
+  mutate(
+    cell_type = fct_inorder(cell_type),
+    type_ova_grp = fct_inorder(type_ova_grp)
+  )
   
 ova_boxes <- ova_data %>%
   mutate(adt_ovalbumin = adt_ovalbumin + 0.01) %>%
@@ -625,12 +670,20 @@ fig_markers <- cell_types %>%
   bind_rows()
 
 # Create figures
+xlsx_name <- params$xlsx_dir
+
+if (!is.null(xlsx_name)) {
+  xlsx_name <- xlsx_name %>%
+    str_c("/", rds_name, "_subtype_ova")
+}
+
 create_marker_panel_v2(
   input_sobj       = sobj,
   input_markers    = fig_markers,
   input_cols       = type_ova_cols,
   grp_column       = "cell_type",
   clust_column     = "type_ova_grp",
+  xlsx_name        = xlsx_name,
   n_boxes          = 34,
   all_boxes        = T,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
@@ -640,340 +693,6 @@ create_marker_panel_v2(
 )
 
 ```
-
-
-
-```{r "{{.y}} OLD OVA cluster summary", fig.width = 8.5, fig.height = 9, eval = F, echo = F}
-
-# Determine number of OVA groups
-n_grps <- floor(ncol(sobj) / 100)
-
-n_grps <- case_when(
-  n_grps > 6 ~ 6,
-  n_grps < 2 ~ 2,
-  TRUE ~ n_grps
-)
-
-# Set OVA colors
-ova_cols <- c(
-  "#6a51a3",  # purple 1
-  "#8073ac",  # purple 2
-  "#9e9ac8",  # purple 3
-  "#ECBA96",  # red 3
-  "#fb6a4a",  # red 2
-  "#e31a1c"   # red 1
-)
-
-ova_cols <- ova_cols[1:n_grps]
-names(ova_cols) <- as.character(1:n_grps)
-
-# Divide cells based on OVA signal
-sobj <- sobj %>%
-  FetchData("adt_ovalbumin") %>%
-  rownames_to_column("cell_id") %>%
-  mutate(
-    ova_group = ntile(adt_ovalbumin, n_grps),
-    ova_group = as.character(ova_group)
-  ) %>%
-  column_to_rownames("cell_id") %>%
-  AddMetaData(
-    object = sobj,
-    metadata = .
-  )
-
-# OVA group UMAP
-ova_grp_umap <- sobj %>%
-  plot_features(
-    feature    = "ova_group",
-    pt_size    = 0.1 * mtplyr_3,
-    pt_outline = 0.4,
-    plot_cols  = ova_cols
-  ) +
-  guides(color = col_guide) +
-  ggtitle("Ovalbumin Group") +
-  blank_theme +
-  theme(
-    plot.title      = element_text(size = 13),
-    legend.position = "right",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 8)
-  )
-
-# OVA UMAP
-ova_umap <- sobj %>%
-  plot_features(
-    feature    = "adt_ovalbumin",
-    pt_size    = 0.1 * mtplyr_3,
-    pt_outline = 0.4,
-    plot_cols  = c("#fafafa", type_cols[2])
-  ) +
-  ggtitle("adt_ovalbumin") +
-  blank_theme +
-  theme(
-    plot.title        = element_text(size = 13),
-    legend.position   = "bottom",
-    legend.key.height = unit(0.1, "cm"),
-    legend.key.width  = unit(0.3, "cm"),
-    legend.title      = element_blank(),
-    legend.text       = element_text(size = 8)
-  )
-
-# OVA hist
-ova_hist <- sobj@meta.data %>%
-  mutate(adt_ovalbumin = adt_ovalbumin + 0.01) %>%
-  ggplot(aes(adt_ovalbumin, fill = ova_group)) +
-  geom_histogram(position = "identity", bins = 30) +
-  scale_fill_manual(values = ova_cols) +
-  scale_x_log10() +
-  guides(fill = guide_legend(ncol = 1)) +
-  labs(title = "Ovalbumin Group", y = "Cell Count") +
-  theme_info +
-  theme(
-    plot.title      = element_text(size = 13),
-    legend.position = "bottom",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 8),
-    axis.title      = element_text(size = 13),
-    axis.text       = element_text(size = 8),
-  )
-
-# OVA subtype bar graphs
-type_bar <- sobj %>%
-  plot_cell_count(
-    group_id = "ova_group",
-    split_id = NULL,
-    fill_id = "cell_type",
-    plot_colors = type_cols
-  ) +
-  labs(x = "ova_group") +
-  guides(fill = guide_legend(ncol = 1)) +
-  ggtitle("Subtype") +
-  theme(
-    plot.title      = element_text(size = 13),
-    legend.position = "bottom",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 8),
-    axis.title.x    = element_text(size = 13),
-    axis.text       = element_text(size = 8),
-  )
-
-# OVA cluster bar graphs
-clust_bar <- sobj %>%
-  plot_cell_count(
-    group_id = "ova_group",
-    split_id = NULL,
-    fill_id = "cluster_id",
-    plot_colors = clust_cols
-  ) +
-  labs(x = "ova_group") +
-  guides(fill = guide_legend(nrow = 10)) +
-  ggtitle("Cluster") +
-  theme(
-    plot.title      = element_text(size = 13),
-    legend.position = "bottom",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 8),
-    axis.title      = element_text(size = 13),
-    axis.text.x     = element_text(size = 8),
-    axis.title.y    = element_blank(),
-    axis.text.y     = element_blank(),
-    axis.ticks.y    = element_blank(),
-    axis.line.y     = element_blank()
-  )
-
-blank <- ggplot() +
-  geom_blank() +
-  theme_void()
-
-# Create final figure
-umaps <- plot_grid(
-  ova_grp_umap, ova_umap, blank,
-  rel_widths = c(0.33, 0.33, 0.05),
-  nrow  = 1,
-  align = "hv",
-  axis  = "trbl"
-)
-
-bars <- plot_grid(
-  ova_hist, type_bar, clust_bar,
-  rel_widths = c(0.5, 0.365, 0.305),
-  nrow  = 1,
-  align = "h",
-  axis  = "tb"
-)
-
-plot_grid(
-  umaps, bars,
-  rel_heights = c(0.45, 0.55),
-  nrow = 2,
-  align = "vh",
-  axis  = "trbl"
-)
-
-```
-
-```{r, eval = F, echo = F}
-
-x <- GO_list %>%
-  compact() %>%
-  bind_rows()
-
-top_terms <- x %>%
-  filter(source == "GO:BP") %>%
-  group_by(cluster) %>%
-  top_n(10, desc(p_value)) %>%
-  ungroup() %>%
-  pull(term_name) %>%
-  unique()
-
-# all_terms <- unique(x$term_name)
-# all_terms <- all_terms[!all_terms %in% top_terms]
-
-GO_ova_data <- top_terms %>%
-  map(~ {
-    clusts <- x %>%
-      filter(
-        source == "GO:BP",
-        term_name == .x
-      ) %>%
-      pull(cluster)
-    
-    ova_counts <- sobj %>%
-      FetchData(c("cluster_id", "adt_ovalbumin")) %>%
-      as_tibble(rownames = "cell_id") %>%
-      filter(cluster_id %in% clusts) %>%
-      mutate(term_name = .x)
-  }) %>%
-  compact() %>%
-  bind_rows()
-
-GO_box_data <- GO_ova_data %>%
-  group_by(term_name) %>%
-  mutate(
-    med_ova = median(adt_ovalbumin),
-    up_qt = quantile(adt_ovalbumin)[4]
-  ) %>%
-  ungroup() %>%
-  mutate(term_name = fct_reorder(term_name, adt_ovalbumin, median))
-
-y_max <- max(GO_box_data$up_qt) * 1.1
-
-GO_box_data %>%
-  ggplot(aes(term_name, adt_ovalbumin, fill = med_ova)) +
-  geom_boxplot(size = 0.1, color = "white", outlier.shape = NA) +
-  coord_flip(ylim = c(0, y_max)) +
-  theme_info +
-  theme(
-    legend.position = "none",
-    axis.title.y    = element_blank(),
-    axis.text       = element_text(size = 8)
-  )
-
-  # arrange(med_ova) %>%
-  # tail(10) %>%
-  # mutate(term_name = fct_inorder(term_name)) %>%
-
-```
-
-```{r "{{.y}} GO TEST", eval = F, echo = F}
-
-# Find markers
-Idents(sobj) <- sobj %>%
-  FetchData("ova_group")
-
-test_markers <- find_markers(sobj)
-clusts <- unique(test_markers$cluster)
-
-# Run gprofiler2
-test_GO <- clusts %>%
-  map(~ {
-    test_markers %>%
-      filter(cluster == .x) %>%
-      pull(gene) %>%
-      run_gprofiler(
-        genome = "GRCm",
-        evcodes = T
-      ) %>%
-      mutate(key = .x)
-  }) %>%
-  bind_rows() %>%
-  dplyr::select(
-    p_value,    term_size, 
-    query_size, intersection_size, 
-    term_id,    source, 
-    term_name,  intersection,
-    key
-  )
-
-# Extract intersecting genes
-antigen_genes <- test_GO %>%
-  filter(key == 1) %>%
-  .[[2, "intersection"]] %>%
-  str_split(",") %>%
-  .[[1]]
-
-# Add module score
-test_so <- sobj %>%
-  AddModuleScore(
-    assay    = "RNA",
-    features = list(antigen_genes),
-    name     = "antigen",
-    ctrl     = 50
-  )
-
-# UMAP showing antigen module score
-test_so %>%
-  plot_features(
-    feature   = "antigen1",
-    pt_size   = 1
-  ) +
-  guides(color = col_guide) +
-  blank_theme
-
-# UMAP showing OVA signal
-test_so %>%
-  plot_features(
-    feature   = "adt_ovalbumin",
-    pt_size   = 1
-  ) +
-  guides(color = col_guide) +
-  blank_theme
-
-# UMAP showing OVA group
-test_so %>%
-  plot_features(
-    feature   = "ova_group",
-    plot_cols = theme_cols,
-    pt_size   = 1,
-    feat_levels = c("6", "5", "4", "3", "2", "1")
-  ) +
-  guides(color = col_guide) +
-  blank_theme
-
-
-
-# mart_obj <- useMart(
-#   biomart = "ensembl", 
-#   dataset = "mmusculus_gene_ensembl",
-#   verbose = T
-# )
-
-# antigen_genes <- getBM(
-#   attributes = c("ensembl_gene_id","external_gene_name"), 
-#   filters    = "go",
-#   values     = "GO:0002495",
-#   mart       = mart_obj
-# )
-
-```
-
-
-
-
-
-
-
-
 
 
 

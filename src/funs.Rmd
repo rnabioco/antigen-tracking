@@ -60,22 +60,6 @@ plot_color_palette <- function(input_cols) {
   res
 }
 
-# Filter and normalize matrices
-norm_sobj <- function(sobj_in, sample_order = NULL, adt_assay = "adt") {
-  res <- sobj_in %>%
-    NormalizeData(normalization.method = "LogNormalize")
-  
-  if (adt_assay %in% names(res)) {
-    res <- res %>%
-      NormalizeData(
-        assay = adt_assay,
-        normalization.method = "CLR"
-      )
-  }
-  
-  res
-}
-
 # Filter list of Seurat objects for patient, normalize and merge objects 
 merge_sobj <- function(sobj_list, sample_order = NULL) {
 
@@ -143,42 +127,6 @@ cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6,
   res
 }
 
-# Create shared nearest neighbors graph, cluster, and run UMAP using CITE-seq data
-cluster_ADT <- function(sobj_in, assay = "adt", resolution = 0.2) {
-  # Since there are usually <20 antibodies, instead of doing PCA just use a
-  # standard euclidean distance matrix
-  adt_dist <- sobj_in %>%
-    GetAssayData(assay = assay) %>%
-    t() %>%
-    dist()
-  
-  # Create shared nearest neighbors graph
-  sobj_in[["adt_snn"]] <- FindNeighbors(adt_dist)$snn
-  
-  # Find clusters
-  res <- sobj_in %>%
-    FindClusters(
-      resolution = resolution,
-      graph.name = "adt_snn",
-      verbose    = F
-    ) %>%
-    AddMetaData(
-      metadata = Idents(.),
-      col.name = str_c(assay, "_clusters")
-    ) %>%
-    
-    # Run UMAP
-    RunUMAP(
-      reduction.name = "adt_umap",
-      reduction.key  = "ADTUMAP_",
-      graph          = "adt_snn",
-      verbose        = F 
-    ) %>%
-    AddMetaData(metadata = FetchData(., c("ADTUMAP_1", "ADTUMAP_2")))
-  
-  res
-}
-
 # Fit gaussian mixture model for given signal
 fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin") {
   
@@ -197,7 +145,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin") {
     mixmdl$posterior
   ) %>%
     dplyr::rename(!!sym(data_column) := data) %>%
-    mutate(GMM_grp = if_else(comp.1 > 0.5, "neg", "pos")) %>%
+    mutate(GMM_grp = if_else(comp.1 > 0.5, "low", "high")) %>%
     column_to_rownames("cell_id")
   
   res <- list(
@@ -427,6 +375,7 @@ run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL,
       organism     = org,
       sources      = dbases,
       domain_scope = "annotated",
+      significant  = T,
       ...
     )
     
@@ -442,7 +391,7 @@ run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL,
 create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
                            n_terms = 15) {
 
-    # Check for empty inputs
+  # Check for empty inputs
   if (is_empty(GO_df) || nrow(GO_df) == 0) {
     res <- ggplot() +
       geom_blank()
@@ -457,7 +406,8 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
       term_id = str_c(term_id, " ", term_name),
       term_id = str_to_lower(term_id),
       term_id = str_trunc(term_id, 40, "right"),
-      source = fct_recode(source,
+      source  = fct_recode(
+        source,
         "Biological\nProcess" = "GO:BP",
         "Cellular\nComponent" = "GO:CC",
         "Molecular\nFunction" = "GO:MF",
@@ -575,6 +525,25 @@ find_group_markers <- function(input_grp, input_sobj, grp_column, clust_column) 
     find_markers() %>%
     mutate(cell_type = input_grp)
 
+  res
+}
+
+# Create reference UMAP for comparisons
+create_ref_umap <- function(input_sobj, pt_mtplyr = 1, color_guide, ...) {
+  res <- input_sobj %>%
+    plot_features(
+      pt_size     = 0.1 * pt_mtplyr,
+      pt_outline  = 0.4,
+      ...
+    ) +
+    guides(color = color_guide) +
+    blank_theme +
+    theme(
+      legend.position = "top",
+      legend.title    = element_blank(),
+      legend.text     = element_text(size = 10)
+    )
+  
   res
 }
 
@@ -717,20 +686,17 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
 # Create figure summarizing marker genes
 create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_column, 
                               input_umap, umap_color, fig_heights = c(0.46, 0.3, 0.3), 
-                              box_colors, n_boxes = 10, umap_outline = NULL,
-                              umap_mtplyr = 1, ...) {
+                              GO_genome = params$genome, box_colors, n_boxes = 10,
+                              umap_outline = NULL, umap_mtplyr = 1, xlsx_name = NULL, 
+                              sheet_name = NULL, ...) {
   
-  marks_umap <- ggplot() +
+  blank_umap <- ggplot() +
     geom_blank() +
     theme_void()
   
-  marks_boxes <- ggplot() + 
-    geom_blank() +
-    theme_void()
-  
-  GO_bubbles <- ggplot() +
-    geom_blank() +
-    theme_void()
+  marks_umap  <- blank_umap
+  marks_boxes <- blank_umap
+  GO_bubbles  <- blank_umap
   
   # Create UMAPs showing marker gene signal
   if (nrow(input_markers) > 0) {
@@ -779,7 +745,10 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_
     # Create GO term plots
     if (is.null(input_GO)) {
       input_GO <- input_markers$gene %>%
-        run_gprofiler(genome = "GRCm")
+        run_gprofiler(
+          genome = GO_genome,
+          ordered_query = T
+        )
     }
     
     if (nrow(input_GO) > 0) {
@@ -792,14 +761,41 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_
           axis.title.y     = element_text(size = 13),
           axis.text.y      = element_text(size = 8),
           axis.line.x      = element_blank(),
-          
-          legend.position = "bottom",
-          legend.title    = element_blank(),
-          legend.text     = element_text(size = 8)
+          legend.position  = "bottom",
+          legend.title     = element_blank(),
+          legend.text      = element_text(size = 8)
+        )
+      
+      # Write GO terms to excel file 
+      if (!is.null(xlsx_name)) {
+        input_GO %>%
+          dplyr::select(
+            term_name,  term_id,
+            source,     effective_domain_size,
+            query_size, intersection_size,
+            p_value,    significant 
+          ) %>%
+          arrange(source, p_value) %>%
+          write.xlsx(
+            file      = str_c(xlsx_name, "_GO.xlsx"),
+            sheetName = sheet_name,
+            append    = T
+          )
+      }
+    }
+    
+    # Write markers to excel file
+    if (!is.null(xlsx_name)) {
+      input_markers %>%
+        write.xlsx(
+          file      = str_c(xlsx_name, "_markers.xlsx"),
+          sheetName = sheet_name,
+          append    = T
         )
     }
   }
   
+  # Create final figure
   res <- plot_grid(
     marks_umap, marks_boxes, GO_bubbles,
     rel_heights = fig_heights,
@@ -821,7 +817,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_
 
 # Filter clusters, set colors and order
 set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
-  input_marks %>%
+  input_marks <- input_marks %>%
     group_by(cluster) %>%
     filter(n() >= n_cutoff) %>%
     ungroup()
@@ -836,10 +832,11 @@ set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
 # Create v1 panel for marker genes
 create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, order_boxes = T,
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)),
-                                   umap_mtplyr = 6, ...) {
+                                   umap_mtplyr = 6, xlsx_name = NULL, ...) {
   
   # Set point size
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
+  ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
   
   # Find marker genes
   Idents(input_sobj) <- input_sobj %>%
@@ -868,25 +865,15 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
     if (is.null(input_umap)) {
       order_boxes <- F
       umap_levels <- input_cols[names(input_cols) != clust]
-      umap_levels <- c(umap_levels, umap_col) %>%
-        names()
-      
-      ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
+      umap_levels <- names(c(umap_levels, umap_col))
       
       ref_umap <- input_sobj %>%
-        plot_features(
+        create_ref_umap(
           feature     = clust_column,
-          pt_size     = 0.1 * ref_mtplyr,
-          pt_outline  = 0.4,
           plot_cols   = input_cols,
-          feat_levels = umap_levels
-        ) +
-        guides(color = color_guide) +
-        blank_theme +
-        theme(
-          legend.position = "top",
-          legend.title    = element_blank(),
-          legend.text     = element_text(size = 10)
+          feat_levels = umap_levels,
+          pt_mtplyr   = ref_mtplyr,
+          color_guide = color_guide
         )
     }
     
@@ -900,6 +887,8 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
         box_colors    = input_cols,
         order_boxes   = order_boxes,
         umap_mtplyr   = umap_mtplyr,
+        xlsx_name     = xlsx_name,
+        sheet_name    = clust,
         ...
       )
     
@@ -912,7 +901,7 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
 # Create v2 panel that splits plots into groups
 create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_column, clust_column, 
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)), 
-                                   umap_mtplyr = 6, ...) {
+                                   umap_mtplyr = 6, xlsx_name = NULL, ...) {
   
   # Set point size
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
@@ -948,21 +937,17 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
     ref_umap <- input_sobj %>%
       FetchData(c("UMAP_1", "UMAP_2", grp_column, clust_column)) %>%
       as_tibble(rownames = "cell_id") %>%
-      mutate(!!sym(clust_column) := if_else(!!sym(grp_column) != group, "Other", !!sym(clust_column))) %>%
-      plot_features(
-        feature    = clust_column,
-        plot_cols  = fig_cols,
-        pt_size    = 0.1 * ref_mtplyr,
-        pt_outline = 0.4,
-        feat_levels = names(fig_cols)
-      ) +
-      guides(color = color_guide) +
-      scale_fill_manual(values = fig_cols) +
-      blank_theme +
-      theme(
-        legend.position = "top",
-        legend.title    = element_blank(),
-        legend.text     = element_text(size = 10)
+      mutate(!!sym(clust_column) := if_else(
+        !!sym(grp_column) != group, 
+        "Other", 
+        !!sym(clust_column)
+      )) %>%
+      create_ref_umap(
+        feature     = clust_column,
+        plot_cols   = fig_cols,
+        feat_levels = names(fig_cols),
+        pt_mtplyr   = ref_mtplyr,
+        color_guide = color_guide
       )
     
     # Create panel
@@ -975,6 +960,8 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
         box_colors    = fig_cols,
         group         = group,
         umap_mtplyr   = umap_mtplyr,
+        xlsx_name     = xlsx_name,
+        sheet_name    = clust,
         ...
       )
     
@@ -1003,7 +990,7 @@ R_packages <- c(
   "clustifyr", "ggbeeswarm",
   "ggforce",   "colorblindr",
   "broom",     "emmeans",
-  "mixtools"
+  "mixtools",  "xlsx"
 )
 
 install_packages(R_packages)
@@ -1022,6 +1009,44 @@ install_packages(
 ```
 
 ```{r "Themes", echo = F}
+
+theme_cols <- c(
+  "#225ea8",  # blue
+  "#e31a1c",  # red
+  "#238443",  # green
+  "#ec7014",  # orange
+  "#6a51a3",  # purple
+  "#c51b7d",  # pink
+  palette_OkabeIto[c(1, 2, 4)]
+  # "#41b6c4",  # aqua
+  # "#01665e",  # teal
+  # "#8c510a",  # brown
+)
+
+dark_cols <- theme_cols %>%
+  darken(0.3)
+
+light_cols <- theme_cols %>%
+  lighten(0.3) %>%
+  desaturate(0.2)
+
+theme_cols <- c(theme_cols, "#000000", "#737373", dark_cols, light_cols)
+
+# Okabe Ito color palette
+# ito_cols <- c(palette_OkabeIto, "#fc4e2a")
+# ito_cols <- c(palette_OkabeIto, "#ef3b2c")
+# ito_cols <- c(palette_OkabeIto, "#fb6a4a")
+ito_cols <- c(palette_OkabeIto[1:4], "#d7301f", palette_OkabeIto[5:6], "#6a51a3", palette_OkabeIto[7:8])
+
+ito_cols <- ito_cols %>%
+  darken(0.4) %>% 
+  c(ito_cols, ., "#000000")
+
+theme_cols <- ito_cols
+
+
+
+
 
 # ggplot2 themes
 theme_info <- theme_cowplot() +
@@ -1053,25 +1078,25 @@ outline_guide <- guide_legend(override.aes = list(
   stroke = 0.25
 ))
 
-# Create color palettes
-theme_cols <- c(
-  "#225ea8",  # blue
-  "#e31a1c",  # red
-  "#238443",  # green
-  "#ec7014",  # orange
-  "#6a51a3",  # purple
-  "#c51b7d",  # pink
-  "#41b6c4",  # aqua
-  "#01665e"   # teal
-)
-
-theme_cols <- theme_cols %>%
-  fade_colors() %>%
-  c(
-    theme_cols[1:5], "#8c510a", "#fec44f", 
-    theme_cols[6:8], "#737373", "#000000",
-    palette_OkabeIto, .
-  )
+# # Create color palettes
+# theme_cols <- c(
+#   "#225ea8",  # blue
+#   "#e31a1c",  # red
+#   "#238443",  # green
+#   "#ec7014",  # orange
+#   "#6a51a3",  # purple
+#   "#c51b7d",  # pink
+#   "#41b6c4",  # aqua
+#   "#01665e"   # teal
+# )
+# 
+# theme_cols <- theme_cols %>%
+#   fade_colors() %>%
+#   c(
+#     theme_cols[1:5], "#8c510a", "#fec44f", 
+#     theme_cols[6:8], "#737373", "#000000",
+#     palette_OkabeIto, .
+#   )
 
 theme_cols_threes <- list(
   neon = c(
@@ -1082,7 +1107,7 @@ theme_cols_threes <- list(
   
   oranges_blue = c(
     "#ec7014",
-    "#fec44f",
+    "#737373",
     "#225ea8"
   ),
   
@@ -1120,12 +1145,6 @@ theme_cols_threes <- list(
     "#ECBA96",
     "#999999",
     "#238443"    
-  ),
-  
-  pinks_grey = c(
-    "#E39393",
-    "#8c510a",
-    "#737373"
   )
 )
 

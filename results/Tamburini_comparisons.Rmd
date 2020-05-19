@@ -12,6 +12,7 @@ output:
     self_contained: true
     highlight: "kate"
 params:
+  genome: "GRCm"
   template_dir: "../src"
   rds_dir: "../sobjs/so"
   comparisons:
