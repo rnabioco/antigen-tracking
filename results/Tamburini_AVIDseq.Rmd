@@ -15,7 +15,7 @@ params:
   genome: "GRCm"
   template_dir: "../src"
   rds_dir: "../sobjs/so"
-  # xlsx_dir: "R_gene_lists"
+  xlsx_dir: "R_gene_lists"
   cell_types:
     - "DC"
     - "LEC"

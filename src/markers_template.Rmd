@@ -141,7 +141,7 @@ create_marker_panel_v1(
   clust_column     = "cell_type",
   xlsx_name        = xlsx_name,
   n_boxes          = 18,
-  all_boxes        = T,
+  all_violins      = T,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
   panel.spacing.x  = unit(0.2, "cm"),
   strip.text       = element_text(size = 11)
@@ -243,6 +243,7 @@ create_marker_panel_v1(
   input_cols   = clust_cols,
   input_umap   = fig_umap,
   clust_column = "cluster_id",
+  all_violins  = T,
   xlsx_name    = xlsx_name
 )
 
@@ -328,7 +329,7 @@ create_marker_panel_v2(
   clust_column     = "cluster_id",
   xlsx_name        = xlsx_name,
   n_boxes          = 20,
-  all_boxes        = T,
+  all_violins      = T,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
   panel.spacing.x  = unit(0.2, "cm"),
   strip.text       = element_text(size = 11)
@@ -352,17 +353,18 @@ sobj <- sobj %>%
 
 # Set OVA colors
 ova_cols <- c(
-  low = theme_cols[8],
-  high = theme_cols[2]
+  low = theme_cols[2],
+  high = theme_cols[8]
 )
 
 # OVA group UMAP
 ova_grp_umap <- sobj %>%
   plot_features(
-    feature    = "GMM_grp",
-    pt_size    = 0.1 * mtplyr_3,
-    pt_outline = 0.4,
-    plot_cols  = ova_cols
+    feature     = "GMM_grp",
+    pt_size     = 0.1 * mtplyr_3,
+    pt_outline  = 0.4,
+    plot_cols   = ova_cols,
+    feat_levels = names(ova_cols)
   ) +
   guides(color = col_guide) +
   ggtitle("Ovalbumin Group") +
@@ -380,7 +382,7 @@ ova_umap <- sobj %>%
     feature    = "adt_ovalbumin",
     pt_size    = 0.1 * mtplyr_3,
     pt_outline = 0.4,
-    plot_cols  = c("#fafafa", type_cols[2])
+    plot_cols  = c("#fafafa", ova_cols["high"])
   ) +
   ggtitle("adt_ovalbumin") +
   blank_theme +
@@ -394,40 +396,17 @@ ova_umap <- sobj %>%
   )
 
 # OVA hist
-# dnorm provides density for the normal distribution given the mean and
-# standard deviation. Lambda is used to adjust for the mixture composition.
-# mu: Mean of component
-# sig: Standard deviation of component
-# lam: Lambda of component (mixture weight)
-plot_mix_comps <- function(x, mu, sigma, lam) {
-  lam * dnorm(x, mu, sigma)
-}
-
-# Intersection between components
 x_coord <- gmm_res$res %>%
-  filter(GMM_grp == "neg") %>%
+  filter(GMM_grp == "low") %>%
   pull(adt_ovalbumin) %>%
   max()
 
-# Create histogram
 ova_hist <- gmm_res$res %>%
   ggplot() +
   geom_histogram(aes(adt_ovalbumin, ..density..), bins = 50, fill = "#d9d9d9") +
   geom_vline(xintercept = x_coord, size = 0.5, linetype = 2) +
-  stat_function(
-    geom  = "line",
-    fun   = plot_mix_comps,
-    args  = list(gmm_res$mu[1], gmm_res$sigma[1], gmm_res$lambda[1]),
-    color = ova_cols[1],
-    lwd   = 1
-  ) +
-  stat_function(
-    geom  = "line",
-    fun   = plot_mix_comps,
-    args  = list(gmm_res$mu[2], gmm_res$sigma[2], gmm_res$lambda[2]),
-    color = ova_cols[2],
-    lwd   = 1
-  ) +
+  add_stat_fun(gmm_res, ova_cols, "low") +
+  add_stat_fun(gmm_res, ova_cols, "high") +
   labs(title = "Ovalbumin Group", y = "Density") +
   theme_info +
   theme(
@@ -536,7 +515,8 @@ create_marker_panel_v1(
   clust_column     = "GMM_grp",
   xlsx_name        = xlsx_name,
   n_boxes          = 34,
-  all_boxes        = T,
+  all_violins      = T,
+  order_boxes      = F,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
   panel.spacing.y  = unit(0, "cm"),
   panel.spacing.x  = unit(0.2, "cm"),
@@ -576,14 +556,12 @@ sobj@meta.data <- sobj@meta.data %>%
   column_to_rownames("cell_id")
 
 # Set OVA colors
-type_ova_cols <- theme_cols_threes %>%
-  reduce(c)
+type_ova_cols <- paired_cols[seq_along(cell_types)] %>%
+  unlist()
 
 names(type_ova_cols) <- cell_types %>%
   map(~ str_c(names(ova_cols), "-", .x)) %>%
-  reduce(c)
-
-type_ova_cols <- type_ova_cols[!is.na(names(type_ova_cols))]
+  unlist()
 
 # OVA group UMAP
 ova_grp_umap <- sobj %>%
@@ -685,7 +663,8 @@ create_marker_panel_v2(
   clust_column     = "type_ova_grp",
   xlsx_name        = xlsx_name,
   n_boxes          = 34,
-  all_boxes        = T,
+  all_violins      = T,
+  order_boxes      = F,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
   panel.spacing.y  = unit(0, "cm"),
   panel.spacing.x  = unit(0.2, "cm"),

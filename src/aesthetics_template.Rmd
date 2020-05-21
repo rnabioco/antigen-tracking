@@ -20,7 +20,7 @@ cell_types <- sobj@meta.data %>%
 
 names(cell_types) <- cell_types
 
-type_cols <- theme_cols
+type_cols <- c(theme_cols, theme_cols)[seq_along(cell_types)]
 names(type_cols) <- cell_types
 type_cols <- type_cols[!is.na(names(type_cols))]
 
@@ -109,6 +109,112 @@ gg5 <- box_data %>%
 ```{r "{{.x}} BARS", echo = F}
 
 # Create data.frame with confidence intervals
+get_boots <- function(data_in, conf = c(0.9, 0.95, 0.99), ...) {
+  
+  get_ci <- function(conf, boot_in, ...) {
+    
+    res <- boot.ci(
+      boot.out = boot_in,
+      conf     = conf, 
+      type     = "basic", 
+      ...
+    )
+    
+    res <- tibble(
+      median = res$t0,
+      conf   = str_c(conf * 100, "%"),
+      lower  = res$basic[4],
+      upper  = res$basic[5]
+    )
+    
+    res
+  }
+  
+  boot_obj <- boot(
+    data = data_in,
+    statistic = function(x, i) median(x[i]),
+    R = 10000
+  )
+  
+  names(conf) <- conf
+  
+  res <- conf %>%
+    map(get_ci, boot_obj) %>%
+    bind_rows()
+  
+  res
+}
+
+conf_df <- box_data %>%
+  group_by(cell_type2) %>%
+  summarize(boot_res = list(get_boots(ova_fc))) %>%
+  unnest(cols = boot_res)
+
+# Create scaled error bars
+conf_sizes <- c(
+  `90%` = 3,
+  `95%` = 2,
+  `99%` = 1
+)
+
+conf_alphas <- c(
+  `90%` = 1,
+  `95%` = 0.5,
+  `99%` = 0.25
+)
+
+conf_df %>%
+  ggplot(aes(`median`, cell_type2, color = cell_type2)) +
+  geom_violin(data = box_data, aes(ova_fc, cell_type2), fill = "#f0f0f0", color = "#f0f0f0", size = 0.2) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper, alpha = conf, size = conf), height = 0) +
+  # geom_errorbarh(aes(xmin = lower, xmax = upper, alpha = conf), height = 0, size = 3) +
+  
+  geom_point(shape = 22, size = 1, fill = "white") +
+  scale_color_manual(values = type_cols, guide = F) +
+  scale_alpha_manual(values = conf_alphas, guide = F) +
+  scale_size_manual(
+    name   = "Confidence Level",
+    values = conf_sizes,
+    guide  = guide_legend(direction = "horizontal", title.position = "top", label.position = "bottom")
+  ) +
+  scale_x_log10() +
+  labs(x = "ova_fc") +
+  theme_info +
+  theme(
+    legend.position       = c(1, 0.01),
+    legend.justification  = c(1, 0),
+    legend.title          = element_text(size = 10),
+    legend.text           = element_text(size = 10),
+    
+    legend.key.height     = grid::unit(7, "pt"),
+    legend.key.width      = grid::unit(20, "pt"),
+    legend.spacing.x      = grid::unit(7, "pt"),
+    legend.spacing.y      = grid::unit(3.5, "pt"),
+    legend.box.background = element_rect(fill = "white", color = NA),
+    legend.box.spacing    = grid::unit(0, "pt"),
+    legend.title.align    = 0.5,
+    axis.title.y          = element_blank()
+  )
+
+```
+
+```{r "{{.x}} FIG", fig.width = 10, fig.height = 13, echo = F}
+
+# Create final figure
+plot_grid(
+  gg1, gg2, gg3, gg4, gg5, gg6,
+  ncol  = 2,
+  align = "vh",
+  axis  = "trbl"
+)
+
+```
+
+
+
+```{r, "{{.x}} LEAST-SQUARED MEAN", echo = F, eval = F}
+
+# Create data.frame with confidence intervals
 fit <- box_data %>%
   lm(ova_fc ~ cell_type2, data = .)
 
@@ -169,15 +275,54 @@ gg6 <- conf_df %>%
 
 ```
 
-```{r "{{.x}} FIG", fig.width = 10, fig.height = 13, echo = F}
+```{r, "{{.x}} CONFIDENCE INTERVALS", echo = F, eval = F}
 
-# Create final figure
-plot_grid(
-  gg1, gg2, gg3, gg4, gg5, gg6,
-  ncol  = 2,
-  align = "vh",
-  axis  = "trbl"
+my_data <- sobj %>% FetchData("adt_ovalbumin")
+
+# rsample
+x <- my_data %>% bootstraps()
+
+x$splits %>%
+  map_dbl(~ {
+    .x %>%
+      as_tibble() %>% 
+      pull(adt_ovalbumin) %>% 
+      median()
+  })
+
+# boots
+boot_obj <- boot(
+  data = my_data$adt_ovalbumin,
+  statistic = function(x, i) median(x[i]),
+  R = 10000
 )
+
+conf <- c(0.8, 0.9, 0.95)
+names(conf) <- conf
+
+conf_int <- conf %>%
+  map(~ {
+    res <- boot.ci(boot_obj, .x, "basic")
+    res$basic[4:5]
+  })
+
+# wilcox.test
+conf <- c(0.8, 0.9, 0.95)
+
+conf %>%
+  map(~ {
+    wilcox.test(
+      my_data$adt_ovalbumin,
+      alternative = "less",
+      correct     = TRUE,
+      conf.int    = TRUE,
+      conf.level  = .x
+    ) %>%
+      tidy() %>%
+      mutate(conf = .x)
+  }) %>%
+  bind_rows()
+
 
 ```
 
