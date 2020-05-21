@@ -1,2 +1,2 @@
-# Tamburini_AVIDseq
+# Tamburini AVIDseq
 AVID-seq to track antigen archiving
