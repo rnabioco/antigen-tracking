@@ -3,48 +3,6 @@
 
 # Functions
 
-# Load packages
-install_packages <- function(install_list, name_list = NULL, 
-                             install_cmd = "utils::install.packages", ...) {
-  
-  # If using devtools::install_github(), the package name will be different 
-  # from the repository name in install_list
-  if (is.null(name_list)) {
-    name_list <- install_list
-  }
-  
-  # Install packages
-  for (i in seq_along(install_list)) {
-    # require() returns TRUE invisibly if it was able to load package
-    if (!require(name_list[i], character.only = T)) {
-      
-      install_pkg <- strsplit(install_cmd, "::")[[1]][1]
-      
-      if (!require(install_pkg, character.only = T)) {
-        install.packages(install_pkg, dependencies = T, ...)
-        require(install_pkg)
-      }
-      
-      install_cmd <- paste0(install_cmd, "(install_list[i], ...)")
-      eval(parse(text = install_cmd))
-      
-      require(name_list[i], character.only = T)
-    }
-  }
-}
-
-# Fade input colors
-fade_colors <- function(cols_in, hue_frac = 0.4) {
-  
-  res <- cols_in %>%
-    map_chr(~ {
-      c_mat <- rgb2hsv(col2rgb(.x)) * matrix(c(1, hue_frac, 1))
-      hsv(c_mat[1, ], c_mat[2, ], c_mat[3, ])
-    })
-  
-  res
-}
-
 # Plot color palette
 plot_color_palette <- function(input_cols) {
   
@@ -406,10 +364,10 @@ run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL,
   # Run gProfileR
   res <- gene_list %>%
     gost(
-      organism     = org,
-      sources      = dbases,
-      domain_scope = "annotated",
-      significant  = T,
+      organism      = org,
+      sources       = dbases,
+      domain_scope  = "annotated",
+      significant   = T,
       ...
     )
     
@@ -493,8 +451,8 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
 }
 
 # Plot percentage of cells in given groups
-plot_cell_count <- function(sobj_in, group_id = "type", split_id = "orig.ident",
-                            fill_id = "type", plot_colors = theme_cols,
+plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NULL,
+                            fill_id, plot_colors = theme_cols,
                             x_lab = "Cell type", y_lab = "Fraction of cells",
                             bar_pos = "fill", order_count = T, bar_line = 0, ...) {
   
@@ -504,6 +462,11 @@ plot_cell_count <- function(sobj_in, group_id = "type", split_id = "orig.ident",
       group_id := !!sym(group_id),
       fill_id  := !!sym(fill_id)
     )
+  
+  if (!is.null(group_order)) {
+    res <- res %>%
+      mutate(group_id = fct_relevel(group_id, group_order))
+  }
   
   if (!is.null(split_id)) {
     res <- res %>%
@@ -718,7 +681,7 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
 }
 
 # Create figure summarizing marker genes
-create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_column, 
+create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column, 
                               input_umap, umap_color, fig_heights = c(0.46, 0.3, 0.3), 
                               GO_genome = params$genome, box_colors, n_boxes = 10,
                               umap_outline = NULL, umap_mtplyr = 1, xlsx_name = NULL, 
@@ -777,14 +740,6 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_
       )
     
     # Create GO term plots
-    if (is.null(input_GO)) {
-      input_GO <- input_markers$gene %>%
-        run_gprofiler(
-          genome = GO_genome,
-          ordered_query = T
-        )
-    }
-    
     if (nrow(input_GO) > 0) {
       GO_bubbles <- input_GO %>%
         create_bubbles(plot_colors = umap_color) +
@@ -849,7 +804,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO = NULL, clust_
   res
 }
 
-# Filter clusters, set colors and order
+# Filter clusters and set cluster order
 set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
   input_marks <- input_marks %>%
     group_by(cluster) %>%
@@ -866,7 +821,7 @@ set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
 # Create v1 panel for marker genes
 create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, order_boxes = T,
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)),
-                                   umap_mtplyr = 6, xlsx_name = NULL, ...) {
+                                   uniq_GO = F, umap_mtplyr = 6, xlsx_name = NULL, ...) {
   
   # Set point size
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
@@ -878,7 +833,27 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
   
   markers <- find_markers(input_sobj)
   
-  # Set cluster order
+  # Find GO terms
+  GO_df <- markers %>%
+    group_by(cluster) %>%
+    do({
+      arrange(., p_val_adj) %>%
+        pull(gene) %>%
+        run_gprofiler(
+          genome = params$genome,
+          ordered_query = T
+        )
+    }) %>%
+    ungroup()
+  
+  if (uniq_GO && nrow(GO_df) > 0) {
+    GO_df <- GO_df %>%
+      group_by(term_id) %>%
+      filter(n() == 1) %>%
+      ungroup()
+  }
+  
+  # Set cluster order based on order of input_cols
   fig_clusters <- input_cols %>%
     set_cluster_order(markers)
   
@@ -886,10 +861,13 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
   for (i in seq_along(fig_clusters)) {
     cat("\n#### ", fig_clusters[i], "\n", sep = "")
     
-    # Filter marker genes
+    # Filter markers and GO terms
     clust <- fig_clusters[i]
     
     fig_marks <- markers %>%
+      filter(cluster == clust)
+    
+    fig_GO <- GO_df %>%
       filter(cluster == clust)
     
     # Create reference umap
@@ -897,7 +875,6 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
     umap_col <- input_cols[clust]
     
     if (is.null(input_umap)) {
-      # order_boxes <- F
       umap_levels <- input_cols[names(input_cols) != clust]
       umap_levels <- names(c(umap_levels, umap_col))
       
@@ -915,6 +892,7 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
     marker_fig <- input_sobj %>%
       create_marker_fig(
         input_markers = fig_marks,
+        input_GO      = fig_GO,
         clust_column  = clust_column,
         input_umap    = ref_umap,
         umap_color    = umap_col,
@@ -926,7 +904,7 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
         ...
       )
     
-    cat(nrow(fig_marks), "marker genes were identified.")
+    cat(nrow(fig_marks), "marker genes were identified,", nrow(fig_GO), "GO terms were identified.")
     print(marker_fig)
     cat("\n\n---\n\n<br>\n\n<br>\n\n")
   }
@@ -935,7 +913,7 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
 # Create v2 panel that splits plots into groups
 create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_column, clust_column, 
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)), 
-                                   umap_mtplyr = 6, xlsx_name = NULL, ...) {
+                                   uniq_GO = F, umap_mtplyr = 6, xlsx_name = NULL, ...) {
   
   # Set point size
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
@@ -945,14 +923,37 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
   fig_clusters <- input_cols %>%
     set_cluster_order(input_markers)
   
+  # Find GO terms
+  GO_df <- input_markers %>%
+    group_by(cluster) %>%
+    do({
+      arrange(., p_val_adj) %>%
+        pull(gene) %>%
+        run_gprofiler(
+          genome = params$genome,
+          ordered_query = T
+        )
+    }) %>%
+    ungroup()
+  
+  if (uniq_GO && nrow(GO_df) > 0) {
+    GO_df <- GO_df %>%
+      group_by(term_id) %>%
+      filter(n() == 1) %>%
+      ungroup()
+  }
+  
   # Create figures
   for (i in seq_along(fig_clusters)) {
     cat("\n#### ", fig_clusters[i], "\n", sep = "")
     
-    # Filter marker genes
+    # Filter markers and GO terms
     clust <- fig_clusters[i]
     
     fig_marks <- input_markers %>%
+      filter(cluster == clust)
+    
+    fig_GO <- GO_df %>%
       filter(cluster == clust)
     
     # Set colors
@@ -988,6 +989,7 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
     marker_fig <- input_sobj %>%
       create_marker_fig(
         input_markers = fig_marks,
+        input_GO      = fig_GO,
         clust_column  = clust_column,
         input_umap    = ref_umap,
         umap_color    = umap_col,
@@ -1014,31 +1016,18 @@ knitr::opts_chunk$set(message = F, warning = F)
 
 # Load packages
 R_packages <- c(
-  "tidyverse", "Matrix",
-  "devtools",  "Seurat",
-  "stringr",   "gprofiler2",
-  "R.utils",   "circlize",  
-  "knitr",     "ggridges",
-  "cowplot",   "ComplexHeatmap",
-  "ggrepel",   "RColorBrewer",
-  "clustifyr", "ggbeeswarm",
-  "ggforce",   "colorblindr",
-  "broom",     "emmeans",
-  "mixtools",  "xlsx"
+  "tidyverse",  "Seurat",
+  "gprofiler2", "knitr",
+  "cowplot",    "ggbeeswarm",
+  "ggrepel",    "RColorBrewer",
+  "xlsx",       "colorblindr",
+  "ggforce",    "broom",
+  "mixtools"
 )
 
-install_packages(R_packages)
-
-install_packages(
-  install_list = "clauswilke/colorblindr",
-  name_list    = "colorblindr",
-  install_cmd  = "devtools::install_github" 
-)
-
-install_packages(
-  install_list = "biomaRt",
-  install_cmd  = "BiocManager::install"
-)
+for (package in R_packages) {
+  library(package, character.only = T)
+}
 
 ```
 

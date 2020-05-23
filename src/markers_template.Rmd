@@ -421,9 +421,9 @@ ova_hist <- gmm_res$res %>%
 # OVA subtype bar graphs
 type_bar <- sobj %>%
   plot_cell_count(
-    group_id = "GMM_grp",
-    split_id = NULL,
-    fill_id = "cell_type",
+    group_id    = "GMM_grp",
+    group_order = names(ova_cols),
+    fill_id     = "cell_type",
     plot_colors = type_cols
   ) +
   guides(fill = guide_legend(ncol = 1)) +
@@ -441,9 +441,9 @@ type_bar <- sobj %>%
 # OVA cluster bar graphs
 clust_bar <- sobj %>%
   plot_cell_count(
-    group_id = "GMM_grp",
-    split_id = NULL,
-    fill_id = "cluster_id",
+    group_id    = "GMM_grp",
+    group_order = names(ova_cols),
+    fill_id     = "cluster_id",
     plot_colors = clust_cols
   ) +
   guides(fill = guide_legend(nrow = 10)) +
@@ -513,6 +513,7 @@ create_marker_panel_v1(
   input_sobj       = sobj,
   input_cols       = ova_cols,
   clust_column     = "GMM_grp",
+  uniq_GO          = T,
   xlsx_name        = xlsx_name,
   n_boxes          = 34,
   all_violins      = T,
@@ -661,6 +662,7 @@ create_marker_panel_v2(
   input_cols       = type_ova_cols,
   grp_column       = "cell_type",
   clust_column     = "type_ova_grp",
+  uniq_GO          = T,
   xlsx_name        = xlsx_name,
   n_boxes          = 34,
   all_violins      = T,
@@ -672,17 +674,6 @@ create_marker_panel_v2(
 )
 
 ```
-
-
-
-
-
-
-
-
-
-
-
 
 
 
