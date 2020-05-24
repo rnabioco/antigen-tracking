@@ -1,0 +1,155 @@
+---
+---
+title: "LEC analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Seurat)
+library(scrunchy)
+library(MultiAssayExperiment)
+library(SingleCellExperiment)
+library(tidyverse)
+library(ggridges)
+library(umap)
+library(clustifyr)
+library(cowplot)
+library(dplyr)
+library(topGO)
+library(biomaRt)
+
+#if scrunchy doesn't load properly use reticulate::py_install("igraph") and reticulate::py_install("leidenalg")
+load("~/LEC_analysis/clustifyr/ref_mousespleenDC.rda")
+load("~/LEC_analysis/clustifyr/ref_lymphnodestromal.rda")
+load("~/LEC_analysis/clustifyr/ref_LEC.rda")
+
+ortholog_table <- "mouse_orthologs.tsv"
+ if(!file.exists(ortholog_table)){
+  library(biomaRt)
+  ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+  orthologs <- getBM(mart = ensembl,
+      attributes = c("external_gene_name",
+                     "mmusculus_homolog_associated_gene_name"))
+  write_tsv(orthologs, ortholog_table)
+}
+orthologs <- read_tsv(ortholog_table)
+genes <- rownames(ref_LEC )
+mus_genes <- ref_LEC %>% 
+  as.tibble() %>%
+  mutate(external_gene_name = genes) %>%
+  left_join(orthologs, by = "external_gene_name") %>%
+  dplyr::select(-external_gene_name) %>%
+  filter(!is.na(mmusculus_homolog_associated_gene_name)) %>%
+  dplyr::select(mmusculus_homolog_associated_gene_name, LEC1:"???") %>%
+  group_by(mmusculus_homolog_associated_gene_name) %>%
+  summarise_all(mean)
+mus_ref_LEC <- mus_genes %>%
+  dplyr::select(-mmusculus_homolog_associated_gene_name) %>%
+  as.matrix()
+rownames(mus_ref_LEC) <- mus_genes$mmusculus_homolog_associated_gene_name
+
+plots_folder <- '~/LEC_analysis/vaccinia_reanalysis/plots/'
+so_folder <- '~/LEC_analysis/vaccinia_reanalysis/so/'
+```
+
+```{r, CD45_d2}
+neg2_data <- Read10X("~/LEC_analysis/vaccinia_reanalysis/20200203/CD45neg_d2/filtered_feature_bc_matrix/")
+pos2_data <- Read10X("~/LEC_analysis/vaccinia_reanalysis/20200203/CD45pos_d2/filtered_feature_bc_matrix/")
+#saveRDS(d2_so, file = paste(so_folder, "d2_so.rds", sep = ""))
+#load(file = paste(so_folder, "d2_so.rds", sep = ""))
+
+neg2_mrna <- neg2_data$`Gene Expression`
+neg2_adt <- neg2_data$`Antibody Capture`
+neg2_so <- CreateSeuratObject(counts = neg2_mrna)
+neg2_so[['adt']] <- CreateAssayObject(counts = neg2_adt)
+
+pos2_mrna <- pos2_data$`Gene Expression`
+pos2_adt <- pos2_data$`Antibody Capture`
+pos2_so <- CreateSeuratObject(counts = pos2_mrna)
+pos2_so[['adt']] <- CreateAssayObject(counts = pos2_adt)
+
+d2_so <- merge(neg2_so, pos2_so)
+
+d2_so[["percent.mt"]] <- PercentageFeatureSet(d2_so, pattern = "^mt-")
+VlnPlot(d2_so, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+FeatureScatter(d2_so, feature1 = "nCount_RNA", feature2 = "percent.mt")
+FeatureScatter(d2_so, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+d2_so <- subset(d2_so, subset = percent.mt < 25 & nFeature_RNA > 100 & nFeature_RNA < 5000)
+
+d2_so <- NormalizeData(d2_so, normalization.method = "LogNormalize", scale.factor = 10000)
+d2_so <- FindVariableFeatures(d2_so, selection.method = "vst")
+
+d2_all.genes <- rownames(d2_so)
+d2_so <- ScaleData(d2_so, features = d2_all.genes)
+d2_so <- RunPCA(d2_so, features = VariableFeatures(object = d2_so))
+ElbowPlot(d2_so)
+
+d2_so <- FindNeighbors(d2_so, dims = 1:20)
+d2_so <- FindClusters(d2_so, resolution = 0.8)
+d2_so <- RunTSNE(d2_so, dims = 1:20)
+d2_so <- RunUMAP(d2_so, dims = 1:20)
+DimPlot(d2_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+#ggsave(paste(plots_folder, "cluster_umap_d2.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+
+d2_so <- NormalizeData(d2_so, assay = "adt", normalization.method = "CLR")
+d2_so <- ScaleData(d2_so, assay = "adt")
+
+d2_res1 <- clustify(
+      input = d2_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::immgen_ref,
+        seurat_out = T, threshold = 0.5)
+d2_res1_type <- FetchData(d2_res1, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2_res1_type
+
+d2_res2 <- clustify(
+      input = d2_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = clustifyrdata::ref_tabula_muris_drop,
+        seurat_out = T, threshold = 0.5)
+d2_res2_type <- FetchData(d2_res2, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2_res2_type
+
+d2_resDC <- clustify(
+      input = d2_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_mousespleenDC,
+        seurat_out = T, threshold = 0.5)
+d2_resDC_type <- FetchData(d2_resDC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2_resDC_type
+
+d2_resFRC <- clustify(
+      input = d2_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = ref_lymphnodestromal,
+        seurat_out = T, threshold = 0.5)
+d2_resFRC_type <- FetchData(d2_resFRC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2_resFRC_type
+
+d2_resLEC <- clustify(
+      input = d2_so,
+        cluster_col = "seurat_clusters",
+        ref_mat = mus_ref_LEC,
+        seurat_out = T, threshold = 0.5)
+d2_resLEC_type <- FetchData(d2_resLEC, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+d2_resLEC_type
+```
