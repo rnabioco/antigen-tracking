@@ -1,0 +1,50 @@
+---
+title: "Tamburini AVID-seq"
+author: "Ryan Sheridan"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    df_print: "paged"
+    code_folding: "hide"
+    self_contained: true
+    highlight: "kate"
+params:
+  genome: "GRCm"
+  template_dir: "../src"
+  rds_dir: "../sobjs/so"
+  ext_dir: "../ext_data"
+  sobjs:
+    value:
+      # - ["d2_DC", "d14_DC"]
+      - ["d2_LEC", "d14_LEC"]
+  ext_data:
+    value:
+      # - ["GSE137710_mouse_spleen_counts_normalized_4464x11755.tsv.gz"]
+      - ["GSM4306928_LEC_10x_C57BL6_raw_read_count_matrix.csv.gz"]
+---
+
+---
+
+<br>
+
+`r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
+
+```{r "Run markers chunks", echo = F}
+
+sobj_list <- params$sobjs %>%
+  map(~ reduce(.x, str_c, sep = ","))
+
+ext_list <- params$ext_data %>%
+  map(~ reduce(.x, str_c, sep = ","))
+
+chunks <- map2(sobj_list, ext_list, ~ {
+  knit_expand(str_c(params$template_dir, "/comparisons_template_2.Rmd"))
+})
+
+```
+
+`r knit_child(text = chunks)`
+

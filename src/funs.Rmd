@@ -587,6 +587,9 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
     as_tibble(rownames = "cell_id") %>%
     mutate(grp = str_remove(!!sym(clust_column), "^[a-zA-Z0-9_]+-"))
   
+  input_markers <- input_markers %>%
+    str_trunc(9)
+  
   # Filter based on input group
   if (!is.null(group)) {
     box_data <- box_data %>%
@@ -598,6 +601,7 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
     pivot_longer(cols = c(-cell_id, -grp, -!!sym(clust_column)), names_to = "key", values_to = "Counts") %>%
     mutate(
       !!sym(clust_column) := fct_relevel(!!sym(clust_column), names(box_cols)),
+      key = str_trunc(key, width = 9, side = "right"),
       key = fct_relevel(key, input_markers)
     )
   
@@ -1001,7 +1005,7 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
         ...
       )
     
-    cat(nrow(fig_marks), "marker genes were identified.")
+    cat(nrow(fig_marks), "marker genes were identified.", nrow(fig_GO), "GO terms were identified.")
     print(marker_fig)
     cat("\n\n---\n\n<br>\n\n<br>\n\n")
   }
@@ -1022,7 +1026,7 @@ R_packages <- c(
   "ggrepel",    "RColorBrewer",
   "xlsx",       "colorblindr",
   "ggforce",    "broom",
-  "mixtools"
+  "mixtools",   "clustifyr"
 )
 
 for (package in R_packages) {
