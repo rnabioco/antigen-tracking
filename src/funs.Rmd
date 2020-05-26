@@ -116,7 +116,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin") {
     mixmdl$posterior
   ) %>%
     dplyr::rename(!!sym(data_column) := data) %>%
-    rename(comp_names) %>%
+    rename(all_of(comp_names)) %>%
     mutate(GMM_grp = if_else(low > 0.5, "low", "high")) %>%
     column_to_rownames("cell_id")
   
@@ -493,6 +493,92 @@ plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NU
   res
 }
 
+# Plot confidence intervals for median
+create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols) {
+  
+  # Create data.frame with confidence intervals
+  get_boots <- function(data_in, conf = c(0.9, 0.95, 0.99), ...) {
+    
+    get_ci <- function(conf, boot_in, ...) {
+      
+      res <- boot.ci(
+        boot.out = boot_in,
+        conf     = conf, 
+        type     = "basic", 
+        ...
+      )
+      
+      res <- tibble(
+        median = res$t0,
+        conf   = str_c(conf * 100, "%"),
+        lower  = res$basic[4],
+        upper  = res$basic[5]
+      )
+      
+      res
+    }
+    
+    boot_obj <- boot(
+      data = data_in,
+      statistic = function(x, i) median(x[i]),
+      R = 10000
+    )
+    
+    names(conf) <- conf
+    
+    res <- conf %>%
+      map(get_ci, boot_obj) %>%
+      bind_rows()
+    
+    res
+  }
+  
+  box_data <- sobj %>%
+    FetchData(c(group_column, data_column)) %>%
+    as_tibble(rownames = "cell_id")
+  
+  conf_df <- box_data %>%
+    group_by(!!sym(group_column)) %>%
+    summarize(boot_res = list(get_boots(!!sym(data_column)))) %>%
+    unnest(cols = boot_res)
+  
+  # Create scaled error bars
+  conf_sizes <- c(
+    `90%` = 4,
+    `95%` = 3,
+    `99%` = 2
+  )
+  
+  conf_alphas <- c(
+    `90%` = 1,
+    `95%` = 0.5,
+    `99%` = 0.25
+  )
+  
+  ova_boxes <- conf_df %>%
+    ggplot(aes(`median`, !!sym(group_column), color = !!sym(group_column))) +
+    geom_violin(data = box_data, aes(!!sym(data_column), !!sym(group_column)), fill = "#f0f0f0", color = "#f0f0f0", size = 0.2) +
+    geom_errorbarh(aes(xmin = lower, xmax = upper, alpha = conf, size = conf), height = 0) +
+    # geom_errorbarh(aes(xmin = lower, xmax = upper, alpha = conf), height = 0, size = 3) +
+    geom_point(shape = 22, size = 1, fill = "white") +
+    scale_color_manual(values = type_cols, guide = F) +
+    scale_alpha_manual(values = conf_alphas, guide = F) +
+    scale_size_manual(
+      name   = "Confidence Level",
+      values = conf_sizes,
+      guide  = guide_legend(direction = "horizontal", title.position = "top", label.position = "bottom")
+    ) +
+    scale_x_log10() +
+    labs(x = data_column) +
+    theme_info +
+    theme(
+      legend.position = "top",
+      legend.title    = element_text(size = 10),
+      legend.text     = element_text(size = 10),
+      axis.title.y    = element_blank()
+    )
+}
+
 # Run FindAllMarkers
 find_markers <- function(input_sobj, only_pos = T, p_cutoff = 0.05, ...) {
   res <- input_sobj %>%
@@ -578,8 +664,8 @@ create_marker_umaps <- function(input_sobj, input_markers, umap_col, add_outline
 # Create boxplots showing marker gene signal
 create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_cols,
                                 group = NULL, include_legend = F, all_boxes = F,
-                                all_violins = F, order_boxes = T, n_boxes = 10, 
-                                pt_mtplyr = 1, ...) {
+                                all_violins = F, order_boxes = T, n_boxes = 10,
+                                n_rows = 2, pt_mtplyr = 1, ...) {
   
   # Retrieve and format data for boxplots
   box_data <- input_sobj %>%
@@ -616,7 +702,7 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
     n_distinct()
   
   # Create plots
-  n_cols <- ceiling(n_boxes / 2)
+  n_cols <- ceiling(n_boxes / n_rows)
   
   res <- box_data %>%
     ggplot(aes(!!sym(clust_column), Counts, color = !!sym(clust_column))) + 
@@ -670,7 +756,7 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
   # Add blank space for missing facets
   n_keys <- n_distinct(box_data$key)
   
-  if (n_keys <= n_cols) {
+  if (n_keys <= n_cols && n_rows > 1) {
     n_keys <- if_else(n_keys == 1, 2, as.double(n_keys))
     n_cols <- floor(n_cols / n_keys)
     
@@ -738,7 +824,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column,
         input_markers = top_marks,
         clust_column  = clust_column,
         box_cols      = box_colors,
-        n_boxes       = n_boxes,
+        # n_boxes       = n_boxes,
         plot.margin   = unit(c(0.8, 0.2, 0.2, 0.2), "cm"),
         ...
       )
@@ -821,7 +907,7 @@ set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
   
   res
 }
-
+  
 # Create v1 panel for marker genes
 create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, order_boxes = T,
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)),
@@ -1011,6 +1097,107 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
   }
 }
 
+# Create panels for manuscript
+create_paper_figures <- function(input_sobj, input_cols, summary_fig = NULL, input_umap = NULL, clust_column,
+                                 color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)),
+                                 order_boxes = T, uniq_GO = F, umap_mtplyr = 6, xlsx_name = NULL, ...) {
+  
+  # Set point size
+  umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
+  ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
+  
+  # Find marker genes
+  Idents(input_sobj) <- input_sobj %>%
+    FetchData(clust_column)
+  
+  markers <- find_markers(input_sobj)
+  
+  # Find GO terms
+  GO_df <- markers %>%
+    group_by(cluster) %>%
+    do({
+      arrange(., p_val_adj) %>%
+        pull(gene) %>%
+        run_gprofiler(
+          genome = params$genome,
+          ordered_query = T
+        )
+    }) %>%
+    ungroup()
+  
+  if (uniq_GO && nrow(GO_df) > 0) {
+    GO_df <- GO_df %>%
+      group_by(term_id) %>%
+      filter(n() == 1) %>%
+      ungroup()
+  }
+  
+  # Set cluster order based on order of input_cols
+  fig_clusters <- input_cols %>%
+    set_cluster_order(markers)
+  
+  # Create figures
+  for (i in seq_along(fig_clusters)) {
+    cat("\n#### ", fig_clusters[i], "\n", sep = "")
+    
+    # Filter markers and GO terms
+    clust <- fig_clusters[i]
+    
+    fig_marks <- markers %>%
+      filter(cluster == clust)
+    
+    fig_GO <- GO_df %>%
+      filter(cluster == clust)
+    
+    # Create reference umap
+    ref_umap <- input_umap
+    umap_col <- input_cols[clust]
+    
+    if (is.null(input_umap)) {
+      umap_levels <- input_cols[names(input_cols) != clust]
+      umap_levels <- names(c(umap_levels, umap_col))
+      
+      ref_umap <- input_sobj %>%
+        create_ref_umap(
+          feature     = clust_column,
+          plot_cols   = input_cols,
+          feat_levels = umap_levels,
+          pt_mtplyr   = ref_mtplyr,
+          color_guide = color_guide
+        )
+    }
+    
+    # Create panel
+    marker_fig <- input_sobj %>%
+      create_marker_fig(
+        input_markers = fig_marks,
+        input_GO      = fig_GO,
+        clust_column  = clust_column,
+        input_umap    = ref_umap,
+        umap_color    = umap_col,
+        box_colors    = input_cols,
+        order_boxes   = order_boxes,
+        umap_mtplyr   = umap_mtplyr,
+        xlsx_name     = xlsx_name,
+        sheet_name    = clust,
+        ...
+      )
+    
+    if (!is.null(summary_fig)) {
+      marker_fig <- plot_grid(
+        summary_fig, marker_fig,
+        rel_heights = c(0.3, 0.7),
+        ncol  = 1,
+        align = "vh",
+        axis  = "trbl"
+      )
+    }
+    
+    print(marker_fig)
+    cat("\n\n---\n\n<br>\n\n<br>\n\n")
+  }
+}
+
 ```
 
 ```{r "Packages", include = F}
@@ -1026,7 +1213,8 @@ R_packages <- c(
   "ggrepel",    "RColorBrewer",
   "xlsx",       "colorblindr",
   "ggforce",    "broom",
-  "mixtools",   "clustifyr"
+  "mixtools",   "clustifyr",
+  "boot"
 )
 
 for (package in R_packages) {

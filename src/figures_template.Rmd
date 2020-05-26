@@ -1,0 +1,132 @@
+
+```{r "{{.y}} Setup", echo = F}
+
+# Load Seurat object
+rds_type <- "{{.x}}"
+rds_file <- "{{.y}}"
+rds_name <- basename(rds_file) %>%
+  str_remove("_so.rds$")
+
+sobj <- read_rds(rds_file)
+
+mtplyr_1 <- if_else(ncol(sobj) < 500, 3, 1)
+mtplyr_2 <- if_else(ncol(sobj) < 500, 6, 1)
+mtplyr_3 <- if_else(ncol(sobj) < 500, mtplyr_2 * 2.5, 1)
+
+cell_type_id <- str_c("cell_type", rds_type)
+cluster_id <- str_c(cell_type_id, "2")
+
+if ("ova" %in% rownames(sobj@assays$adt)) {
+  sobj <- sobj %>%
+    FetchData("adt_ova") %>%
+    AddMetaData(
+      object = sobj,
+      metadata = .,
+      col.name = "adt_ovalbumin"
+    )
+}
+
+sobj@meta.data <- sobj@meta.data %>%
+  rownames_to_column("cell_id") %>%
+  mutate(
+    cluster_id = !!sym(cluster_id),
+    cluster_id = str_replace(cluster_id, "-NA$", "-unassigned"),
+    cell_type  = str_remove(cluster_id, "^[0-9]+-")
+  ) %>%
+  column_to_rownames("cell_id")
+
+# Section descriptions
+marker_desc <- "Gene expression signal is shown for the top marker genes (top, middle)."
+GO_desc <- "GO terms were identified for marker genes, the top terms are labeled, the size of each point indicates the number of overlapping genes (bottom)."
+
+```
+
+### **`r rds_name`** {.tabset .tabset-pills}
+
+```{r "{{.y}} Fig GMM", include = F}
+
+# Fit gaussian mixture model for OVA
+gmm_res <- fit_GMM(
+  sobj_in = sobj,
+  data_column = "adt_ovalbumin"
+)
+
+sobj <- sobj %>% 
+  AddMetaData(gmm_res$res)
+
+```
+
+```{r "{{.y}} OVA groups markers", fig.width = 8.5, fig.height = 17, results = "asis"}
+
+# Set OVA colors
+ova_cols <- c(
+  low = theme_cols[1],
+  high = theme_cols[2]
+  # low = theme_cols[2],
+  # high = theme_cols[8]
+)
+
+# Set subtype order and colors
+cell_types <- sobj@meta.data %>%
+  pull(cell_type) %>%
+  unique()
+
+names(cell_types) <- cell_types
+
+type_cols <- theme_cols
+names(type_cols) <- cell_types
+type_cols <- type_cols[!is.na(names(type_cols))]
+
+# Subtype UMAP
+type_umap <- sobj %>%
+  plot_features(
+    feature     = "cell_type",
+    pt_size     = 0.1 * mtplyr_3,
+    pt_outline  = 0.4,
+    plot_cols   = type_cols,
+    feat_levels = names(type_cols)
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 3.5), nrow = 3)) +
+  blank_theme +
+  theme(
+    legend.position = "top",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 8)
+  )
+
+# OVA boxes
+type_boxes <- sobj %>%
+  create_ci_boxes(
+    group_column = "cell_type", 
+    data_column  = "adt_ovalbumin", 
+    box_cols     = type_cols
+  )
+
+# Create final summary figure
+summary_fig <- plot_grid(
+  type_umap, type_boxes,
+  rel_widths = c(0.46, 0.54),
+  nrow  = 1,
+  align = "h",
+  axis  = "trbl"
+)
+
+# Create figure panel
+create_paper_figures(
+  input_sobj       = sobj,
+  summary_fig      = summary_fig,
+  input_cols       = ova_cols,
+  clust_column     = "GMM_grp",
+  fig_heights      = c(0.46, 0.25, 0.35),
+  uniq_GO          = T,
+  n_boxes          = 10,
+  n_rows           = 1,
+  # all_violins      = T,
+  order_boxes      = F,
+  panel.spacing.y  = unit(0, "cm"),
+  panel.spacing.x  = unit(0.2, "cm"),
+  strip.text       = element_text(size = 11)
+  # panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
+)
+
+```
