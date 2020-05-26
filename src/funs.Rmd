@@ -824,7 +824,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column,
         input_markers = top_marks,
         clust_column  = clust_column,
         box_cols      = box_colors,
-        # n_boxes       = n_boxes,
+        n_boxes       = n_boxes,
         plot.margin   = unit(c(0.8, 0.2, 0.2, 0.2), "cm"),
         ...
       )

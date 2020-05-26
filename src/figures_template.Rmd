@@ -121,11 +121,11 @@ create_paper_figures(
   uniq_GO          = T,
   n_boxes          = 10,
   n_rows           = 1,
-  # all_violins      = T,
   order_boxes      = F,
   panel.spacing.y  = unit(0, "cm"),
   panel.spacing.x  = unit(0.2, "cm"),
   strip.text       = element_text(size = 11)
+  # all_violins      = T,
   # panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
 )
 
