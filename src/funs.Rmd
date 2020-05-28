@@ -494,10 +494,10 @@ plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NU
 }
 
 # Plot confidence intervals for median
-create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols) {
+create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols, pseudo = 0.01, ...) {
   
   # Create data.frame with confidence intervals
-  get_boots <- function(data_in, conf = c(0.9, 0.95, 0.99), ...) {
+  get_boots <- function(data_in, conf = c(0.9, 0.95, 0.99), R = 100000, ...) {
     
     get_ci <- function(conf, boot_in, ...) {
       
@@ -509,10 +509,10 @@ create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols) {
       )
       
       res <- tibble(
-        median = res$t0,
-        conf   = str_c(conf * 100, "%"),
-        lower  = res$basic[4],
-        upper  = res$basic[5]
+        med   = res$t0,
+        conf  = str_c(conf * 100, "%"),
+        lower = res$basic[4],
+        upper = res$basic[5]
       )
       
       res
@@ -521,7 +521,7 @@ create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols) {
     boot_obj <- boot(
       data = data_in,
       statistic = function(x, i) median(x[i]),
-      R = 10000
+      R = R
     )
     
     names(conf) <- conf
@@ -533,14 +533,23 @@ create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols) {
     res
   }
   
-  box_data <- sobj %>%
+  box_data <- input_sobj %>%
     FetchData(c(group_column, data_column)) %>%
-    as_tibble(rownames = "cell_id")
+    as_tibble(rownames = "cell_id") %>%
+    mutate(
+      grp = !!sym(group_column),
+      grp = fct_reorder(grp, !!sym(data_column), median),
+      !!sym(data_column) := !!sym(data_column) + pseudo
+    )
   
   conf_df <- box_data %>%
-    group_by(!!sym(group_column)) %>%
+    group_by(grp) %>%
     summarize(boot_res = list(get_boots(!!sym(data_column)))) %>%
-    unnest(cols = boot_res)
+    ungroup() %>%
+    unnest(cols = boot_res) %>%
+    pivot_longer(cols = c(-grp, -conf), names_to = "key", values_to = "vals") %>%
+    mutate(vals = if_else(vals < 0, pseudo, vals)) %>%
+    pivot_wider(names_from = key, values_from = vals)
   
   # Create scaled error bars
   conf_sizes <- c(
@@ -555,19 +564,21 @@ create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols) {
     `99%` = 0.25
   )
   
-  ova_boxes <- conf_df %>%
-    ggplot(aes(`median`, !!sym(group_column), color = !!sym(group_column))) +
-    geom_violin(data = box_data, aes(!!sym(data_column), !!sym(group_column)), fill = "#f0f0f0", color = "#f0f0f0", size = 0.2) +
+  res <- conf_df %>%
+    ggplot(aes(med, grp, color = grp)) +
+    geom_violin(data = box_data, aes(!!sym(data_column), grp), fill = "#f0f0f0", color = "#f0f0f0", size = 0.2) +
     geom_errorbarh(aes(xmin = lower, xmax = upper, alpha = conf, size = conf), height = 0) +
-    # geom_errorbarh(aes(xmin = lower, xmax = upper, alpha = conf), height = 0, size = 3) +
     geom_point(shape = 22, size = 1, fill = "white") +
-    scale_color_manual(values = type_cols, guide = F) +
+    scale_color_manual(values = box_cols, guide = F) +
     scale_alpha_manual(values = conf_alphas, guide = F) +
     scale_size_manual(
       name   = "Confidence Level",
-      values = conf_sizes,
-      guide  = guide_legend(direction = "horizontal", title.position = "top", label.position = "bottom")
-    ) +
+      values = conf_sizes
+    )
+  # geom_errorbarh(aes(xmin = lower, xmax = upper, alpha = conf), height = 0, size = 3) +
+  # guide  = guide_legend(direction = "horizontal", title.position = "top", label.position = "bottom")
+  
+  res <- res +
     scale_x_log10() +
     labs(x = data_column) +
     theme_info +
@@ -575,8 +586,12 @@ create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols) {
       legend.position = "top",
       legend.title    = element_text(size = 10),
       legend.text     = element_text(size = 10),
-      axis.title.y    = element_blank()
+      axis.title.y    = element_blank(),
+      axis.title.x    = element_text(size = 10),
+      axis.text       = element_text(size = 10)
     )
+  
+  res
 }
 
 # Run FindAllMarkers
