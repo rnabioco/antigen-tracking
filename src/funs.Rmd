@@ -272,14 +272,14 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
     ggplot(aes(!!sym(x), !!sym(y), color = !!sym(short_feat)))
   
   if (!is.null(pt_outline)) {
-    pt_out_legend <- T
-    
-    if (is.numeric(counts[[short_feat]])) {
-      pt_out_legend <- F 
-    }
+    # pt_out_legend <- T
+    # 
+    # if (is.numeric(counts[[short_feat]])) {
+    #   pt_out_legend <- F 
+    # }
     
     res <- res +
-      geom_point(aes(fill = !!sym(short_feat)), size = pt_outline, color = "black", show.legend = pt_out_legend)
+      geom_point(aes(fill = !!sym(short_feat)), size = pt_outline, color = "black", show.legend = F)
   }
 
   res <- res +
@@ -575,9 +575,6 @@ create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols, pse
       name   = "Confidence Level",
       values = conf_sizes
     )
-  # geom_errorbarh(aes(xmin = lower, xmax = upper, alpha = conf), height = 0, size = 3) +
-  # guide  = guide_legend(direction = "horizontal", title.position = "top", label.position = "bottom")
-  
   res <- res +
     scale_x_log10() +
     labs(x = data_column) +
@@ -592,6 +589,9 @@ create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols, pse
     )
   
   res
+  
+  # geom_errorbarh(aes(xmin = lower, xmax = upper, alpha = conf), height = 0, size = 3) +
+  # guide  = guide_legend(direction = "horizontal", title.position = "top", label.position = "bottom")
 }
 
 # Run FindAllMarkers
