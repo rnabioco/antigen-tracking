@@ -494,10 +494,10 @@ plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NU
 }
 
 # Plot confidence intervals for median
-create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols, pseudo = 0.01, ...) {
+create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols, pseudo = 0.03, ...) {
   
   # Create data.frame with confidence intervals
-  get_boots <- function(data_in, conf = c(0.9, 0.95, 0.99), R = 100000, ...) {
+  get_boots <- function(data_in, conf = c(0.9, 0.95, 0.99), R = 10000, ...) {
     
     get_ci <- function(conf, boot_in, ...) {
       
