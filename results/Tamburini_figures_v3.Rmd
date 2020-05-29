@@ -146,7 +146,7 @@ add_arrow_axis <- function(gg_in, fract = 0.1, ...) {
 create_fig <- function(sobj_in, cols_in, type_column = "cell_type2",
                        data_column = c("Fold-change relative to T/B cell abundance (log10)" = "ova_fc"), 
                        title = NULL, gg_out = NULL, legd_rows = 10, arrow_axis = F, 
-                       pt_size = 0.1, pt_outline = 0.4, cell_counts = T,
+                       pt_size = 0.1, pt_outline = 0.4, cell_counts = T, data_umap = F,
                        other_cols = c("B cell" = "#E69F00", "T cell" = "#009E73"),
                        ...) {
   
@@ -190,7 +190,7 @@ create_fig <- function(sobj_in, cols_in, type_column = "cell_type2",
   
   if (cell_counts) {
     umap_data <- umap_data %>%
-      FetchData(c(type_column, "UMAP_1", "UMAP_2")) %>%
+      FetchData(c(type_column, data_column, "UMAP_1", "UMAP_2")) %>%
       as_tibble(rownames = "cell_id") %>%
       mutate(cell_type = !!sym(type_column)) %>%
       group_by(cell_type) %>%
@@ -226,32 +226,65 @@ create_fig <- function(sobj_in, cols_in, type_column = "cell_type2",
       feat_levels = umap_order
     ) +
     guides(color = guide_legend(override.aes = list(size = 3.5), nrow = legd_rows, title = title)) +
+    ggtitle(title) +
     blank_theme +
-    theme(
-      plot.margin = unit(c(1, 1, 1, 2), "cm"),
-      legend.text = element_text(size = 10),
-      ...
-    )
+    theme(legend.text = element_text(size = 10)) +
+    theme(...)
   
   if (arrow_axis) {
     umap <- add_arrow_axis(umap)
+  }
+  
+  # OVA UMAP
+  if (data_umap) {
+    ova_umap <- umap_data %>%
+      plot_features(
+        feature    = data_column,
+        pt_size    = 0.3,
+        pt_outline = 0.5
+      ) +
+      blank_theme +
+      theme(
+        legend.title = element_blank(),
+        legend.text  = element_text(size = 10),
+        plot.margin  = unit(c(0.8, 0.5, 0, 2.1), "cm"),
+        legend.position = "bottom",
+        legend.key.height = unit(0.3, "cm"),
+        
+        # axis.line = element_line(size = 0.5),
+        # legend.key.width  = unit(0.3, "cm")
+      )
+    
+    if (arrow_axis) {
+      ova_umap <- add_arrow_axis(ova_umap)
+    }
   }
   
   # OVA boxes
   boxes <- box_data %>%
     ggplot(aes(cell_type, !!sym(data_column), color = cell_type, fill = cell_type)) +
     geom_violin(size = 0.5) +
-    geom_boxplot(fill = NA, size = 0.5, outlier.size = 0.5, outlier.color = NA, width = 0.5, ymin = NA, ymax = NA, fatten = 1, color = "black") +
+    geom_boxplot(
+      fill          = NA, 
+      size          = 0.5, 
+      outlier.size  = 0.5, 
+      outlier.color = NA, 
+      ymin          = NA, 
+      ymax          = NA, 
+      fatten        = 1, 
+      color         = "black", 
+      width         = 0.35
+    ) +
     scale_color_manual(values = cols_in) +
     scale_fill_manual(values = cols_in) +
     coord_flip() + 
-    scale_y_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+    scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
     theme_minimal_vgrid() +
     theme(
       legend.position = "none",
-      axis.title.y = element_blank(),
-      axis.title   = element_text(size = 10),
-      axis.text    = element_text(size = 10),
+      axis.title.y    = element_blank(),
+      axis.title      = element_text(size = 10),
+      axis.text       = element_text(size = 10),
       panel.grid.major.x = element_line(size = 0.15)
     )
   
@@ -268,16 +301,26 @@ create_fig <- function(sobj_in, cols_in, type_column = "cell_type2",
     eval(parse(text = umap_cmd))
     eval(parse(text = box_cmd))
     
+    if (data_umap) {
+      ova_cmd <- str_c(gg_out, " <<- append(", gg_out, ", list(ova_umap))")
+      eval(parse(text = ova_cmd))
+    }
+    
     return(NULL)
   }
   
   res <- list(umap, boxes)
+  
+  if (data_umap) {
+    res <- append(res, list(ova_umap))
+  }
   
   res
 }
 
 # Function to create final figure
 create_final_fig <- function(ggs_in, rel_width = c(1, 0.7)) {
+  
   umap_list <- ggs_in[names(ggs_in) != ""]
   box_list <- ggs_in[names(ggs_in) == ""]
   
@@ -290,7 +333,7 @@ create_final_fig <- function(ggs_in, rel_width = c(1, 0.7)) {
     align          = "v",
     labels         = letters[seq_along(umap_list)],
     label_y        = 1,
-    label_size     = 20,
+    label_size     = 22,
     label_fontface = "plain"
   )
   
@@ -361,7 +404,7 @@ n_plot <- 0
 
 ## Version `r plus_one("n_plot")`
 
-```{r, fig.width = 13, fig.height = 17}
+```{r, fig.width = 11, fig.height = 17}
 
 # DC panels
 rm(gg_list)
@@ -372,6 +415,9 @@ iwalk(DC_sobjs, ~ create_fig(
   title             = .y,
   gg_out            = "gg_list",
   cell_counts       = T,
+  plot.margin       = unit(c(0.2, 0.2, 0.2, 1), "cm"),
+  plot.title        = element_text(size = 12),
+  legend.title      = element_blank(),
   legend.position   = "left",
   legend.key.height = unit(0.95, "cm")
 ))
@@ -383,6 +429,9 @@ iwalk(other_sobjs, ~ create_fig(
   title             = .y,
   gg_out            = "gg_list",
   cell_counts       = T,
+  plot.margin       = unit(c(0.2, 0.2, 0.2, 1), "cm"),
+  plot.title        = element_text(size = 12),
+  legend.title      = element_blank(),
   legend.position   = "left",
   legend.key.height = unit(0.95, "cm")
 ))
@@ -400,7 +449,7 @@ create_final_fig(gg_list)
 
 ## Version `r plus_one("n_plot")`
 
-```{r, fig.width = 13, fig.height = 17}
+```{r, fig.width = 10.5, fig.height = 17}
 
 # DC panels
 rm(gg_list)
@@ -411,7 +460,10 @@ iwalk(DC_sobjs, ~ create_fig(
   title             = .y,
   gg_out            = "gg_list",
   cell_counts       = T,
-  legend.position   = "left",
+  arrow_axis        = T,
+  plot.title        = element_text(size = 12),
+  legend.title      = element_blank(),
+  legend.position   = "none",
   legend.key.height = unit(0.95, "cm")
 ))
 
@@ -422,326 +474,120 @@ iwalk(other_sobjs, ~ create_fig(
   title             = .y,
   gg_out            = "gg_list",
   cell_counts       = T,
-  legend.position   = "left",
+  arrow_axis        = T,
+  plot.title        = element_text(size = 12),
+  legend.title      = element_blank(),
+  legend.position   = "none",
   legend.key.height = unit(0.95, "cm")
-))
-
-# Create final figure
-create_final_fig(gg_list)
-
-```
-
----
-
-<br>
-
-<br>
-
-## Version `r plus_one("n_plot")`
-
-```{r, fig.width = 12, fig.height = 17}
-
-# DC panels
-rm(gg_list)
-
-iwalk(DC_sobjs, ~ create_fig(
-  sobj_in           = .x,
-  cols_in           = base_cols_2,
-  title             = .y,
-  gg_out            = "gg_list",
-  cell_counts       = T,
-  legend.position   = "left",
-  legend.key.height = unit(0.95, "cm")
-))
-
-# Other panels
-iwalk(other_sobjs, ~ create_fig(
-  sobj_in           = .x,
-  cols_in           = base_cols,
-  title             = .y,
-  gg_out            = "gg_list",
-  cell_counts       = T,
-  other_cols        = T_B_cols,
-  legend.position   = "left",
-  legend.key.height = unit(0.95, "cm")
-))
-
-# Create final figure
-create_final_fig(gg_list)
-
-```
-
----
-
-<br>
-
-<br>
-
-## Version `r plus_one("n_plot")`
-
-```{r, fig.width = 12, fig.height = 17}
-
-# DC panels
-rm(gg_list)
-
-iwalk(DC_sobjs, ~ create_fig(
-  sobj_in         = .x,
-  cols_in         = ito_cols_2,
-  title           = .y,
-  gg_out          = "gg_list",
-  arrow_axis      = T,
-  legend.position = "left"
-))
-
-# Other panels
-iwalk(other_sobjs, ~ create_fig(
-  sobj_in         = .x,
-  cols_in         = ito_cols,
-  title           = .y,
-  gg_out          = "gg_list",
-  arrow_axis      = T,
-  legend.position = "left"
-))
-
-# Create final figure
-create_final_fig(gg_list)
-
-```
-
----
-
-<br>
-
-<br>
-
-## Version `r plus_one("n_plot")`
-
-```{r, fig.width = 12, fig.height = 17}
-
-# DC panels
-rm(gg_list)
-
-iwalk(DC_sobjs, ~ create_fig(
-  sobj_in         = .x,
-  cols_in         = ito_cols_2,
-  title           = .y,
-  gg_out          = "gg_list",
-  legend.position = "left",
-  axis.line       = element_line(size = 0.5, color = "black"),
-  axis.title      = element_text(size = 10)
-))
-
-# Other panels
-iwalk(other_sobjs, ~ create_fig(
-  sobj_in         = .x,
-  cols_in         = ito_cols,
-  title           = .y,
-  gg_out          = "gg_list",
-  legend.position = "left",
-  axis.line       = element_line(size = 0.5, color = "black"),
-  axis.title      = element_text(size = 10)
-))
-
-# Create final figure
-create_final_fig(gg_list)
-
-```
-
----
-
-<br>
-
-<br>
-
-## Version `r plus_one("n_plot")`
-
-```{r, fig.width = 12, fig.height = 17}
-
-# DC panels
-rm(gg_list)
-
-iwalk(DC_sobjs, ~ create_fig(
-  sobj_in         = .x,
-  cols_in         = ito_cols_2,
-  title           = .y,
-  gg_out          = "gg_list",
-  pt_size         = 0.25,
-  pt_outline      = NULL,
-  legend.position = "left"
-))
-
-# Other panels
-iwalk(other_sobjs, ~ create_fig(
-  sobj_in         = .x,
-  cols_in         = ito_cols,
-  title           = .y,
-  gg_out          = "gg_list",
-  pt_size         = 0.25,
-  pt_outline      = NULL,
-  legend.position = "left"
-))
-
-# Create final figure
-create_final_fig(gg_list)
-
-```
-
----
-
-<br>
-
-<br>
-
-## Version `r plus_one("n_plot")`
-
-```{r, fig.width = 10, fig.height = 17}
-
-# DC panels
-rm(gg_list)
-
-iwalk(DC_sobjs, ~ create_fig(
-  sobj_in         = .x,
-  cols_in         = ito_cols_2,
-  title           = .y,
-  gg_out          = "gg_list",
-  legd_rows       = 3,
-  legend.position = "top"
-))
-
-# Other panels
-iwalk(other_sobjs, ~ create_fig(
-  sobj_in         = .x,
-  cols_in         = ito_cols,
-  title           = .y,
-  gg_out          = "gg_list",
-  legd_rows       = 3,
-  legend.position = "top"
 ))
 
 # Create final figure
 plot_grid(
-  plotlist       = gg_list,
-  labels         = c("A", "", "B", "", "C", "", "D", ""),
-  label_size     = 20,
+  plotlist = gg_list,
+  labels = c("a", "", "b", "", "c", "", "d", ""),
+  label_size = 22,
   label_fontface = "plain",
-  ncol           = 2,
-  align          = "vh",
-  axis           = "trbl"
+  label_x = 0.2,
+  ncol = 2,
+  align = "vh",
+  axis  = "trbl"
 )
 
 ```
 
+---
 
-```{r "EXTRAs", eval = F, echo = F}
+<br>
 
-# min_conf <- min(conf_df$lower)
-# min_conf <- if_else(min_conf < 0, abs(min_conf), 0)
-# conf_df <- conf_df %>%
-#   mutate_if(.predicate = is.double, (function(x) x + min_conf + pseudo))
-# box_data <- box_data %>%
-#   mutate(!!sym(data_column) := !!sym(data_column) + min_conf + pseudo)
+<br>
 
-# conf_df %>%
-#   mutate(conf = fct_relevel(conf, c("99%", "95%", "90%"))) %>%
-#   pivot_longer(cols = c(-grp, -conf), names_to = "key", values_to = "val") %>% 
-#   ggplot(aes(x = grp, y = val, fill = grp, alpha = conf)) + 
-#   geom_boxplot(position = "identity", ymin = NA, ymax = NA, middle = NA) + 
-#   scale_alpha_manual(values = c(0.125, 0.25, 1)) +
-#   scale_fill_manual(values = theme_cols) +
-#   theme_info
-# 
-# load_sobjs <- function(sobj_path, cell_type) {
-#   
-#   sobj <- read_rds(sobj_path)
-#   
-#   cell_type_id <- str_c("cell_type", cell_type)
-#   
-#   sobj@meta.data <- sobj@meta.data %>%
-#     rownames_to_column("cell_id") %>%
-#     mutate(cell_type = !!sym(cell_type_id)) %>%
-#     column_to_rownames("cell_id")
-#   
-#   sobj
-# }
-# 
-# rds_files <- names(params$subtypes) %>%
-  # str_c(params$rds_dir, "/", .)
-# 
-# names(rds_files) <- names(params$subtypes)
-# rds_types <- as.character(params$subtypes)
-# 
-# sobjs <- map2(rds_files, rds_types, load_sobjs)
-# 
-# rm(gg_list)
-# walk(
-#   .x = sobjs,
-#   .f = create_fig,
-#   cols_in = theme_cols,
-#   gg_out  = "gg_list"
-# )
+## Version `r plus_one("n_plot")`
+
+```{r, fig.width = 15, fig.height = 17}
+
+# DC panels
+rm(gg_list)
+
+iwalk(DC_sobjs, ~ create_fig(
+  sobj_in           = .x,
+  cols_in           = ito_cols_2,
+  title             = .y,
+  gg_out            = "gg_list",
+  cell_counts       = T,
+  data_umap         = T,
+  plot.title        = element_text(size = 12),
+  plot.margin       = unit(c(0.2, 0, 0.2, 0.2), "cm"),
+  legend.title      = element_blank(),
+  legend.position   = "none",
+  legend.key.height = unit(0.95, "cm")
+))
+
+# Other panels
+iwalk(other_sobjs, ~ create_fig(
+  sobj_in           = .x,
+  cols_in           = ito_cols,
+  title             = .y,
+  gg_out            = "gg_list",
+  cell_counts       = T,
+  data_umap         = T,
+  plot.title        = element_text(size = 12),
+  plot.margin       = unit(c(0.2, 0, 0.2, 0.2), "cm"),
+  legend.title      = element_blank(),
+  legend.position   = "none",
+  legend.key.height = unit(0.95, "cm")
+))
+
+left_ggs <- gg_list[seq_along(gg_list) %% 3 %in% c(1, 2)]
+right_ggs <- gg_list[seq_along(gg_list) %% 3 == 0]
+
+left_panel <- plot_grid(
+  plotlist = left_ggs,
+  labels = c("a", "", "c", "", "e", "", "g", ""),
+  label_size = 22,
+  label_fontface = "plain",
+  label_x = 0.2,
+  ncol     = 2,
+  align    = "vh",
+  axis     = "trbl"
+)
+
+right_panel <- plot_grid(
+  plotlist = right_ggs,
+  labels = c("b", "d", "f", "h"),
+  label_size = 22,
+  label_fontface = "plain",
+  label_x = 0.1,
+  ncol     = 1,
+  align    = "vh",
+  axis     = "trbl"
+)
+
+# Create final figure
+plot_grid(
+  left_panel, right_panel,
+  rel_widths = c(1, 0.425),
+  ncol = 2
+)
+
+
+
 # plot_grid(
 #   plotlist = gg_list,
-#   ncol     = 2,
-#   align    = "vh",
-#   axis     = "trbl"
+#   labels = c("a", "", "b", "", "c", "", "d", ""),
+#   label_size = 22,
+#   label_fontface = "plain",
+#   label_x = 0.2,
+#   ncol = 3,
+#   align = "vh",
+#   axis  = "trbl"
 # )
-# 
-# DCs
-# DC_sobjs <- sobjs[names(sobjs) == "DC"]
-# 
-# DC_types <- DC_sobjs %>%
-#   map(~ unique(.x$cell_type2)) %>%
-#   reduce(c) %>%
-#   unique()
-# 
-# DC_types <- DC_types[!DC_types %in% c("B cell", "T cell")]
-# DC_cols <- theme_cols[!theme_cols %in% c("#E69F00", "#009E73")]
-# names(DC_cols) <- DC_types
-# DC_cols <- DC_cols[!is.na(names(DC_cols))]
-# 
-# DC_cols <- c(
-#   DC_cols,
-#   "B cell" = "#E69F00",
-#   "T cell" = "#009E73"
-# )
-# 
-# d2_DC <- DCs[[1]] %>%
-#   create_fig(
-#     cols_in = DC_cols,
-#     title = "d2 DC",
-#     legend.position = "top"
-#   )
-# 
-# d2_DC <- DCs[[2]] %>%
-#   create_fig(
-#     cols_in = DC_cols,
-#     title = "d14 DC",
-#     legend.position = "none"
-#   )
-# 
-# Other cells
-# other_sobjs <- sobjs[names(sobjs) != "DC"]
-# 
-# names(other_sobjs) <- names(other_sobjs) %>%
-#   str_replace("LEC", "d14 LEC") %>%
-#   str_replace("fibroblast", "d14 FRC")
-# 
-# other_gg <- other_sobjs %>%
-#   imap(~ create_fig(
-#     sobj_in = .x,
-#     cols_in = theme_cols,
-#     title   = .y,
-#     legend.position = "top"
-#   )) %>%
-#   flatten()
-# 
-# append(DCs_1, DCs_2) %>%
-#   append(other_gg) %>%
-#   plot_grid(
-#     plotlist = .,
-#     rel_heights = c(1, 0.8, 1, 1),
-#     ncol     = 2,
-#     align    = "v"
-#   )
 
 ```
+
+---
+
+<br>
+
+<br>
+
+

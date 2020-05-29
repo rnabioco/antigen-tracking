@@ -1230,7 +1230,7 @@ R_packages <- c(
   "xlsx",       "colorblindr",
   "ggforce",    "broom",
   "mixtools",   "clustifyr",
-  "boot"
+  "boot",       "scales"
 )
 
 for (package in R_packages) {
