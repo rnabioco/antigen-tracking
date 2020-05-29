@@ -22,7 +22,7 @@ params:
       - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
       - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
 editor_options: 
-  chunk_output_type: console
+  chunk_output_type: inline
 ---
 
 ---
@@ -145,7 +145,7 @@ add_arrow_axis <- function(gg_in, fract = 0.1, ...) {
 }
 
 # Function to create figure panel
-create_fig <- function(sobj_in, cols_in, type_column = "cell_type2",
+create_fig <- function(sobj_in, cols_in, type_column = "cell_type2", pseudo = 0.03,
                        data_column = c("Fold-change relative to T/B cell abundance (log10)" = "ova_fc"), 
                        title = NULL, gg_out = NULL, legd_rows = 10, arrow_axis = F, pt_size = 0.1, 
                        pt_outline = 0.4, umap_cell_count = T, box_cell_count = F, data_umap = F, 
@@ -175,7 +175,8 @@ create_fig <- function(sobj_in, cols_in, type_column = "cell_type2",
     as_tibble(rownames = "cell_id") %>%
     mutate(
       cell_type = !!sym(type_column),
-      cell_type = fct_reorder(cell_type, !!sym(data_column), median)
+      cell_type = fct_reorder(cell_type, !!sym(data_column), median),
+      !!sym(data_column) := !!sym(data_column) + pseudo
     )
   
   type_order <- levels(data_df$cell_type)
@@ -265,19 +266,21 @@ create_fig <- function(sobj_in, cols_in, type_column = "cell_type2",
   }
   
   boxes <- data_df %>%
-    ggplot(aes(!!sym(box_column), !!sym(data_column), color = !!sym(box_column), fill = !!sym(box_column))) +
-    geom_violin(size = 0.5) +
-    geom_boxplot(
-      fill          = NA,
-      size          = 0.5,
-      outlier.size  = 0.5,
-      outlier.color = NA,
-      ymin          = NA,
-      ymax          = NA,
-      fatten        = 1,
-      color         = "black",
-      width         = 0.35
-    ) +
+    # ggplot(aes(!!sym(box_column), !!sym(data_column)draw_quantiles = c(0.25, 0.5, 0.75), color = !!sym(box_column), fill = !!sym(box_column))) +
+    ggplot(aes(!!sym(box_column), !!sym(data_column), fill = !!sym(box_column))) +
+    geom_violin(size = 0.3, draw_quantiles = c(0.25, 0.75), alpha = 0.75) +
+    stat_summary(geom = "point", color = "black", fun = median) +
+    # geom_boxplot(
+    #   fill          = NA,
+    #   size          = 0.5,
+    #   outlier.size  = 0.5,
+    #   outlier.color = NA,
+    #   ymin          = NA,
+    #   ymax          = NA,
+    #   fatten        = 1,
+    #   color         = "black",
+    #   width         = 0.35
+    # ) +
     scale_color_manual(values = box_cols) +
     scale_fill_manual(values = box_cols) +
     coord_flip() + 
@@ -454,7 +457,7 @@ plot_grid(
 
 ## Version `r plus_one("n_plot")`
 
-```{r, fig.width = 15, fig.height = 17}
+```{r, fig.width = 13.8, fig.height = 17}
 
 gg_list <- param_list %>%
   pmap(
@@ -466,6 +469,8 @@ gg_list <- param_list %>%
     legend.title      = element_blank(),
     legend.position   = "none",
     legend.key.height = unit(0.95, "cm")
+    
+    # axis.line = element_line(size = 0.3)
   ) %>%
   flatten()
 
@@ -474,6 +479,7 @@ right_ggs <- gg_list[seq_along(gg_list) %% 3 == 0]
 
 left_panel <- plot_grid(
   plotlist       = left_ggs,
+  rel_widths     = c(1, 0.7), 
   labels         = c("a", "", "c", "", "e", "", "g", ""),
   label_size     = 22,
   label_fontface = "plain",
@@ -497,7 +503,8 @@ right_panel <- plot_grid(
 # Create final figure
 plot_grid(
   left_panel, right_panel,
-  rel_widths = c(1, 0.425),
+  # rel_widths = c(1, 0.425),
+  rel_widths = c(1, 0.5),
   ncol = 2
 )
 
