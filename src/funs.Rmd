@@ -575,6 +575,7 @@ create_ci_boxes <- function(input_sobj, group_column, data_column, box_cols, pse
       name   = "Confidence Level",
       values = conf_sizes
     )
+  
   res <- res +
     scale_x_log10() +
     labs(x = data_column) +

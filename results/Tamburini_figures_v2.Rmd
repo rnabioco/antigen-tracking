@@ -17,17 +17,17 @@ params:
   rds_dir: "../sobjs/so"
   sobjs:
     value:
-      - ["d2_so.rds", "DC", "d2 DC"]
-      - ["d14_so.rds", "DC", "d14 DC"]
-      - ["d14_so.rds", "LEC", "d14 LEC"]
-      - ["d14_so.rds", "fibroblast", "d14 FRC"]
+      - ["d2_so.rds", "DC", "d2 Myeloid Cells"]
+      - ["d14_so.rds", "DC", "d14 Myeloid Cells"]
+      - ["d14_so.rds", "LEC", "d14 Endothelial/Stromal Cells"]
+      - ["d14_so.rds", "fibroblast", "d14 Fibroblast/Stromal Cells"]
 ---
 
 ---
 
 `r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
 
-```{r "Setup", echo = F}
+```{r "Setup"}
 
 # Function to add one to variable
 plus_one <- function(x, n = 1) {
@@ -52,11 +52,44 @@ get_DC_cols <- function(types_in, cols_in, other_cols) {
 }
 
 # Function to subset Seurat objects for plotting
-subset_sobj <- function(sobj_path, type, type_column = "cell_type1", ...) {
+subset_sobj <- function(sobj_path, type, type_column = "cell_type1",
+                        include_types = c("B cell", "T cell", "epithelial"), ...) {
+
+  # Import Seurat object
   res <- sobj_path %>%
     file.path(params$rds_dir, .) %>%
-    read_rds() %>%
-    subset(subset = !!sym(type_column) %in% c(type, "B cell", "T cell")) %>%
+    read_rds()
+  
+  # Add CD45 status to meta.data
+  res@meta.data <- res@meta.data %>%
+    rownames_to_column("cell_id") %>%
+    mutate(orig.ident = if_else(grepl("_1$", cell_id), "CD45_neg", "CD45_pos")) %>%
+    column_to_rownames("cell_id")
+  
+  # Filter based on CD45 status
+  CD45_status <- c(
+    DC  = "CD45_pos",
+    LEC = "CD45_neg",
+    fibroblast = "CD45_neg"
+  )
+  
+  CD45_status <- CD45_status[type]
+  
+  if (is.na(CD45_status)) {
+    stop(str_c("ERROR: CD45 status not found for ", type))
+  }
+  
+  # Filter based on input cell type
+  res <- res %>%
+    subset(subset = orig.ident == CD45_status)
+  
+  if (!type %in% pull(res@meta.data, type_column)) {
+    stop(str_c("ERROR: Cell type not present after filtering for ", CD45_status))
+  }
+  
+  # Re-run UMAP
+  res <- res %>%
+    subset(subset = !!sym(type_column) %in% c(type, include_types)) %>%
     cluster_RNA(...)
   
   res
@@ -219,7 +252,7 @@ create_final_fig <- function(ggs_in, rel_width = c(1, 0.7)) {
     plotlist       = umap_list,
     ncol           = 1,
     align          = "v",
-    labels         = LETTERS[seq_along(umap_list)],
+    labels         = letters[seq_along(umap_list)],
     label_y        = 1,
     label_size     = 20,
     label_fontface = "plain"
