@@ -1,0 +1,484 @@
+---
+title: "Sample Figures"
+author: "Ryan Sheridan"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    df_print: "paged"
+    code_folding: "hide"
+    self_contained: true
+    highlight: "kate"
+params:
+  genome: "GRCm"
+  template_dir: "../../src"
+  rds_dir: "../../sobjs/so"
+  sobjs:
+    value:
+      - ["d2_so.rds", "DC", "Myeloid Cells (Day 2)"]
+      - ["d14_so.rds", "DC", "Myeloid Cells (Day 14)"]
+      - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
+      - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
+---
+
+---
+
+`r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
+
+```{r "Setup"}
+
+# Function to add one to variable
+plus_one <- function(x, n = 1) {
+  cmd <- str_c(x, " <<- ", x, " + ", n)
+  
+  eval(parse(text = cmd))
+  eval(parse(text = x))
+}
+
+# Function to set DC colors
+set_separate_cols <- function(types_in, cols_in, other_cols) {
+  
+  types_in <- types_in[!types_in %in% names(other_cols)]
+  cols_in <- cols_in[!cols_in %in% other_cols]
+  
+  names(cols_in) <- types_in
+  cols_in <- cols_in[!is.na(names(cols_in))]
+  
+  res <- c(cols_in, other_cols)
+  
+  res
+}
+
+# Capitalize first character without modifying other characters
+str_to_title_v2 <- function(string) {
+  
+  cap_first_chr <- function(string) {
+    chrs <- string %>%
+      str_split(pattern = "") %>%
+      unlist()
+    
+    if (any(chrs %in% LETTERS)) {
+      return(string)
+    }
+    
+    chrs[1] <- str_to_upper(chrs[1])
+    
+    res <- chrs %>%
+      reduce(str_c)
+    
+    res
+  }
+  
+  res <- string %>%
+    map_chr(~ {
+      .x %>%
+        str_split(pattern = " ") %>%
+        unlist() %>%
+        map_chr(cap_first_chr) %>%
+        reduce(str_c, sep = " ")
+    })
+  
+  res
+}
+
+# Function to subset Seurat objects for plotting
+subset_sobj <- function(sobj_path, type, type_column = "cell_type1", subtype_column = "cell_type2",
+                        min_cells = 15, include_types = c("B cell", "T cell", "epithelial"),
+                        orig_idents = c("_1" = "CD45_neg", "_2" = "CD45_pos"),
+                        type_filt = c("DC" = "CD45_pos", "LEC" = "CD45_neg", "fibroblast" = "CD45_neg"),
+                        cap_names = T, ...) {
+
+  # Import Seurat object
+  res <- sobj_path %>%
+    file.path(params$rds_dir, .) %>%
+    read_rds()
+  
+  # Set orig.ident based on cell_id
+  if (!is.null(orig_idents)) {
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(
+        orig.ident = str_extract(cell_id, "_[0-9]+$"),
+        orig.ident = orig_idents[orig.ident]
+      ) %>%
+      column_to_rownames("cell_id")
+  }
+  
+  # Filter cells based on orig.ident
+  if (!is.null(type_filt)) {
+    res <- res %>%
+      subset(subset = orig.ident == type_filt[type])
+  }
+  
+  # Filter cells based on input cell type
+  res <- res %>%
+    subset(subset = !!sym(type_column) %in% c(type, include_types))
+  
+  if (!type %in% pull(res@meta.data, type_column)) {
+    stop(str_c("ERROR: Cell type not present after filtering for ", CD45_status))
+  }
+  
+  # Filter cells based on number of cells per subtype
+  if (!is.null(min_cells)) {
+    keep_cells <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      group_by(!!sym(subtype_column)) %>%
+      filter(n_distinct(cell_id) > min_cells) %>%
+      pull(cell_id)
+    
+    res <- res %>%
+      subset(cells = keep_cells)
+  }
+  
+  # Capitalize subtypes
+  if (cap_names) {
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(!!sym(subtype_column) := str_to_title_v2(!!sym(subtype_column))) %>%
+      column_to_rownames("cell_id")
+  }
+  
+  # Re-run UMAP
+  res <- res %>%
+    cluster_RNA(...)
+
+  res
+}
+
+# Function to add arrows to axis
+add_arrow_axis <- function(gg_in, fract = 0.1, ...) {
+  
+  get_line_coords <- function(range_in, fract) {
+    mn  <- range_in[1]
+    mx  <- range_in[2]
+    dif <- mx - mn
+
+    res <- c(mn - (dif * 0.05), mn + (dif * fract))
+
+    res
+  }
+  
+  x_coords <- ggplot_build(gg_in)$layout$panel_scales_x[[1]]$range$range %>%
+    get_line_coords(fract = fract)
+
+  y_coords <- ggplot_build(gg_in)$layout$panel_scales_y[[1]]$range$range %>%
+    get_line_coords(fract = fract)
+   
+  res <- gg_in +
+    geom_segment(
+      x        = x_coords[1],
+      xend     = x_coords[2], 
+      y        = y_coords[1], 
+      yend     = y_coords[1],
+      size     = 0.25,
+      color    = "black",
+      linejoin = "bevel",
+      arrow    = arrow(ends = "last", type = "open", length = unit(0.02, "npc")),
+      ...
+    ) +
+    geom_segment(
+      y        = y_coords[1], 
+      yend     = y_coords[2], 
+      x        = x_coords[1], 
+      xend     = x_coords[1], 
+      size     = 0.25,
+      color    = "black",
+      linejoin = "bevel",
+      arrow    = arrow(ends = "last", type = "open", length = unit(0.02, "npc")),
+      ...
+    ) +
+    theme(axis.title = element_text(hjust = 0, size = 10))
+  
+  res
+}
+
+# Function to set equal axis scales
+equalize_x <- function(gg_list_in, log_tran = T) {
+  
+  set_lims <- function(gg_in, min_x, max_x, log_tran) {
+    res <- gg_in +
+      coord_cartesian(xlim = c(min_x, max_x))
+    
+    if (log_tran) {
+      res$labels$x <- str_c(res$labels$x, " (log10)")
+      
+      res <- res +
+        scale_x_log10(labels = trans_format("log10", math_format(10^.x)))
+    }
+    
+    res
+  }
+  
+  gg_ranges <- gg_list_in %>%
+    map(~ ggplot_build(.x)$layout$panel_scales_x[[1]]$range$range)
+  
+  min_val <- gg_ranges %>%
+    map_dbl(~ .x[1]) %>%
+    min()
+  
+  max_val <- gg_ranges %>%
+    map_dbl(~ .x[2]) %>%
+    max()
+  
+  res <- gg_list_in %>%
+    map(
+      .f       = set_lims,
+      min_x    = min_val, 
+      max_x    = max_val, 
+      log_tran = log_tran
+    )
+  
+  res
+}
+
+# Function to create figure panel
+create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo = 0.03,
+                       data_column = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
+                       title = NULL, gg_out = NULL, legd_rows = 10, arrow_axis = F, pt_size = 0.1, 
+                       pt_outline = 0.4, umap_cell_count = T, box_cell_count = F, data_umap = F, 
+                       control_types = c("B Cell" = "#E69F00", "T Cell" = "#009E73"), ...) {
+  
+  # Set data columns
+  box_column <- umap_column <- "cell_type"
+  
+  # Set subtype colors
+  if (is.null(names(cols_in))) {
+    cell_types <- sobj_in@meta.data %>%
+      pull(subtype_column) %>%
+      unique()
+    
+    cols_in <- set_separate_cols(
+      types_in   = cell_types,
+      cols_in    = cols_in, 
+      other_cols = control_types
+    )
+  }
+  
+  box_cols <- umap_cols <- cols_in
+  
+  # Set cell type order
+  data_df <- sobj_in %>%
+    FetchData(c(subtype_column, data_column, "UMAP_1", "UMAP_2")) %>%
+    as_tibble(rownames = "cell_id") %>%
+    mutate(
+      cell_type = !!sym(subtype_column),
+      cell_type = fct_reorder(cell_type, !!sym(data_column), median),
+      !!sym(data_column) := !!sym(data_column) + pseudo
+    )
+  
+  if (!is.null(names(data_column))) {
+    data_df <- data_df %>%
+      rename(!!data_column)
+    
+    data_column <- names(data_column)
+  }
+  
+  type_order <- levels(data_df$cell_type)
+  
+  # Move select cell types to front of order
+  if (!is.null(control_types)) {
+    type_order <- type_order[!type_order %in% names(control_types)]
+    type_order <- c(names(control_types), type_order)
+  }
+  
+  # Format plotting data
+  data_df <- data_df %>%
+    group_by(cell_type) %>%
+    mutate(cell_count = n_distinct(cell_id)) %>%
+    ungroup() %>%
+    mutate(cell_type = fct_relevel(cell_type, type_order)) %>%
+    arrange(cell_type) %>%
+    mutate(
+      cell_count = str_c(cell_type, "\n(n = ", cell_count, ")"),
+      cell_count = fct_inorder(cell_count)
+    )
+  
+  # Set cell type colors
+  names(type_order) <- levels(data_df$cell_count)
+  
+  cols_df <- tibble(
+    cell_type = type_order,
+    cell_count = names(type_order)
+  )
+  
+  cols_df <- cols_df %>%
+    mutate(color = cols_in[cell_type])
+  
+  # Subtype UMAP
+  if (umap_cell_count) {
+    umap_column <- "cell_count"
+    umap_cols <- setNames(cols_df$color, cols_df$cell_count)
+  }
+  
+  umap <- data_df %>%
+    plot_features(
+      feature     = umap_column,
+      pt_size     = pt_size,
+      pt_outline  = pt_outline,
+      plot_cols   = umap_cols,
+      feat_levels = rev(names(umap_cols))
+    ) +
+    guides(color = guide_legend(override.aes = list(size = 3.5), nrow = legd_rows, title = title)) +
+    ggtitle(title) +
+    blank_theme +
+    theme(legend.text = element_text(size = 10)) +
+    theme(...)
+  
+  if (arrow_axis) {
+    umap <- add_arrow_axis(umap)
+  }
+  
+  # OVA UMAP
+  if (data_umap) {
+    ova_umap <- data_df %>%
+      plot_features(
+        feature    = data_column,
+        plot_cols  = c("#fafafa", "#d7301f"),
+        min_pct    = 0.01,
+        max_pct    = 0.99,
+        pt_size    = 0.3,
+        pt_outline = 0.5
+      ) +
+      labs(title = data_column) +
+      blank_theme +
+      theme(
+        plot.title        = element_text(size = 10, hjust = 0.5),
+        legend.position   = "right",
+        legend.key.width  = unit(0.15, "cm"),
+        legend.key.height = unit(0.30, "cm"),
+        legend.title      = element_blank(),
+        legend.text       = element_text(size = 10)
+      )
+    
+    if (arrow_axis) {
+      ova_umap <- add_arrow_axis(ova_umap)
+    }
+  }
+  
+  # OVA boxes
+  if (box_cell_count) {
+    box_column <- "cell_count"
+    box_cols <- setNames(cols_df$color, cols_df$cell_count)
+  }
+  
+  boxes <- data_df %>%
+    ggplot(aes(!!sym(data_column), !!sym(box_column), fill = !!sym(box_column))) +
+    geom_violin(size = 0.3, draw_quantiles = c(0.25, 0.75), alpha = 0.75) +
+    stat_summary(geom = "point", color = "black", fun = median) +
+    scale_color_manual(values = box_cols) +
+    scale_fill_manual(values = box_cols) +
+    theme_minimal_vgrid() +
+    theme(
+      legend.position    = "none",
+      axis.title.y       = element_blank(),
+      axis.title         = element_text(size = 10),
+      axis.text          = element_text(size = 10),
+      panel.grid.major.x = element_line(size = 0.1)
+    )
+  
+  res <- list(umap, boxes)
+  
+  if (data_umap) {
+    res <- append(res, list(ova_umap))
+  }
+  
+  res
+}
+
+# Create list of Seurat objects
+so_paths <- params$sobjs %>%
+  map_chr(~ .x[1])
+
+so_types <- params$sobjs %>%
+  map_chr(~ .x[2])
+
+so_names <- params$sobjs %>%
+  map_chr(~ .x[3])
+
+sobjs <- map2(so_paths, so_types, subset_sobj)
+names(sobjs) <- so_names
+
+# DC Seurat objects
+DC_types <- sobjs[so_types == "DC"] %>%
+  map(~ unique(.x$cell_type2)) %>%
+  reduce(c) %>%
+  unique()
+
+# DC color palettes
+ito_cols_2 <- set_separate_cols(
+  types_in   = DC_types, 
+  cols_in    = ito_cols, 
+  other_cols = c(
+    "B Cell" = "#E69F00",
+    "T Cell" = "#009E73"
+  )
+)
+
+T_B_cols <- c(
+  "B Cell" = "#E69F00",
+  "T Cell" = "#676767"
+)
+
+base_cols_2 <- set_separate_cols(
+  types_in   = DC_types, 
+  cols_in    = base_cols,
+  other_cols = T_B_cols
+)
+
+# Parameter list
+plot_params <- list(
+  sobj_in = sobjs, 
+  title   = names(sobjs), 
+  cols_in = list(ito_cols_2, ito_cols_2, ito_cols, ito_cols)
+)
+
+n_plot <- 0
+
+```
+
+## Version `r plus_one("n_plot")`
+
+```{r, fig.width = 13, fig.height = 18}
+
+# Create panel plots
+gg_list <- plot_params %>%
+  pmap(
+    .f = create_fig,
+    box_cell_count    = T,
+    data_umap         = T,
+    plot.title        = element_text(size = 12),
+    plot.margin       = unit(c(0.2, 0, 0.2, 0.2), "cm"),
+    legend.title      = element_blank(),
+    legend.position   = "none",
+    legend.key.height = unit(0.95, "cm")
+  ) %>%
+  flatten()
+
+# Set violin scales equal
+violin_idx <- seq_along(gg_list) %% 3 == 2
+gg_list[violin_idx] <- gg_list[violin_idx] %>%
+  equalize_x()
+
+gg_list %>%
+  wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
+  plot_annotation(tag_levels = "a") &
+  theme(
+    plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
+    plot.tag = element_text(size = 24, face = "plain"),
+    plot.tag.position = c(-0.08, 1)
+    
+    # plot.tag.position = c(-0.06, 1.01)
+    # axis.line = element_line(size = 0.5)
+  )
+
+```
+
+---
+
+<br>
+
+<br>
+
+

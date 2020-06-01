@@ -155,7 +155,7 @@ add_stat_fun <- function(gmm_in, cols_in, key) {
 plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size = 0.25,
                           split_id = NULL, plot_cols = c("#fafafa", "#e31a1c"),
                           feat_levels = NULL, split_levels = NULL, min_pct = NULL, 
-                          max_pct = NULL, calc_cor = F, lab_size = 3.7, short_feat_name = T,
+                          max_pct = NULL, calc_cor = F, lab_size = 3.7, trim_feat = NULL,
                           lab_pos = c(0.8, 0.9), lm_line = F, pt_outline = NULL, 
                           show_title = F, ...) {
   
@@ -163,9 +163,9 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
   counts <- sobj_in
   short_feat <- feature
   
-  if (short_feat_name) {
+  if (!is.null(trim_feat)) {
     short_feat <- feature %>%
-      str_remove("\\-[A-Z][0-9]{4}$")
+      str_remove(trim_feat)
   }
   
   if ("Seurat" %in% class(sobj_in)) {
@@ -223,8 +223,8 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
         max_val  = min(max_val, na.rm = T),
         min_val  = ifelse(pct_rank < min_pct, !!sym(short_feat), NA),
         min_val  = max(min_val, na.rm = T),
-        value    = ifelse(!!sym(short_feat) > max_val, max_val, !!sym(short_feat)),
-        value    = ifelse(!!sym(short_feat) < min_val, min_val, !!sym(short_feat))
+        !!sym(short_feat) := if_else(!!sym(short_feat) > max_val, max_val, !!sym(short_feat)),
+        !!sym(short_feat) := if_else(!!sym(short_feat) < min_val, min_val, !!sym(short_feat))
       )
   }
 
@@ -1230,7 +1230,8 @@ R_packages <- c(
   "xlsx",       "colorblindr",
   "ggforce",    "broom",
   "mixtools",   "clustifyr",
-  "boot",       "scales"
+  "boot",       "scales",
+  "patchwork"
 )
 
 for (package in R_packages) {
