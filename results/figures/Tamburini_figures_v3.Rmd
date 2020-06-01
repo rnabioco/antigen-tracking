@@ -21,6 +21,8 @@ params:
       - ["d14_so.rds", "DC", "Myeloid Cells (Day 14)"]
       - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
       - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
+editor_options: 
+  chunk_output_type: inline
 ---
 
 ---
@@ -195,9 +197,9 @@ add_arrow_axis <- function(gg_in, fract = 0.1, ...) {
 }
 
 # Function to set equal axis scales
-equalize_x <- function(gg_list_in, log_tran = T) {
+equalize_x <- function(gg_list_in, log_tran = T, ...) {
   
-  set_lims <- function(gg_in, min_x, max_x, log_tran) {
+  set_lims <- function(gg_in, min_x, max_x, log_tran, ...) {
     res <- gg_in +
       coord_cartesian(xlim = c(min_x, max_x))
     
@@ -205,7 +207,7 @@ equalize_x <- function(gg_list_in, log_tran = T) {
       res$labels$x <- str_c(res$labels$x, " (log10)")
       
       res <- res +
-        scale_x_log10(labels = trans_format("log10", math_format(10^.x)))
+        scale_x_log10(labels = trans_format("log10", math_format(10^.x)), ...)
     }
     
     res
@@ -224,20 +226,21 @@ equalize_x <- function(gg_list_in, log_tran = T) {
   
   res <- gg_list_in %>%
     map(
-      .f       = set_lims,
+      set_lims,
       min_x    = min_val, 
       max_x    = max_val, 
-      log_tran = log_tran
+      log_tran = log_tran,
+      ...
     )
   
   res
 }
 
 # Function to create figure panel
-create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo = 0.03,
-                       data_column = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
-                       title = NULL, gg_out = NULL, legd_rows = 10, arrow_axis = F, pt_size = 0.1, 
-                       pt_outline = 0.4, umap_cell_count = T, box_cell_count = F, data_umap = F, 
+create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo = 0.03, data_slot = "counts",
+                       box_counts = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
+                       umap_counts = c("ova counts" = "adt_ovalbumin"), title = NULL, arrow_axis = F, 
+                       pt_size = 0.1, pt_outline = 0.4, umap_cell_count = F, box_cell_count = T,
                        control_types = c("B Cell" = "#E69F00", "T Cell" = "#009E73"), ...) {
   
   # Set data columns
@@ -258,32 +261,51 @@ create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo =
   
   box_cols <- umap_cols <- cols_in
   
-  # Set cell type order
+  # Fetch plotting data
   data_df <- sobj_in %>%
-    FetchData(c(subtype_column, data_column, "UMAP_1", "UMAP_2")) %>%
-    as_tibble(rownames = "cell_id") %>%
+    FetchData(c(subtype_column, box_counts, umap_counts, "UMAP_1", "UMAP_2"), slot = data_slot) %>%
+    as_tibble(rownames = "cell_id")
+  
+  # Add pseudo count
+  if (0 %in% pull(data_df, box_counts)) {
+    data_df <- data_df %>%
+      mutate(
+        pseudo = ifelse(!!sym(box_counts) > 0, !!sym(box_counts), NA),
+        pseudo = min(pseudo, na.rm = T) * 0.5,
+        !!sym(box_counts) := !!sym(box_counts) + pseudo
+      )
+  }
+  
+  if (!is.null(names(box_counts))) {
+    data_df <- data_df %>%
+      rename(!!box_counts)
+    
+    box_counts <- names(box_counts)
+  }
+  
+  if (!is.null(names(umap_counts))) {
+    data_df <- data_df %>%
+      rename(!!umap_counts)
+    
+    umap_counts <- names(umap_counts)
+  }
+  
+  # Set subtype order
+  # Move select cell types to front of order
+  data_df <- data_df %>%
     mutate(
       cell_type = !!sym(subtype_column),
-      cell_type = fct_reorder(cell_type, !!sym(data_column), median),
-      !!sym(data_column) := !!sym(data_column) + pseudo
+      cell_type = fct_reorder(cell_type, !!sym(box_counts), median)
     )
-  
-  if (!is.null(names(data_column))) {
-    data_df <- data_df %>%
-      rename(!!data_column)
-    
-    data_column <- names(data_column)
-  }
   
   type_order <- levels(data_df$cell_type)
   
-  # Move select cell types to front of order
   if (!is.null(control_types)) {
     type_order <- type_order[!type_order %in% names(control_types)]
     type_order <- c(names(control_types), type_order)
   }
   
-  # Format plotting data
+  # Count cells for each subtype
   data_df <- data_df %>%
     group_by(cell_type) %>%
     mutate(cell_count = n_distinct(cell_id)) %>%
@@ -320,10 +342,13 @@ create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo =
       plot_cols   = umap_cols,
       feat_levels = rev(names(umap_cols))
     ) +
-    guides(color = guide_legend(override.aes = list(size = 3.5), nrow = legd_rows, title = title)) +
+    guides(color = guide_legend(override.aes = list(size = 3.5), title = title)) +
     ggtitle(title) +
     blank_theme +
-    theme(legend.text = element_text(size = 10)) +
+    theme(
+      plot.title = element_text(size = 12),
+      legend.position = "none"
+    ) +
     theme(...)
   
   if (arrow_axis) {
@@ -331,24 +356,23 @@ create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo =
   }
   
   # OVA UMAP
-  if (data_umap) {
+  if (!is.null(umap_counts)) {
     ova_umap <- data_df %>%
       plot_features(
-        feature    = data_column,
+        feature    = umap_counts,
         plot_cols  = c("#fafafa", "#d7301f"),
         min_pct    = 0.01,
         max_pct    = 0.99,
         pt_size    = 0.3,
         pt_outline = 0.5
       ) +
-      labs(title = data_column) +
       blank_theme +
       theme(
         plot.title        = element_text(size = 10, hjust = 0.5),
         legend.position   = "right",
         legend.key.width  = unit(0.15, "cm"),
         legend.key.height = unit(0.30, "cm"),
-        legend.title      = element_blank(),
+        legend.title      = element_text(size = 10),
         legend.text       = element_text(size = 10)
       )
     
@@ -364,7 +388,7 @@ create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo =
   }
   
   boxes <- data_df %>%
-    ggplot(aes(!!sym(data_column), !!sym(box_column), fill = !!sym(box_column))) +
+    ggplot(aes(!!sym(box_counts), !!sym(box_column), fill = !!sym(box_column))) +
     geom_violin(size = 0.3, draw_quantiles = c(0.25, 0.75), alpha = 0.75) +
     stat_summary(geom = "point", color = "black", fun = median) +
     scale_color_manual(values = box_cols) +
@@ -375,12 +399,13 @@ create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo =
       axis.title.y       = element_blank(),
       axis.title         = element_text(size = 10),
       axis.text          = element_text(size = 10),
+      axis.ticks.x       = element_line(size = 0.1),
       panel.grid.major.x = element_line(size = 0.1)
     )
   
   res <- list(umap, boxes)
   
-  if (data_umap) {
+  if (!is.null(umap_counts)) {
     res <- append(res, list(ova_umap))
   }
   
@@ -445,14 +470,10 @@ n_plot <- 0
 # Create panel plots
 gg_list <- plot_params %>%
   pmap(
-    .f = create_fig,
-    box_cell_count    = T,
-    data_umap         = T,
-    plot.title        = element_text(size = 12),
-    plot.margin       = unit(c(0.2, 0, 0.2, 0.2), "cm"),
-    legend.title      = element_blank(),
-    legend.position   = "none",
-    legend.key.height = unit(0.95, "cm")
+    create_fig,
+    box_counts  = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
+    umap_counts = c("ova counts" = "adt_ovalbumin"),
+    data_slot   = "counts"
   ) %>%
   flatten()
 
@@ -468,9 +489,6 @@ gg_list %>%
     plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
     plot.tag = element_text(size = 24, face = "plain"),
     plot.tag.position = c(-0.08, 1)
-    
-    # plot.tag.position = c(-0.06, 1.01)
-    # axis.line = element_line(size = 0.5)
   )
 
 ```
@@ -480,5 +498,4 @@ gg_list %>%
 <br>
 
 <br>
-
 
