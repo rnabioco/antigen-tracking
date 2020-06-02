@@ -29,9 +29,9 @@ editor_options:
 
 `r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
 
-```{r "Setup"}
+```{r "Plotting functions"}
 
-# Function to add one to variable
+# Add one to variable
 plus_one <- function(x, n = 1) {
   cmd <- str_c(x, " <<- ", x, " + ", n)
   
@@ -39,8 +39,8 @@ plus_one <- function(x, n = 1) {
   eval(parse(text = x))
 }
 
-# Function to set DC colors
-set_separate_cols <- function(types_in, cols_in, other_cols) {
+# Set colors
+set_cols <- function(types_in, cols_in, other_cols) {
   
   types_in <- types_in[!types_in %in% names(other_cols)]
   cols_in <- cols_in[!cols_in %in% other_cols]
@@ -49,6 +49,25 @@ set_separate_cols <- function(types_in, cols_in, other_cols) {
   cols_in <- cols_in[!is.na(names(cols_in))]
   
   res <- c(cols_in, other_cols)
+  
+  res
+}
+
+# Set subtype colors
+set_type_cols <- function(sobjs_in, type_column = "cell_type2", cols_in, other_cols) {
+  
+  res <- sobjs_in %>%
+    map(~ {
+      .x@meta.data %>%
+        pull(type_column) %>%
+        unique()
+    }) %>%
+    reduce(c) %>%
+    unique() %>%
+    set_cols(
+      cols_in = cols_in,
+      other_cols = other_cols
+    )
   
   res
 }
@@ -85,7 +104,7 @@ str_to_title_v2 <- function(string) {
   res
 }
 
-# Function to subset Seurat objects for plotting
+# Load and subset Seurat objects for plotting
 subset_sobj <- function(sobj_path, type, type_column = "cell_type1", subtype_column = "cell_type2",
                         min_cells = 15, include_types = c("B cell", "T cell", "epithelial"),
                         orig_idents = c("_1" = "CD45_neg", "_2" = "CD45_pos"),
@@ -149,7 +168,7 @@ subset_sobj <- function(sobj_path, type, type_column = "cell_type1", subtype_col
   res
 }
 
-# Function to add arrows to axis
+# Add arrows to axis
 add_arrow_axis <- function(gg_in, fract = 0.1, ...) {
   
   get_line_coords <- function(range_in, fract) {
@@ -196,7 +215,7 @@ add_arrow_axis <- function(gg_in, fract = 0.1, ...) {
   res
 }
 
-# Function to set equal axis scales
+# Set equal x-axis scales
 equalize_x <- function(gg_list_in, log_tran = T, ...) {
   
   set_lims <- function(gg_in, min_x, max_x, log_tran, ...) {
@@ -237,28 +256,13 @@ equalize_x <- function(gg_list_in, log_tran = T, ...) {
 }
 
 # Function to create figure panel
-create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo = 0.03, data_slot = "counts",
-                       box_counts = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
-                       umap_counts = c("ova counts" = "adt_ovalbumin"), title = NULL, arrow_axis = F, 
-                       pt_size = 0.1, pt_outline = 0.4, umap_cell_count = F, box_cell_count = T,
-                       control_types = c("B Cell" = "#E69F00", "T Cell" = "#009E73"), ...) {
+create_fig3 <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo = 0.03, data_slot = "counts",
+                        box_counts = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
+                        umap_counts = c("ova counts" = "adt_ovalbumin"), plot_title = NULL, arrow_axis = F, 
+                        pt_size = 0.1, pt_outline = 0.4, umap_cell_count = F, box_cell_count = T,
+                        control_types = c("B Cell", "T Cell"), ...) {
   
-  # Set data columns
   box_column <- umap_column <- "cell_type"
-  
-  # Set subtype colors
-  if (is.null(names(cols_in))) {
-    cell_types <- sobj_in@meta.data %>%
-      pull(subtype_column) %>%
-      unique()
-    
-    cols_in <- set_separate_cols(
-      types_in   = cell_types,
-      cols_in    = cols_in, 
-      other_cols = control_types
-    )
-  }
-  
   box_cols <- umap_cols <- cols_in
   
   # Fetch plotting data
@@ -301,8 +305,8 @@ create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo =
   type_order <- levels(data_df$cell_type)
   
   if (!is.null(control_types)) {
-    type_order <- type_order[!type_order %in% names(control_types)]
-    type_order <- c(names(control_types), type_order)
+    type_order <- type_order[!type_order %in% control_types]
+    type_order <- c(control_types, type_order)
   }
   
   # Count cells for each subtype
@@ -342,8 +346,8 @@ create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo =
       plot_cols   = umap_cols,
       feat_levels = rev(names(umap_cols))
     ) +
-    guides(color = guide_legend(override.aes = list(size = 3.5), title = title)) +
-    ggtitle(title) +
+    guides(color = guide_legend(override.aes = list(size = 3.5))) +
+    ggtitle(plot_title) +
     blank_theme +
     theme(
       plot.title = element_text(size = 12),
@@ -361,10 +365,10 @@ create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo =
       plot_features(
         feature    = umap_counts,
         plot_cols  = c("#fafafa", "#d7301f"),
-        min_pct    = 0.01,
-        max_pct    = 0.99,
         pt_size    = 0.3,
-        pt_outline = 0.5
+        pt_outline = 0.5,
+        min_pct    = 0.01,
+        max_pct    = 0.99
       ) +
       blank_theme +
       theme(
@@ -412,6 +416,33 @@ create_fig <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo =
   res
 }
 
+# Plot correlation
+plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title, ...) {
+  res <- sobj_in %>%
+    plot_features(
+      x         = x,
+      y         = y,
+      feature   = feat,
+      data_slot = "counts",
+      plot_cols = cols_in,
+      calc_cor  = T,
+      lm_line   = T,
+      ...
+    ) +
+    scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
+    scale_x_log10() +
+    ggtitle(plot_title) +
+    guides(color = guide_legend(override.aes = list(size = 3.5))) +
+    theme_info +
+    theme(legend.title = element_blank())
+  
+  res
+}
+
+```
+
+```{r "Load data"}
+
 # Create list of Seurat objects
 so_paths <- params$sobjs %>%
   map_chr(~ .x[1])
@@ -425,52 +456,50 @@ so_names <- params$sobjs %>%
 sobjs <- map2(so_paths, so_types, subset_sobj)
 names(sobjs) <- so_names
 
-# DC Seurat objects
-DC_types <- sobjs[so_types == "DC"] %>%
-  map(~ unique(.x$cell_type2)) %>%
-  reduce(c) %>%
-  unique()
-
-# DC color palettes
-ito_cols_2 <- set_separate_cols(
-  types_in   = DC_types, 
-  cols_in    = ito_cols, 
-  other_cols = c(
-    "B Cell" = "#E69F00",
-    "T Cell" = "#009E73"
-  )
-)
-
-T_B_cols <- c(
+# Color palettes
+common_cols <- c(
+  "Epithelial" = "#6a51a3",
   "B Cell" = "#E69F00",
-  "T Cell" = "#676767"
+  "T Cell" = "#009E73"
 )
 
-base_cols_2 <- set_separate_cols(
-  types_in   = DC_types, 
-  cols_in    = base_cols,
-  other_cols = T_B_cols
-)
+DC_cols <- sobjs[so_types == "DC"] %>%
+  set_type_cols(
+    cols_in = ito_cols,
+    other_cols = common_cols
+  )
+
+LEC_cols <- sobjs[so_types == "LEC"] %>%
+  set_type_cols(
+    cols_in = ito_cols,
+    other_cols = common_cols
+  )
+  
+FRC_cols <- sobjs[so_types == "fibroblast"] %>%
+  set_type_cols(
+    cols_in = ito_cols,
+    other_cols = common_cols
+  )
 
 # Parameter list
 plot_params <- list(
-  sobj_in = sobjs, 
-  title   = names(sobjs), 
-  cols_in = list(ito_cols_2, ito_cols_2, ito_cols, ito_cols)
+  sobj_in    = sobjs, 
+  plot_title = names(sobjs), 
+  cols_in    = list(DC_cols, DC_cols, LEC_cols, FRC_cols)
 )
 
 n_plot <- 0
 
 ```
 
-## Version `r plus_one("n_plot")`
+## Figure 3
 
 ```{r, fig.width = 13, fig.height = 18}
 
 # Create panel plots
 gg_list <- plot_params %>%
   pmap(
-    create_fig,
+    create_fig3,
     box_counts  = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
     umap_counts = c("ova counts" = "adt_ovalbumin"),
     data_slot   = "counts"
@@ -498,4 +527,63 @@ gg_list %>%
 <br>
 
 <br>
+
+## OVA Correlation `r plus_one("n_plot")`
+
+```{r, fig.width = 15, fig.height = 10}
+
+plot_params %>%
+  pmap(
+    plot_corr,
+    x         = c("RNA counts" = "nCount_RNA"),
+    y         = c("ova counts" = "adt_ovalbumin"),
+    feat      = "cell_type2",
+    data_slot = "counts",
+    pt_size   = 0.5
+  ) %>%
+  plot_grid(
+    plotlist = .,
+    align    = "vh",
+    axis     = "trbl"
+  )
+
+```
+
+---
+
+<br>
+
+<br>
+
+## OVA Correlation `r plus_one("n_plot")`
+
+```{r, fig.width = 10, fig.height = 40}
+
+plot_params %>%
+  pmap(
+    plot_corr,
+    x         = c("RNA counts" = "nCount_RNA"),
+    y         = c("ova counts" = "adt_ovalbumin"),
+    feat      = "cell_type2",
+    split_id  = "cell_type2",
+    data_slot = "counts",
+    pt_size   = 1,
+    scales    = "free",
+    ncol      = 3
+  ) %>%
+  wrap_plots(
+    heights = c(1, 1, 1.4, 1),
+    ncol = 1
+  ) &
+  theme(legend.position = "none")
+
+```
+
+---
+
+<br>
+
+<br>
+
+
 

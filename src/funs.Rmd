@@ -152,21 +152,14 @@ add_stat_fun <- function(gmm_in, cols_in, key) {
 
 # Overlay feature data on UMAP or tSNE
 # Cannot change number of columns when using FeaturePlot with split.by
-plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size = 0.25,
-                          split_id = NULL, plot_cols = c("#fafafa", "#e31a1c"),
-                          feat_levels = NULL, split_levels = NULL, min_pct = NULL, 
-                          max_pct = NULL, calc_cor = F, lab_size = 3.7, trim_feat = NULL,
-                          lab_pos = c(0.8, 0.9), lm_line = F, pt_outline = NULL, 
-                          show_title = F, ...) {
+plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slot = "data", 
+                          split_id = NULL, pt_size = 0.25, pt_outline = NULL, plot_cols = c("#fafafa", "#e31a1c"),
+                          feat_levels = NULL, split_levels = NULL, min_pct = NULL, max_pct = NULL, 
+                          calc_cor = F, lm_line = F, lab_size = 3.7, lab_pos = c(0.8, 0.9), show_title = F, 
+                          ...) {
   
   # Format imput data
   counts <- sobj_in
-  short_feat <- feature
-  
-  if (!is.null(trim_feat)) {
-    short_feat <- feature %>%
-      str_remove(trim_feat)
-  }
   
   if ("Seurat" %in% class(sobj_in)) {
     vars <- c(x, y, feature)
@@ -176,21 +169,16 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
     }
 
     counts <- sobj_in %>%
-      FetchData(vars = vars) %>%
+      FetchData(vars = unique(vars), slot = data_slot) %>%
       as_tibble(rownames = "cell_ids")
   }
   
-  counts <- counts %>%
-    rename(!!sym(short_feat) := !!sym(feature))
-  
   # Rename features
   if (!is.null(names(feature))) {
-    names(short_feat) <- names(feature)
-    
     counts <- counts %>%
-      rename(!!!syms(short_feat))
+      rename(!!!syms(feature))
     
-    short_feat <- names(short_feat)
+    feature <- names(feature)
   }
   
   if (!is.null(names(x))) {
@@ -202,42 +190,42 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
   
   if (!is.null(names(y))) {
     counts <- counts %>%
-      renames(!!!syms(y))
+      rename(!!!syms(y))
     
     y <- names(y)
   }
   
   if (show_title) {    
     counts <- counts %>%
-      gather(key, value, !!sym(short_feat))
+      gather(key, value, !!sym(feature))
 
-    short_feat <- "value"
+    feature <- "value"
   }
   
   # Set min and max values for feature
   if (!is.null(min_pct) || !is.null(max_pct)) {
     counts <- counts %>%
       mutate(
-        pct_rank = percent_rank(!!sym(short_feat)),
-        max_val  = ifelse(pct_rank > max_pct, !!sym(short_feat), NA),
+        pct_rank = percent_rank(!!sym(feature)),
+        max_val  = ifelse(pct_rank > max_pct, !!sym(feature), NA),
         max_val  = min(max_val, na.rm = T),
-        min_val  = ifelse(pct_rank < min_pct, !!sym(short_feat), NA),
+        min_val  = ifelse(pct_rank < min_pct, !!sym(feature), NA),
         min_val  = max(min_val, na.rm = T),
-        !!sym(short_feat) := if_else(!!sym(short_feat) > max_val, max_val, !!sym(short_feat)),
-        !!sym(short_feat) := if_else(!!sym(short_feat) < min_val, min_val, !!sym(short_feat))
+        !!sym(feature) := if_else(!!sym(feature) > max_val, max_val, !!sym(feature)),
+        !!sym(feature) := if_else(!!sym(feature) < min_val, min_val, !!sym(feature))
       )
   }
 
   # Set feature order
   if (!is.null(feat_levels)) {
     counts <- counts %>%
-      mutate(!!sym(short_feat) := fct_relevel(!!sym(short_feat), feat_levels))
+      mutate(!!sym(feature) := fct_relevel(!!sym(feature), feat_levels))
   }
   
   # Set facet order
   if (!is.null(split_id)) {
     counts <- counts %>%
-      rename(split_id = !!sym(split_id))
+      mutate(split_id = !!sym(split_id))
     
     if (!is.null(split_levels)) {
       counts <- counts %>%
@@ -249,7 +237,7 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
   if (calc_cor) {
     if (!is.null(split_id)) {
       counts <- counts %>%
-        group_by(!!sym(split_id))
+        group_by(split_id)
     }
     
     counts <- counts %>%
@@ -268,18 +256,12 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
   
   # Create scatter plot
   res <- counts %>%
-    arrange(!!sym(short_feat)) %>%
-    ggplot(aes(!!sym(x), !!sym(y), color = !!sym(short_feat)))
+    arrange(!!sym(feature)) %>%
+    ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature)))
   
   if (!is.null(pt_outline)) {
-    # pt_out_legend <- T
-    # 
-    # if (is.numeric(counts[[short_feat]])) {
-    #   pt_out_legend <- F 
-    # }
-    
     res <- res +
-      geom_point(aes(fill = !!sym(short_feat)), size = pt_outline, color = "black", show.legend = F)
+      geom_point(aes(fill = !!sym(feature)), size = pt_outline, color = "black", show.legend = F)
   }
 
   res <- res +
@@ -311,7 +293,7 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, pt_size 
   }
   
   # Set feature colors
-  if (is.numeric(counts[[short_feat]])) {
+  if (is.numeric(counts[[feature]])) {
     res <- res +
       scale_color_gradient(low = plot_cols[1], high = plot_cols[2])
 
@@ -1144,7 +1126,7 @@ for (package in R_packages) {
 theme_info <- theme_cowplot() +
   theme(
     plot.title       = element_text(face = "plain", size = 20),
-    strip.background = element_rect(fill = "#fafafa"),
+    strip.background = element_blank(),
     strip.text       = element_text(face = "plain")
   )
 
