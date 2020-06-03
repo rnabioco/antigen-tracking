@@ -48,9 +48,17 @@ cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6,
   # Use FindClusters to apply modularity optimization techniques such as the Louvain algorithm 
   # (default) or SLM, to iteratively group cells together
   
+  res <- sobj_in
+  
+  # ScaleData
+  if (!str_c("ScaleData.", assay) %in% names(res@commands)) {
+    res <- res %>%
+      ScaleData(assay = assay)
+  }
+  
   # Perform PCA
   # By default only variable features are used for PCA
-  res <- sobj_in %>%
+  res <- res %>%
     RunPCA(assay = assay, ...) %>%
     AddMetaData(
       metadata = FetchData(., c("PC_1", "PC_2")),
@@ -1206,4 +1214,5 @@ paired_cols <- ito_cols_paired
 
 ```
 
-```{r "Functions, packages, theme", ref.label = c("Functions", "Packages", "Themes"), eval = F, echo = T}
+```{r, ref.label = c("Functions", "Packages", "Themes"), eval = F}
+```

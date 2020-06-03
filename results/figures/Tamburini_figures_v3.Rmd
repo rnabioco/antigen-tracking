@@ -15,21 +15,27 @@ params:
   genome: "GRCm"
   template_dir: "../../src"
   rds_dir: "../../sobjs/so"
-  sobjs:
+  fig3_sobjs:
     value:
       - ["d2_so.rds", "DC", "Myeloid Cells (Day 2)"]
       - ["d14_so.rds", "DC", "Myeloid Cells (Day 14)"]
       - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
       - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
-editor_options: 
-  chunk_output_type: inline
+  corr_sobjs:
+    value:
+      - ["d2_so.rds", "DC", "Myeloid Cells (Day 2)"]
+      - ["d14_so.rds", "DC", "Myeloid Cells (Day 14)"]
+      - ["d2_so.rds", "LEC", "Endothelial/Stromal Cells (Day 2)"]
+      - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
+      - ["d2_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 2)"]
+      - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
 ---
 
 ---
 
 `r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
 
-```{r "Plotting functions"}
+```{r "Plotting functions", echo = F}
 
 # Add one to variable
 plus_one <- function(x, n = 1) {
@@ -104,18 +110,15 @@ str_to_title_v2 <- function(string) {
   res
 }
 
-# Load and subset Seurat objects for plotting
-subset_sobj <- function(sobj_path, type, type_column = "cell_type1", subtype_column = "cell_type2",
+# Subset Seurat objects for plotting
+subset_sobj <- function(sobj_in, type, type_column = "cell_type1", subtype_column = "cell_type2",
                         min_cells = 15, include_types = c("B cell", "T cell", "epithelial"),
                         orig_idents = c("_1" = "CD45_neg", "_2" = "CD45_pos"),
                         type_filt = c("DC" = "CD45_pos", "LEC" = "CD45_neg", "fibroblast" = "CD45_neg"),
                         cap_names = T, ...) {
-
-  # Import Seurat object
-  res <- sobj_path %>%
-    file.path(params$rds_dir, .) %>%
-    read_rds()
   
+  res <- sobj_in
+
   # Set orig.ident based on cell_id
   if (!is.null(orig_idents)) {
     res@meta.data <- res@meta.data %>%
@@ -419,6 +422,15 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo 
 # Plot correlation
 plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title, ...) {
   res <- sobj_in %>%
+    FetchData(c(x, y, feat), slot = data_slot) %>%
+    mutate(
+      !!sym(x) := log10(!!sym(x)),
+      !!sym(y) := log10(!!sym(y))
+    ) %>%
+    filter(
+      !!sym(x) != -Inf,
+      !!sym(y) != -Inf
+    ) %>%
     plot_features(
       x         = x,
       y         = y,
@@ -429,8 +441,6 @@ plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title, ...) 
       lm_line   = T,
       ...
     ) +
-    scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
-    scale_x_log10() +
     ggtitle(plot_title) +
     guides(color = guide_legend(override.aes = list(size = 3.5))) +
     theme_info +
@@ -441,20 +451,36 @@ plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title, ...) 
 
 ```
 
-```{r "Load data"}
+```{r "Load data", echo = F}
 
-# Create list of Seurat objects
-so_paths <- params$sobjs %>%
-  map_chr(~ .x[1])
+# Load Seurat objects
+# Avoid loading/clustering same objects twice
+so_info <- append(params$fig3_sobjs, params$corr_sobjs) %>%
+  unique()
 
-so_types <- params$sobjs %>%
-  map_chr(~ .x[2])
+so_types <- map_chr(so_info, ~ .x[2])
+so_names <- map_chr(so_info, ~ .x[3])
+so_paths <- map_chr(so_info, ~ .x[1])
 
-so_names <- params$sobjs %>%
+sobjs <- unique(so_paths) %>%
+  setNames(., .) %>%
+  map(~ read_rds(file.path(params$rds_dir, .x)))
+
+# Subset objects based on cell types
+# Avoid loading/clustering same objects twice
+sobjs <- sobjs[match(so_paths, names(sobjs))]
+sobjs_sub <- map2(sobjs, so_types, subset_sobj)
+names(sobjs_sub) <- so_names
+
+# Split sobjs for figures
+fig3_names <- params$fig3_sobjs %>%
   map_chr(~ .x[3])
 
-sobjs <- map2(so_paths, so_types, subset_sobj)
-names(sobjs) <- so_names
+corr_names <- params$corr_sobjs %>%
+  map_chr(~ .x[3])
+
+fig3_sobjs <- sobjs_sub[fig3_names]
+corr_sobjs <- sobjs_sub[corr_names]
 
 # Color palettes
 common_cols <- c(
@@ -463,33 +489,42 @@ common_cols <- c(
   "T Cell" = "#009E73"
 )
 
-DC_cols <- sobjs[so_types == "DC"] %>%
+DC_cols <- sobjs_sub[so_types == "DC"] %>%
   set_type_cols(
     cols_in = ito_cols,
     other_cols = common_cols
   )
 
-LEC_cols <- sobjs[so_types == "LEC"] %>%
+LEC_cols <- sobjs_sub[so_types == "LEC"] %>%
   set_type_cols(
     cols_in = ito_cols,
     other_cols = common_cols
   )
   
-FRC_cols <- sobjs[so_types == "fibroblast"] %>%
+FRC_cols <- sobjs_sub[so_types == "fibroblast"] %>%
   set_type_cols(
     cols_in = ito_cols,
     other_cols = common_cols
   )
 
-# Parameter list
-plot_params <- list(
-  sobj_in    = sobjs, 
-  plot_title = names(sobjs), 
+# Parameter lists
+fig3_params <- list(
+  sobj_in    = fig3_sobjs, 
+  plot_title = names(fig3_sobjs), 
   cols_in    = list(DC_cols, DC_cols, LEC_cols, FRC_cols)
+)
+
+corr_params <- list(
+  sobj_in    = corr_sobjs, 
+  plot_title = names(corr_sobjs), 
+  cols_in    = list(DC_cols, DC_cols, LEC_cols, LEC_cols, FRC_cols, FRC_cols)
 )
 
 n_plot <- 0
 
+```
+
+```{r, ref.label = c("Plotting functions", "Load data"), eval = F}
 ```
 
 ## Figure 3
@@ -497,7 +532,7 @@ n_plot <- 0
 ```{r, fig.width = 13, fig.height = 18}
 
 # Create panel plots
-gg_list <- plot_params %>%
+gg_list <- fig3_params %>%
   pmap(
     create_fig3,
     box_counts  = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
@@ -528,21 +563,22 @@ gg_list %>%
 
 <br>
 
-## OVA Correlation `r plus_one("n_plot")`
+## Supplemental `r plus_one("n_plot")`
 
-```{r, fig.width = 15, fig.height = 10}
+```{r, fig.width = 15, fig.height = 15}
 
-plot_params %>%
+corr_params %>%
   pmap(
     plot_corr,
-    x         = c("RNA counts" = "nCount_RNA"),
-    y         = c("ova counts" = "adt_ovalbumin"),
+    x         = c("RNA counts (log10)" = "nCount_RNA"),
+    y         = c("ova counts (log10)" = "adt_ovalbumin"),
     feat      = "cell_type2",
     data_slot = "counts",
     pt_size   = 0.5
   ) %>%
   plot_grid(
     plotlist = .,
+    ncol     = 2,
     align    = "vh",
     axis     = "trbl"
   )
@@ -555,15 +591,17 @@ plot_params %>%
 
 <br>
 
-## OVA Correlation `r plus_one("n_plot")`
+## Supplemental `r plus_one("n_plot")`
 
-```{r, fig.width = 10, fig.height = 40}
+```{r, fig.width = 20, fig.height = 33}
 
-plot_params %>%
+pad <- c(2, 2, 9, 2, 9.5, 2)
+
+corr_params %>%
   pmap(
     plot_corr,
-    x         = c("RNA counts" = "nCount_RNA"),
-    y         = c("ova counts" = "adt_ovalbumin"),
+    x         = c("RNA counts (log10)" = "nCount_RNA"),
+    y         = c("ova counts (log10)" = "adt_ovalbumin"),
     feat      = "cell_type2",
     split_id  = "cell_type2",
     data_slot = "counts",
@@ -571,11 +609,18 @@ plot_params %>%
     scales    = "free",
     ncol      = 3
   ) %>%
-  wrap_plots(
-    heights = c(1, 1, 1.4, 1),
-    ncol = 1
-  ) &
-  theme(legend.position = "none")
+  map2(pad, ~ {
+    .x + theme(
+      legend.position = "none",
+      plot.margin = unit(c(0.2, 0.2, .y, 0.2), "cm")
+    )
+  }) %>%
+  plot_grid(
+    plotlist = .,
+    rel_heights = c(1, 1.2, 1),
+    align = "v",
+    ncol = 2
+  )
 
 ```
 
