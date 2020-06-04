@@ -30,7 +30,7 @@ params:
       - ["d2_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 2)"]
       - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
 editor_options: 
-  chunk_output_type: inline
+  chunk_output_type: console
 ---
 
 ---
@@ -598,9 +598,10 @@ new_sobjs[so_types == "LEC"] <- new_sobjs[so_types == "LEC"] %>%
     .x@meta.data <- .x@meta.data %>%
       rownames_to_column("cell_id") %>%
       mutate(
-        type = if_else(type %in% names(new_names), new_names[type], type),
-        type = str_to_title_v2(type),
-        cell_type2 = type
+        new_types  = if_else(type %in% names(new_names), new_names[type], type),
+        new_types  = str_to_title_v2(new_types),
+        old_types  = cell_type2,
+        cell_type2 = new_types
       ) %>%
       column_to_rownames("cell_id")
     .x
@@ -715,5 +716,62 @@ corr_params %>%
 
 <br>
 
+## Supplemental `r plus_one("n_plot")`
 
+```{r, fig.width = 8, fig.height = 6}
+
+calc_type_cor <- function(sobj_in, ..., assay = "RNA") {
+  
+  calc_type_expr <- function(sobj_in, column, prefix, assay) {
+    
+    cell_types <- sobj_in@meta.data %>%
+      pull(!!sym(column)) %>%
+      unique()
+    
+    names(cell_types) <- str_c(prefix, cell_types)
+    
+    res <- cell_types %>%
+      map(~ {
+        ids <- sobj_in@meta.data %>%
+          as_tibble(rownames = "cell_id") %>%
+          filter(!!sym(column) == .x) %>%
+          pull(cell_id)
+        
+        sobj_in %>%
+          GetAssayData(assay = assay, slot = "data") %>%
+          .[, ids] %>%
+          as.matrix() %>%
+          rowMeans()
+      })
+    
+    res
+  }
+  
+  columns <- list(...)
+  
+  expr_vecs <- columns %>%
+    imap(~ calc_type_expr(
+      sobj_in = sobj_in,
+      column  = .x,
+      prefix  = str_c(.y, "_"),
+      assay   = assay
+    ))
+  
+  res <- expr_vecs %>%
+    flatten() %>%
+    do.call(cbind, .) %>%
+    cor() %>%
+    round(2)
+  
+  res
+}
+
+LEC_so <- new_sobjs$`Endothelial/Stromal Cells (Day 14)`
+
+cor_mat <- LEC_so %>%
+  calc_type_cor("old_types", "new_types")
+
+Heatmap(cor_mat)
+
+```
 

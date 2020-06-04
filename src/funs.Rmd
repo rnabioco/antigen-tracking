@@ -1119,7 +1119,7 @@ R_packages <- c(
   "ggforce",    "broom",
   "mixtools",   "clustifyr",
   "boot",       "scales",
-  "patchwork"
+  "patchwork",  "ComplexHeatmap"
 )
 
 for (package in R_packages) {
