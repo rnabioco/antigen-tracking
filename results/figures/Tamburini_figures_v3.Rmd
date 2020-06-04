@@ -732,14 +732,9 @@ calc_type_cor <- function(sobj_in, ..., assay = "RNA") {
     
     res <- cell_types %>%
       map(~ {
-        ids <- sobj_in@meta.data %>%
-          as_tibble(rownames = "cell_id") %>%
-          filter(!!sym(column) == .x) %>%
-          pull(cell_id)
-        
         sobj_in %>%
+          subset(!!sym(column) == .x) %>%
           GetAssayData(assay = assay, slot = "data") %>%
-          .[, ids] %>%
           as.matrix() %>%
           rowMeans()
       })
