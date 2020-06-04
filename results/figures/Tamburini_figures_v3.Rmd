@@ -29,8 +29,6 @@ params:
       - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
       - ["d2_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 2)"]
       - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
-editor_options: 
-  chunk_output_type: console
 ---
 
 ---
