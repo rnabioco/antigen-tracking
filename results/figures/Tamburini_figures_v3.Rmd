@@ -29,6 +29,8 @@ params:
       - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
       - ["d2_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 2)"]
       - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
+editor_options: 
+  chunk_output_type: inline
 ---
 
 ---
@@ -308,6 +310,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo 
   type_order <- levels(data_df$cell_type)
   
   if (!is.null(control_types)) {
+    control_types <- control_types[control_types %in% type_order]
     type_order <- type_order[!type_order %in% control_types]
     type_order <- c(control_types, type_order)
   }
@@ -546,6 +549,88 @@ violin_idx <- seq_along(gg_list) %% 3 == 2
 gg_list[violin_idx] <- gg_list[violin_idx] %>%
   equalize_x()
 
+# Create final figure
+gg_list %>%
+  wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
+  plot_annotation(tag_levels = "a") &
+  theme(
+    plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
+    plot.tag = element_text(size = 24, face = "plain"),
+    plot.tag.position = c(-0.08, 1)
+  )
+
+```
+
+---
+
+<br>
+
+<br>
+
+## Supplemental `r plus_one("n_plot")`
+
+```{r, fig.width = 13, fig.height = 18}
+
+# New names and colors
+new_names <- c(
+  "cLEC" = "Ceiling LECs",
+  "fLEC" = "Floor LECs"
+)
+
+new_cols <- LEC_cols <- c(
+  LEC_cols,
+  "Ptx3_LEC" = "#D55E00",
+  "Unassigned" = "#ffffff"
+)
+
+# Assign cell types with new reference
+load("../../clustifyr/ref_LEC_xiang.rda")
+
+new_sobjs <- sobjs_sub
+
+new_sobjs[so_types == "LEC"] <- new_sobjs[so_types == "LEC"] %>%
+  map(
+    clustify, 
+    ref_mat = ref_LEC_xiang, 
+    cluster_col = "RNA_clusters"
+  ) %>%
+  map(~ {
+    .x@meta.data <- .x@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(
+        type = if_else(type %in% names(new_names), new_names[type], type),
+        type = str_to_title_v2(type),
+        cell_type2 = type
+      ) %>%
+      column_to_rownames("cell_id")
+    .x
+  })
+
+new_sobjs <- new_sobjs[fig3_names]
+
+# Figure parameters
+LEC_params <- list(
+  sobj_in    = new_sobjs,
+  plot_title = names(new_sobjs),
+  cols_in    = list(DC_cols, DC_cols, new_cols, FRC_cols)
+)
+
+# Create panel plots
+gg_list <- LEC_params %>%
+  pmap(
+    create_fig3,
+    box_counts  = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
+    umap_counts = c("ova counts" = "adt_ovalbumin"),
+    data_slot   = "counts"
+  ) %>%
+  flatten()
+
+# Set violin scales equal
+violin_idx <- seq_along(gg_list) %% 3 == 2
+gg_list[violin_idx] <- gg_list[violin_idx] %>%
+  equalize_x()
+
+# Create final figure
 gg_list %>%
   wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
   plot_annotation(tag_levels = "a") &
