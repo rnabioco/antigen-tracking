@@ -29,6 +29,8 @@ params:
       - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
       - ["d2_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 2)"]
       - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
+editor_options: 
+  chunk_output_type: inline
 ---
 
 ---
@@ -716,8 +718,9 @@ corr_params %>%
 
 ## Supplemental `r plus_one("n_plot")`
 
-```{r, fig.width = 8, fig.height = 6}
+```{r, fig.width = 8, fig.height = 4.5}
 
+# Function to calculate correlation coefficients
 calc_type_cor <- function(sobj_in, ..., assay = "RNA") {
   
   calc_type_expr <- function(sobj_in, column, prefix, assay) {
@@ -759,12 +762,21 @@ calc_type_cor <- function(sobj_in, ..., assay = "RNA") {
   res
 }
 
+# LEC Seurat object
 LEC_so <- new_sobjs$`Endothelial/Stromal Cells (Day 14)`
 
+# Create correlation matrix
 cor_mat <- LEC_so %>%
   calc_type_cor("old_types", "new_types")
 
-Heatmap(cor_mat)
+# Create heatmap
+cor_mat <- cor_mat[grepl("^2_", rownames(cor_mat)), grepl("^1_", colnames(cor_mat))]
+
+cor_mat %>%
+  Heatmap(
+    col = c("#0072B2", "#ffffff", "#d7301f"), 
+    name = ""
+  )
 
 ```
 
