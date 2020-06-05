@@ -42,6 +42,33 @@ sobj@meta.data <- sobj@meta.data %>%
   ) %>%
   column_to_rownames("cell_id")
 
+# Set subtype order and colors
+cell_types <- sobj@meta.data %>%
+  pull(cell_type) %>%
+  unique()
+
+names(cell_types) <- cell_types
+
+type_cols <- theme_cols
+names(type_cols) <- cell_types
+type_cols <- type_cols[!is.na(names(type_cols))]
+
+# Set cluster order and colors
+cell_clusts <- sobj@meta.data %>%
+  mutate(
+    type_clust = str_extract(cluster_id, "^[0-9]+"),
+    type_clust = as.numeric(type_clust)
+  ) %>%
+  arrange(cell_type, type_clust) %>%
+  pull(cluster_id) %>%
+  unique()
+
+names(cell_clusts) <- cell_clusts
+
+clust_cols <- theme_cols
+names(clust_cols) <- cell_clusts
+clust_cols <- clust_cols[!is.na(names(clust_cols))]
+
 # Section descriptions
 marker_desc <- "Gene expression signal is shown for the top marker genes (top, middle)."
 GO_desc <- "GO terms were identified for marker genes, the top terms are labeled, the size of each point indicates the number of overlapping genes (bottom)."
@@ -54,17 +81,6 @@ GO_desc <- "GO terms were identified for marker genes, the top terms are labeled
 
 A UMAP projection colored by subtype is shown on the left and ovalbumin signal for each subtype is shown on the right.
 ```{r "{{.y}} Subtype OVA", fig.width = 9, fig.height = 5}
-
-# Set subtype order and colors
-cell_types <- sobj@meta.data %>%
-  pull(cell_type) %>%
-  unique()
-
-names(cell_types) <- cell_types
-
-type_cols <- theme_cols
-names(type_cols) <- cell_types
-type_cols <- type_cols[!is.na(names(type_cols))]
 
 # Subtype UMAP
 type_umap <- sobj %>%
@@ -153,22 +169,6 @@ create_marker_panel_v1(
 
 A UMAP projection colored by cell cluster is shown on the left and ovalbumin signal for each cluster is shown on the right.
 ```{r "{{.y}} Cluster OVA", fig.width = 9, fig.height = 4.2}
-
-# Set cluster order and colors
-cell_clusts <- sobj@meta.data %>%
-  mutate(
-    type_clust = str_extract(cluster_id, "^[0-9]+"),
-    type_clust = as.numeric(type_clust)
-  ) %>%
-  arrange(cell_type, type_clust) %>%
-  pull(cluster_id) %>%
-  unique()
-
-names(cell_clusts) <- cell_clusts
-
-clust_cols <- theme_cols
-names(clust_cols) <- cell_clusts
-clust_cols <- clust_cols[!is.na(names(clust_cols))]
 
 # Cluster UMAP
 clust_umap <- sobj %>%

@@ -15,7 +15,7 @@ params:
   genome: "GRCm"
   template_dir: "../src"
   rds_dir: "../sobjs/so"
-  xlsx_dir: "R_gene_lists"
+  # xlsx_dir: "R_gene_lists"
   cell_types:
     - "DC"
     - "LEC"
@@ -49,4 +49,10 @@ mark_chunks <- map2(rds_types, rds_names, ~ {
 ```
 
 `r knit_child(text = mark_chunks)`
+
+## Session info
+
+```{r, comment = "", echo = F}
+session_info()
+```
 

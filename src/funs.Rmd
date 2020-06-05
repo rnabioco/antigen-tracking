@@ -360,11 +360,15 @@ run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL,
       significant   = T,
       ...
     )
-    
+  
   # Format and sort output data.frame
   res <- res$result %>%
-    as_tibble() %>%
-    arrange(source, p_value)
+    as_tibble()
+  
+  if (!is_empty(res)) {
+    res <- res %>%
+      arrange(source, p_value)
+  }
   
   res
 }
@@ -1119,7 +1123,8 @@ R_packages <- c(
   "ggforce",    "broom",
   "mixtools",   "clustifyr",
   "boot",       "scales",
-  "patchwork",  "ComplexHeatmap"
+  "patchwork",  "ComplexHeatmap",
+  "devtools"
 )
 
 for (package in R_packages) {
