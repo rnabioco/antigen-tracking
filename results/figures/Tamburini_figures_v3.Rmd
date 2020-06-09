@@ -16,6 +16,7 @@ params:
   template_dir: "../../src"
   rds_dir: "../../sobjs/so"
   ref_dir: "../../clustifyr"
+  p_val_xlsx: "figure_3_pvals.xlsx"
   fig3_sobjs:
     value:
       - ["d2_so.rds", "DC", "Myeloid Cells (Day 2)"]
@@ -418,6 +419,8 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo 
     res <- append(res, list(ova_umap))
   }
   
+  names(res) <- rep(plot_title, length(res))
+  
   res
 }
 
@@ -449,6 +452,61 @@ plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title, ...) 
     guides(color = guide_legend(override.aes = list(size = 3.5))) +
     theme_info +
     theme(legend.title = element_blank())
+  
+  res
+}
+
+# Calculate pairwise p-values for gg objects
+calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran = T) {
+  
+  # Pull data from gg object
+  gg_data <- gg_in$data
+  
+  # Log transform
+  if (log_tran) {
+    gg_data <- gg_data %>%
+      mutate(!!sym(data_column) := log10(!!sym(data_column)))
+  }
+  
+  # Calculate median
+  gg_stats <- gg_data %>%
+    group_by(!!sym(type_column)) %>%
+    summarize(med = median(!!sym(data_column)))
+  
+  # Run wilcox test
+  gg_counts <- gg_data %>%
+    pull(data_column)
+  
+  gg_groups <- gg_data %>%
+    pull(type_column)
+  
+  res <- gg_counts %>%
+    pairwise.wilcox.test(
+      g = gg_groups, 
+      p.adj = "bonf"
+    ) %>%
+    tidy()
+  
+  # Add medians to data.frame
+  res <- gg_stats %>%
+    rename(med_1 = med) %>%
+    right_join(res, by = c("cell_type" = "group1"))
+  
+  res <- gg_stats %>%
+    rename(med_2 = med) %>%
+    right_join(res, by = c("cell_type" = "group2"))
+  
+  # Format final table
+  res <- res %>%
+    mutate(Sample = sample_name) %>%
+    select(
+      Sample,
+      `Cell type 1`             = str_c(type_column, ".y"),
+      `Median OVA FC 1 (log10)` = med_1,
+      `Cell type 2`             = type_column,
+      `Median OVA FC 2 (log10)` = med_2,
+      p.value
+    )
   
   res
 }
@@ -550,7 +608,33 @@ gg_list <- fig3_params %>%
 # Set violin scales equal
 violin_idx <- seq_along(gg_list) %% 3 == 2
 gg_list[violin_idx] <- gg_list[violin_idx] %>%
-  equalize_x()
+  equalize_x(log_tran = T)
+
+# Create table of p-values
+p_vals <- gg_list[violin_idx] %>%
+  imap(
+    calc_p_vals,
+    data_column = "Fold-change relative to T/B cell abundance",
+    type_column = "cell_type",
+    log_tran    = T
+  ) %>%
+  bind_rows()
+
+if (!is.null(params$p_val_xlsx)) {
+  p_vals %>%
+    write.xlsx(params$p_val_xlsx)
+}
+
+# wb <- createWorkbook()
+# iwalk(my_dfs, ~ {
+#   addWorksheet(wb, .y)
+#   writeData(
+#     wb    = wb, 
+#     x     = .x,
+#     sheet = .y 
+#   )
+# })
+# saveWorkbook(wb, "test.xlsx")
 
 # Create final figure
 gg_list %>%
@@ -600,7 +684,7 @@ gg_list <- FRC_params %>%
 # Set violin scales equal
 violin_idx <- seq_along(gg_list) %% 3 == 2
 gg_list[violin_idx] <- gg_list[violin_idx] %>%
-  equalize_x()
+  equalize_x(log_tran = T)
 
 # Create final figure
 gg_list %>%
@@ -689,7 +773,7 @@ gg_list <- LEC_params %>%
 # Set violin scales equal
 violin_idx <- seq_along(gg_list) %% 3 == 2
 gg_list[violin_idx] <- gg_list[violin_idx] %>%
-  equalize_x()
+  equalize_x(log_tran = T)
 
 # Create final figure
 gg_list[seq_along(gg_list) %% 3 != 0] %>%

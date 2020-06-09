@@ -1124,7 +1124,7 @@ R_packages <- c(
   "mixtools",   "clustifyr",
   "boot",       "scales",
   "patchwork",  "ComplexHeatmap",
-  "devtools"
+  "devtools",   "broom"
 )
 
 for (package in R_packages) {
