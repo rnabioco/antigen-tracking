@@ -43,7 +43,7 @@ GO_desc <- "GO terms were identified for marker genes, the top terms are labeled
 ### Subtype Markers
 
 A UMAP projection colored by subtype is shown on the left and ovalbumin signal for each subtype is shown on the right.
-```{r "{{.x}} Subtype OVA", fig.width = 9, fig.height = 5}
+```{r "{{.x}} Subtype OVA", fig.width = 9, fig.height = 4.5}
 
 # Subtype UMAP
 type_umap <- sobj %>%
@@ -57,7 +57,7 @@ type_umap <- sobj %>%
   guides(color = guide_legend(override.aes = list(size = 3.5), nrow = 3)) +
   blank_theme +
   theme(
-    legend.position = "top",
+    legend.position = "none",
     legend.title    = element_blank(),
     legend.text     = element_text(size = 8)
   )
@@ -73,9 +73,8 @@ control_types <- control_types[control_types %in% type_order]
 type_order    <- type_order[!type_order %in% control_types]
 type_order    <- c(control_types, type_order)
 
-levels(box_data$cell_type) <- type_order
-
 ova_boxes <- box_data %>%
+  mutate(cell_type = fct_relevel(cell_type, type_order)) %>%
   ggplot(aes(!!sym(data_column), cell_type, fill = cell_type)) +
   geom_violin(size = 0.3, draw_quantiles = c(0.25, 0.75), alpha = 0.75) +
   stat_summary(geom = "point", color = "black", fun = median) +
@@ -387,9 +386,8 @@ control_types <- control_types[control_types %in% type_order]
 type_order    <- type_order[!type_order %in% control_types]
 type_order    <- c(control_types, type_order)
 
-levels(box_data$cell_type) <- type_order
-
 ova_boxes <- box_data %>%
+  mutate(cell_type = fct_relevel(cell_type, type_order)) %>%
   ggplot(aes(cell_type, !!sym(data_column), color = type_ova_grp)) +
   geom_quasirandom(size = 0.25 * mtplyr_2) +
   scale_y_log10(labels = trans_format("log10", math_format(10 ^ .x))) +
