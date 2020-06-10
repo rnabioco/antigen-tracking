@@ -19,17 +19,19 @@ params:
   p_val_xlsx: "figure_3_pvals.xlsx"
   fig3_sobjs:
     value:
-      - ["d2_so.rds", "DC", "Myeloid Cells (Day 2)"]
-      - ["d14_so.rds", "DC", "Myeloid Cells (Day 14)"]
+      # File name, cell type, sample name
+      - ["d2_so.rds",  "DC",  "Myeloid Cells (Day 2)"]
+      - ["d14_so.rds", "DC",  "Myeloid Cells (Day 14)"]
       - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
       - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
   corr_sobjs:
     value:
-      - ["d2_so.rds", "DC", "Myeloid Cells (Day 2)"]
-      - ["d14_so.rds", "DC", "Myeloid Cells (Day 14)"]
-      - ["d2_so.rds", "LEC", "Endothelial/Stromal Cells (Day 2)"]
+      # File name, cell type, sample name
+      - ["d2_so.rds",  "DC",  "Myeloid Cells (Day 2)"]
+      - ["d14_so.rds", "DC",  "Myeloid Cells (Day 14)"]
+      - ["d2_so.rds",  "LEC", "Endothelial/Stromal Cells (Day 2)"]
       - ["d14_so.rds", "LEC", "Endothelial/Stromal Cells (Day 14)"]
-      - ["d2_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 2)"]
+      - ["d2_so.rds",  "fibroblast", "Fibroblast/Stromal Cells (Day 2)"]
       - ["d14_so.rds", "fibroblast", "Fibroblast/Stromal Cells (Day 14)"]
 ---
 
@@ -45,132 +47,6 @@ plus_one <- function(x, n = 1) {
   
   eval(parse(text = cmd))
   eval(parse(text = x))
-}
-
-# Set colors
-set_cols <- function(types_in, cols_in, other_cols) {
-  
-  types_in <- types_in[!types_in %in% names(other_cols)]
-  cols_in <- cols_in[!cols_in %in% other_cols]
-  
-  names(cols_in) <- types_in
-  cols_in <- cols_in[!is.na(names(cols_in))]
-  
-  res <- c(cols_in, other_cols)
-  
-  res
-}
-
-# Set subtype colors
-set_type_cols <- function(sobjs_in, type_column = "cell_type2", cols_in, other_cols) {
-  
-  res <- sobjs_in %>%
-    map(~ {
-      .x@meta.data %>%
-        pull(type_column) %>%
-        unique()
-    }) %>%
-    reduce(c) %>%
-    unique() %>%
-    set_cols(
-      cols_in = cols_in,
-      other_cols = other_cols
-    )
-  
-  res
-}
-
-# Capitalize first character without modifying other characters
-str_to_title_v2 <- function(string) {
-  
-  cap_first_chr <- function(string) {
-    chrs <- string %>%
-      str_split(pattern = "") %>%
-      unlist()
-    
-    if (any(chrs %in% LETTERS)) {
-      return(string)
-    }
-    
-    chrs[1] <- str_to_upper(chrs[1])
-    
-    res <- chrs %>%
-      reduce(str_c)
-    
-    res
-  }
-  
-  res <- string %>%
-    map_chr(~ {
-      .x %>%
-        str_split(pattern = " ") %>%
-        unlist() %>%
-        map_chr(cap_first_chr) %>%
-        reduce(str_c, sep = " ")
-    })
-  
-  res
-}
-
-# Subset Seurat objects for plotting
-subset_sobj <- function(sobj_in, type, type_column = "cell_type1", subtype_column = "cell_type2",
-                        min_cells = 15, include_types = c("B cell", "T cell", "epithelial"),
-                        orig_idents = c("_1" = "CD45_neg", "_2" = "CD45_pos"),
-                        type_filt = c("DC" = "CD45_pos", "LEC" = "CD45_neg", "fibroblast" = "CD45_neg"),
-                        cap_names = T, ...) {
-  
-  res <- sobj_in
-
-  # Set orig.ident based on cell_id
-  if (!is.null(orig_idents)) {
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
-        orig.ident = str_extract(cell_id, "_[0-9]+$"),
-        orig.ident = orig_idents[orig.ident]
-      ) %>%
-      column_to_rownames("cell_id")
-  }
-  
-  # Filter cells based on orig.ident
-  if (!is.null(type_filt)) {
-    res <- res %>%
-      subset(subset = orig.ident == type_filt[type])
-  }
-  
-  # Filter cells based on input cell type
-  res <- res %>%
-    subset(subset = !!sym(type_column) %in% c(type, include_types))
-  
-  if (!type %in% pull(res@meta.data, type_column)) {
-    stop(str_c("ERROR: Cell type not present after filtering for ", CD45_status))
-  }
-  
-  # Filter cells based on number of cells per subtype
-  if (!is.null(min_cells)) {
-    keep_cells <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      group_by(!!sym(subtype_column)) %>%
-      filter(n_distinct(cell_id) > min_cells) %>%
-      pull(cell_id)
-    
-    res <- res %>%
-      subset(cells = keep_cells)
-  }
-  
-  # Capitalize subtypes
-  if (cap_names) {
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(!!sym(subtype_column) := str_to_title_v2(!!sym(subtype_column))) %>%
-      column_to_rownames("cell_id")
-  }
-  
-  # Re-run UMAP
-  res <- res %>%
-    cluster_RNA(...)
-
-  res
 }
 
 # Add arrows to axis
@@ -228,8 +104,6 @@ equalize_x <- function(gg_list_in, log_tran = T, ...) {
       coord_cartesian(xlim = c(min_x, max_x))
     
     if (log_tran) {
-      res$labels$x <- str_c(res$labels$x, " (log10)")
-      
       res <- res +
         scale_x_log10(labels = trans_format("log10", math_format(10^.x)), ...)
     }
@@ -261,7 +135,7 @@ equalize_x <- function(gg_list_in, log_tran = T, ...) {
 }
 
 # Function to create figure panel
-create_fig3 <- function(sobj_in, cols_in, subtype_column = "cell_type2", pseudo = 0.03, data_slot = "counts",
+create_fig3 <- function(sobj_in, cols_in, subtype_column = "cell_type2", data_slot = "counts",
                         box_counts = c("Fold-change relative to T/B cell abundance" = "ova_fc"), 
                         umap_counts = c("ova counts" = "adt_ovalbumin"), plot_title = NULL, arrow_axis = F, 
                         pt_size = 0.1, pt_outline = 0.4, umap_cell_count = F, box_cell_count = T,
@@ -520,10 +394,14 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
 so_info <- append(params$fig3_sobjs, params$corr_sobjs) %>%
   unique()
 
-so_types <- map_chr(so_info, ~ .x[2])
-names(so_types) <- map_chr(so_info, ~ .x[3])
+so_types <- so_info %>%
+  pull_nest_vec(2)
 
-so_paths <- map_chr(so_info, ~ .x[1])
+names(so_types) <- so_info %>%
+  pull_nest_vec(3)
+
+so_paths <- so_info %>%
+  pull_nest_vec(1)
 
 sobjs <- unique(so_paths) %>%
   setNames(., .) %>%
@@ -532,15 +410,16 @@ sobjs <- unique(so_paths) %>%
 # Subset objects based on cell types
 # Avoid loading/clustering same objects twice
 sobjs <- sobjs[match(so_paths, names(sobjs))]
+
 sobjs_sub <- map2(sobjs, so_types, subset_sobj)
 names(sobjs_sub) <- names(so_types)
 
 # Split sobjs for figures
 fig3_names <- params$fig3_sobjs %>%
-  map_chr(~ .x[3])
+  pull_nest_vec(3)
 
 corr_names <- params$corr_sobjs %>%
-  map_chr(~ .x[3])
+  pull_nest_vec(3)
 
 fig3_sobjs <- sobjs_sub[fig3_names]
 corr_sobjs <- sobjs_sub[corr_names]
@@ -552,7 +431,6 @@ common_cols <- c(
   "T Cell" = "#009E73"
 )
 
-# DC_cols <- sobjs_sub[so_types == "DC"] %>%
 DC_cols <- sobjs_sub[so_types[names(sobjs_sub)] == "DC"] %>%
   set_type_cols(
     cols_in = ito_cols,
@@ -611,30 +489,19 @@ gg_list[violin_idx] <- gg_list[violin_idx] %>%
   equalize_x(log_tran = T)
 
 # Create table of p-values
-p_vals <- gg_list[violin_idx] %>%
-  imap(
-    calc_p_vals,
-    data_column = "Fold-change relative to T/B cell abundance",
-    type_column = "cell_type",
-    log_tran    = T
-  ) %>%
-  bind_rows()
-
 if (!is.null(params$p_val_xlsx)) {
+  p_vals <- gg_list[violin_idx] %>%
+    imap(
+      calc_p_vals,
+      data_column = "Fold-change relative to T/B cell abundance",
+      type_column = "cell_type",
+      log_tran    = T
+    ) %>%
+    bind_rows()
+  
   p_vals %>%
     write.xlsx(params$p_val_xlsx)
 }
-
-# wb <- createWorkbook()
-# iwalk(my_dfs, ~ {
-#   addWorksheet(wb, .y)
-#   writeData(
-#     wb    = wb, 
-#     x     = .x,
-#     sheet = .y 
-#   )
-# })
-# saveWorkbook(wb, "test.xlsx")
 
 # Create final figure
 gg_list %>%
