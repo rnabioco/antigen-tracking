@@ -1,5 +1,5 @@
 ---
-title: "Tamburini AVID-seq"
+title: "Antigen Tracking"
 author: "Ryan Sheridan"
 date: "`r Sys.Date()`"
 output:
@@ -16,13 +16,15 @@ params:
   template_dir: "../src"
   rds_dir: "../sobjs/so"
   # xlsx_dir: "R_gene_lists"
-  cell_types:
-    - "DC"
-    - "LEC"
-    - "FRC"
-  time_points:
-    - "d2"
-    - "d14"
+  sobjs:
+    value:
+      # File name, cell type, sample name 1, sample name 2
+      - ["d2_so.rds",  "DC",  "d2_DC",   "Myeloid Cells (Day 2)"]
+      - ["d14_so.rds", "DC",  "d14_DC",  "Myeloid Cells (Day 14)"]
+      - ["d2_so.rds",  "LEC", "d2_LEC",  "Endothelial/Stromal Cells (Day 2)"]
+      - ["d14_so.rds", "LEC", "d14_LEC", "Endothelial/Stromal Cells (Day 14)"]
+      - ["d2_so.rds",  "fibroblast", "d2_FRC",  "Fibroblast/Stromal Cells (Day 2)"]
+      - ["d14_so.rds", "fibroblast", "d14_FRC", "Fibroblast/Stromal Cells (Day 14)"]
 ---
 
 ---
@@ -31,24 +33,66 @@ params:
 
 `r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
 
-```{r "Run markers chunks", echo = F}
+```{r "Load data", echo = F}
 
-rds_df <- expand.grid(params$time_point, params$cell_types)
-rds_df <- rds_df[file.exists(str_c(params$rds_dir, "/", rds_df$Var1, "_", rds_df$Var2, "_so.rds")), ]
+# Load Seurat objects
+# Avoid loading/clustering same objects twice
+so_paths <- params$sobjs %>%
+  pull_nest_vec(1)
 
-rds_types <- rds_df$Var2
+so_types <- params$sobjs %>%
+  pull_nest_vec(2)
 
-rds_names <- rds_df %>%
-  unite(rds_names, Var1, Var2) %>%
-  pull(rds_names)
+so_names_1 <- params$sobjs %>%
+  pull_nest_vec(3)
 
-mark_chunks <- map2(rds_types, rds_names, ~ {
-  knit_expand(str_c(params$template_dir, "/markers_template.Rmd"))
-})
+so_names_2 <- params$sobjs %>%
+  pull_nest_vec(4)
+
+names(so_paths)   <- so_names_1
+names(so_types)   <- so_names_1
+names(so_names_2) <- so_names_1
+
+sobjs <- unique(so_paths) %>%
+  setNames(., .) %>%
+  map(~ read_rds(file.path(params$rds_dir, .x)))
+
+# Subset objects based on cell types
+# Avoid loading/clustering same objects twice
+sobjs <- sobjs[match(so_paths, names(sobjs))]
+names(sobjs) <- names(so_paths)
+
+sobjs_sub <- map2(sobjs, so_types[names(sobjs)], subset_sobj)
+
+# Color palettes
+common_cols <- c(
+  "Epithelial" = "#6a51a3",
+  "B Cell"     = "#E69F00",
+  "T Cell"     = "#009E73"
+)
+
+so_cols <- so_types %>%
+  map(
+    set_type_cols,
+    sobjs_in   = sobjs_sub,
+    type_key   = so_types,
+    cols_in    = ito_cols,
+    other_cols = common_cols
+  )
 
 ```
 
-`r knit_child(text = mark_chunks)`
+```{r "Run markers chunks", echo = F}
+
+# Create list of chunks
+template <- str_c(params$template_dir, "/markers_template.Rmd")
+
+chunks <- names(sobjs_sub) %>%
+  map(~ knit_expand(template))
+
+```
+
+`r knit_child(text = chunks)`
 
 ## Session info
 
