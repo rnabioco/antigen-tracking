@@ -2,10 +2,10 @@
 ```{r "{{.x}} Setup", echo = F}
 
 # Load Seurat object
-name_1    <- "{{.x}}"
-name_2    <- so_names_2[name_1]
-type_cols <- so_cols[[name_1]]
-sobj      <- sobjs_sub[[name_1]]
+so_name   <- "{{.x}}"
+so_title  <- so_titles[so_name]
+type_cols <- so_cols[[so_name]]
+sobj      <- sobjs[[so_name]]
 
 mtplyr_1 <- if_else(ncol(sobj) < 500, 3, 1)
 mtplyr_2 <- if_else(ncol(sobj) < 500, 6, 1)
@@ -38,12 +38,12 @@ GO_desc <- "GO terms were identified for marker genes, the top terms are labeled
 
 ```
 
-## `r name_2`
+## `r so_title`
 
 ### Subtype Markers
 
 A UMAP projection colored by subtype is shown on the left and ovalbumin signal for each subtype is shown on the right.
-```{r "{{.x}} Subtype OVA", fig.width = 9, fig.height = 4.5}
+```{r "{{.x}} Subtype summary", fig.width = 9, fig.height = 4.5}
 
 # Subtype UMAP
 type_umap <- sobj %>%
@@ -56,11 +56,7 @@ type_umap <- sobj %>%
   ) +
   guides(color = guide_legend(override.aes = list(size = 3.5), nrow = 3)) +
   blank_theme +
-  theme(
-    legend.position = "none",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 8)
-  )
+  theme(legend.position = "none")
 
 # OVA boxes
 box_data <- sobj@meta.data %>%
@@ -87,7 +83,9 @@ ova_boxes <- box_data %>%
     axis.title.y       = element_blank(),
     axis.title         = element_text(size = 10),
     axis.text          = element_text(size = 10),
+    axis.line.y        = element_line(color = "black"),
     axis.ticks.x       = element_line(size = 0.1),
+    axis.ticks.y       = element_line(color = "black"),
     panel.grid.major.x = element_line(size = 0.1)
   )
 
@@ -112,13 +110,17 @@ Marker genes were identified by comparing all subtypes. `r marker_desc` `r GO_de
 # Create figures
 fig_umap <- type_umap +
   guides(color = col_guide) +
-  theme(legend.text = element_text(size = 10))
+  theme(
+    legend.position = "top",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 10)
+  )
 
 xlsx_name <- params$xlsx_dir
 
 if (!is.null(xlsx_name)) {
   xlsx_name <- xlsx_name %>%
-    str_c("/", name_1, "_subtype")
+    str_c("/", so_name, "_subtype")
 }
 
 create_marker_panel_v1(
@@ -169,10 +171,9 @@ ova_grp_umap <- sobj %>%
   ggtitle("Ovalbumin Group") +
   blank_theme +
   theme(
-    plot.title      = element_text(size = 13),
-    legend.position = "right",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 8)
+    plot.title   = element_text(size = 13),
+    legend.title = element_blank(),
+    legend.text  = element_text(size = 8)
   )
 
 # OVA UMAP
@@ -190,11 +191,10 @@ ova_umap <- sobj %>%
   blank_theme +
   theme(
     plot.title        = element_text(size = 13),
-    legend.position   = "bottom",
-    legend.key.height = unit(0.1, "cm"),
-    legend.key.width  = unit(0.3, "cm"),
+    legend.key.width  = unit(0.1, "cm"),
+    legend.key.height = unit(0.3, "cm"),
     legend.title      = element_blank(),
-    legend.text       = element_text(size = 8, angle = 90, hjust = 1)
+    legend.text       = element_text(size = 8)
   )
 
 # OVA hist
@@ -232,7 +232,6 @@ type_bar <- sobj %>%
   ggtitle("Subtype") +
   theme(
     plot.title      = element_text(size = 13),
-    legend.position = "bottom",
     legend.title    = element_blank(),
     legend.text     = element_text(size = 8),
     axis.title.x    = element_blank(),
@@ -250,20 +249,13 @@ umaps <- plot_grid(
 
 bars <- plot_grid(
   ova_hist, type_bar,
-  rel_widths = c(0.7, 0.365),
   nrow  = 1,
   align = "h",
   axis  = "tb"
 )
 
-bars <- plot_grid(
-  bars, NA,
-  rel_widths = c(1, 0.3)
-)
-
 ova_fig <- plot_grid(
   umaps, bars,
-  rel_heights = c(0.45, 0.55),
   nrow = 2,
   align = "vh",
   axis  = "trbl"
@@ -275,7 +267,7 @@ ova_fig <- plot_grid(
 # Divide into two chunks to omit GMM messages
 ```
 
-```{r "{{.x}} OVA groups summary 2", fig.width = 8, fig.height = 9, echo = F}
+```{r "{{.x}} OVA groups summary 2", fig.width = 8, fig.height = 7, echo = F}
 ova_fig
 ```
 
@@ -291,14 +283,13 @@ xlsx_name <- params$xlsx_dir
 
 if (!is.null(xlsx_name)) {
   xlsx_name <- xlsx_name %>%
-    str_c("/", name_1, "_ova")
+    str_c("/", so_name, "_ova")
 }
 
 create_marker_panel_v1(
   input_sobj       = sobj,
   input_cols       = ova_cols,
   clust_column     = "GMM_grp",
-  uniq_GO          = T,
   xlsx_name        = xlsx_name,
   n_boxes          = 34,
   all_violins      = T,
@@ -400,7 +391,9 @@ ova_boxes <- box_data %>%
     axis.title.y       = element_blank(),
     axis.title         = element_text(size = 10),
     axis.text          = element_text(size = 10),
+    axis.line.y        = element_line(color = "black"),
     axis.ticks.x       = element_line(size = 0.1),
+    axis.ticks.y       = element_line(color = "black"),
     panel.grid.major.x = element_line(size = 0.1)
   )
   
@@ -423,10 +416,33 @@ ova_fig <- plot_grid(
 ova_fig
 ```
 
+<br>
+
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by splitting the cells based on subtype and comparing the ovalbumin groups within the subtype. `r marker_desc` `r GO_desc`
-```{r "{{.x}} Subtype OVA markers", fig.width = 8.5, fig.height = 14, results = "asis"}
+Marker genes were identified by comparing all ovalbumin groups together. `r marker_desc` `r GO_desc`
+```{r "{{.x}} Subtype OVA markers 1", fig.width = 8.5, fig.height = 14, results = "asis"}
+
+# Create figures
+create_marker_panel_v1(
+  input_sobj       = sobj,
+  input_cols       = type_ova_cols,
+  clust_column     = "type_ova_grp",
+  xlsx_name        = xlsx_name,
+  n_boxes          = 16,
+  all_violins      = T,
+  panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
+  panel.spacing.y  = unit(0, "cm"),
+  panel.spacing.x  = unit(0.2, "cm"),
+  strip.text       = element_text(size = 10, angle = 90, hjust = 0)
+)
+
+```
+
+### {.tabset .tabset-pills}
+
+Marker genes were identified by splitting cells based on subtype and comparing the ovalbumin groups within the subtype. `r marker_desc` `r GO_desc`
+```{r "{{.x}} Subtype OVA markers 2", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Find OVA markers separately for each OVA group
 fig_markers <- cell_types %>%
@@ -446,7 +462,7 @@ xlsx_name <- params$xlsx_dir
 
 if (!is.null(xlsx_name)) {
   xlsx_name <- xlsx_name %>%
-    str_c("/", name_1, "_subtype_ova")
+    str_c("/", so_name, "_subtype_ova")
 }
 
 create_marker_panel_v2(
@@ -455,7 +471,6 @@ create_marker_panel_v2(
   input_cols       = type_ova_cols,
   grp_column       = "cell_type",
   clust_column     = "type_ova_grp",
-  uniq_GO          = T,
   xlsx_name        = xlsx_name,
   n_boxes          = 34,
   all_violins      = T,
@@ -469,9 +484,65 @@ create_marker_panel_v2(
 ```
 
 
+```{r "{{.x}} TEST", eval = F, echo = F}
 
+group_column <- "type_ova_grp"
 
+res <- sobj %>%
+  wilcoxauc(group_by = group_column) %>%
+  as_tibble() %>%
+  filter(
+    padj    < params$p_max_markers,
+    logFC   > params$FC_min,
+    auc     > params$auc_min,
+    pct_in  > params$pct_in_min,
+    pct_out < params$pct_out_max
+  ) %>%
+  arrange(desc(logFC))
 
+res <- res %>%
+  group_by(feature) %>%
+  filter(n() == 1) %>%
+  ungroup()
 
+x <- res %>% 
+  group_by(feature) %>% 
+  filter(group == "high-cDC2 Tbet-") %>% 
+  head() %>% 
+  pull(feature)
 
+sobj %>% 
+  subset(type_ova_grp == "high-cDC2 Tbet-") %>% 
+  FetchData(x) %>% 
+  as_tibble(rownames = "cell_id") %>% 
+  pivot_longer(cols = -cell_id, names_to = "key", values_to = "value") %>% 
+  mutate(key = fct_reorder(key, value, median)) %>% 
+  ggplot(aes(key, value, color = key)) + 
+  geom_boxplot() + 
+  theme_info
+
+# unique(marks$group)[1:4] %>%
+#   map(~ {
+#     marks_in <- marks %>%
+#       filter(group == .x) %>%
+#       pull(feature)
+#     
+#     if (!is_empty(marks_in)) {
+#       create_marker_boxes(
+#         input_sobj = sobj,
+#         input_markers = marks_in,
+#         clust_column = "type_ova_grp",
+#         box_cols = type_ova_cols
+#         # n_boxes          = 16,
+#         # all_violins      = T,
+#         # order_boxes      = T,
+#         # panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
+#         # panel.spacing.y  = unit(0, "cm"),
+#         # panel.spacing.x  = unit(0.2, "cm"),
+#         # strip.text       = element_text(size = 10, angle = 90, hjust = 0)
+#       )
+#     }
+#   })
+
+```
 

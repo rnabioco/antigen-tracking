@@ -149,7 +149,10 @@ subset_sobj <- function(sobj_in, type, type_column = "cell_type1", subtype_colum
   
   # Re-run UMAP
   res <- res %>%
-    cluster_RNA(...)
+    RunPCA() %>%
+    RunUMAP(dims = 1:40) %>%
+    AddMetaData(FetchData(., c("PC_1", "PC_2"))) %>%
+    AddMetaData(FetchData(., c("UMAP_1", "UMAP_2")))
 
   res
 }
@@ -171,60 +174,6 @@ merge_sobj <- function(sobj_list, sample_order = NULL) {
     rownames_to_column("cell_ids") %>%
     mutate(orig.ident = fct_relevel(orig.ident, sample_order)) %>%
     column_to_rownames("cell_ids")
-  
-  res
-}
-
-# Run PCA, cluster, and run UMAP using gene expression data
-cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6, 
-                        dims = 1:40, prefix = "", ...) {
-  # Use FindNeighbors to construct a K-nearest neighbors graph based on the euclidean distance in 
-  # PCA space, and refine the edge weights between any two cells based on the
-  # shared overlap in their local neighborhoods (Jaccard similarity).
-  # Use FindClusters to apply modularity optimization techniques such as the Louvain algorithm 
-  # (default) or SLM, to iteratively group cells together
-  
-  res <- sobj_in
-  
-  # ScaleData
-  if (!str_c("ScaleData.", assay) %in% names(res@commands)) {
-    res <- res %>%
-      ScaleData(assay = assay)
-  }
-  
-  # Perform PCA
-  # By default only variable features are used for PCA
-  res <- res %>%
-    RunPCA(assay = assay, ...) %>%
-    AddMetaData(
-      metadata = FetchData(., c("PC_1", "PC_2")),
-      col.name = str_c(prefix, c("PC_1", "PC_2"))
-    )
-    
-  # Create nearest neighbors graph and find clusters
-  res <- res %>%
-    FindNeighbors(
-      assay     = assay,
-      reduction = "pca",
-      dims      = dims
-    ) %>%
-    FindClusters(
-      resolution = resolution,
-      verbose    = F
-    ) %>%
-    AddMetaData(
-      metadata = Idents(.),
-      col.name = str_c(assay, "_clusters")
-    )
-  
-  # Run UMAP, UMAP coordinates will get added to the meta.data by clustifyr
-  res <- res %>%
-    RunUMAP(
-      assay = assay,
-      dims  = dims,
-      reduction.name = str_c(prefix, "umap"),
-      reduction.key  = str_c(prefix, "UMAP_")
-    )
   
   res
 }
@@ -256,7 +205,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin") {
   # Divide into OVA groups
   res <- data.frame(
     cell_id = rownames(data_df),
-    data    = data_df[, data_column],
+    data = data_df[, data_column],
     mixmdl$posterior
   ) %>%
     dplyr::rename(!!sym(data_column) := data) %>%
@@ -456,12 +405,12 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
 }
 
 # Run gprofiler
-run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL,
-                          dbases = c("GO:BP", "GO:MF", "KEGG"), ...) {
+run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL, p_max = params$p_max_GO,
+                          order_query = params$order_query, dbases = c("GO:BP", "GO:MF", "KEGG"), ...) {
   
   # Check for empty gene list
   if (is_empty(gene_list)) {
-    return(NULL)
+    return(as_tibble(NULL))
   }
   
   # Check arguments
@@ -490,16 +439,17 @@ run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL,
   # Run gProfileR
   res <- gene_list %>%
     gost(
-      organism      = org,
-      sources       = dbases,
-      domain_scope  = "annotated",
-      significant   = T,
+      organism       = org,
+      sources        = dbases,
+      domain_scope   = "annotated",
+      significant    = T,
+      user_threshold = p_max,
+      ordered_query  = order_query,
       ...
     )
   
   # Format and sort output data.frame
-  res <- res$result %>%
-    as_tibble()
+  res <- as_tibble(res$result)
   
   if (!is_empty(res)) {
     res <- res %>%
@@ -623,12 +573,29 @@ plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NU
   res
 }
 
-# Run FindAllMarkers
-find_markers <- function(input_sobj, only_pos = T, p_cutoff = 0.05, ...) {
+# Find markers with presto
+find_markers <- function(input_sobj, group_column = NULL, uniq = params$uniq_markers, 
+                         FC_min = params$FC_min, auc_min = params$auc_min, p_max = params$p_max_markers, 
+                         pct_in_min = params$pct_in_min, pct_out_max = params$pct_out_max, ...) {
+  
   res <- input_sobj %>%
-    FindAllMarkers(only.pos = only_pos, ...) %>%
+    wilcoxauc(group_by = group_column) %>%
     as_tibble() %>%
-    filter(p_val_adj < p_cutoff)
+    filter(
+      padj    < p_max,
+      logFC   > FC_min,
+      auc     > auc_min,
+      pct_in  > pct_in_min,
+      pct_out < pct_out_max
+    ) %>%
+    arrange(desc(logFC))
+  
+  if (uniq) {
+    res <- res %>%
+      group_by(feature) %>%
+      filter(n() == 1) %>%
+      ungroup()
+  }
   
   res
 }
@@ -639,17 +606,15 @@ find_group_markers <- function(input_grp, input_sobj, grp_column, clust_column) 
   res <- input_sobj %>%
     subset(!!sym(grp_column) == input_grp)
 
-  clusts <- res@meta.data[, clust_column]
+  clusts <- res@meta.data %>%
+    pull(clust_column)
 
   if (n_distinct(clusts) < 2) {
     return(NULL)
   }
 
-  Idents(res) <- res %>%
-    FetchData(clust_column)
-
   res <- res %>%
-    find_markers() %>%
+    find_markers(group_column = clust_column) %>%
     mutate(cell_type = input_grp)
 
   res
@@ -657,6 +622,7 @@ find_group_markers <- function(input_grp, input_sobj, grp_column, clust_column) 
 
 # Create reference UMAP for comparisons
 create_ref_umap <- function(input_sobj, pt_mtplyr = 1, color_guide, ...) {
+  
   res <- input_sobj %>%
     plot_features(
       pt_size     = 0.1 * pt_mtplyr,
@@ -712,6 +678,9 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
                                 n_rows = 2, pt_mtplyr = 1, ...) {
   
   # Retrieve and format data for boxplots
+  input_markers <- input_markers %>%
+    head(n_boxes)
+  
   box_data <- input_sobj %>%
     FetchData(c(clust_column, input_markers)) %>%
     as_tibble(rownames = "cell_id") %>%
@@ -831,7 +800,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column,
   
   # Create UMAPs showing marker gene signal
   if (nrow(input_markers) > 0) {
-    top_marks <- input_markers$gene %>%
+    top_marks <- input_markers$feature %>%
       head(n_boxes)
     
     clust_legend <- get_legend(input_umap)
@@ -941,46 +910,45 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column,
 # Filter clusters and set cluster order
 set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
   input_marks <- input_marks %>%
-    group_by(cluster) %>%
+    group_by(group) %>%
     filter(n() >= n_cutoff) %>%
     ungroup()
   
-  marks <- unique(input_marks$cluster)
+  marks <- unique(input_marks$group)
   res   <- names(input_cols)
   res   <- res[res %in% marks]
   
   res
 }
-  
+
 # Create v1 panel for marker genes
 create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, order_boxes = T,
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)),
-                                   uniq_GO = F, umap_mtplyr = 6, xlsx_name = NULL, ...) {
+                                   uniq = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, ...) {
   
   # Set point size
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
   ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
   
   # Find marker genes
-  Idents(input_sobj) <- input_sobj %>%
-    FetchData(clust_column)
-  
-  markers <- find_markers(input_sobj)
+  markers <- input_sobj %>%
+    find_markers(group_column = clust_column)
   
   # Find GO terms
-  GO_df <- markers %>%
-    group_by(cluster) %>%
-    do({
-      arrange(., p_val_adj) %>%
-        pull(gene) %>%
-        run_gprofiler(
-          genome = params$genome,
-          ordered_query = T
-        )
-    }) %>%
-    ungroup()
+  GO_df <- markers
   
-  if (uniq_GO && nrow(GO_df) > 0) {
+  if (nrow(markers) > 0) {
+    GO_df <- markers %>%
+      group_by(group) %>%
+      do({
+        arrange(., desc(logFC)) %>%
+          pull(feature) %>%
+          run_gprofiler(genome = params$genome)
+      }) %>%
+      ungroup()
+  }
+  
+  if (uniq && nrow(GO_df) > 0) {
     GO_df <- GO_df %>%
       group_by(term_id) %>%
       filter(n() == 1) %>%
@@ -999,10 +967,10 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
     clust <- fig_clusters[i]
     
     fig_marks <- markers %>%
-      filter(cluster == clust)
+      filter(group == clust)
     
     fig_GO <- GO_df %>%
-      filter(cluster == clust)
+      filter(group == clust)
     
     # Create reference umap
     ref_umap <- input_umap
@@ -1047,7 +1015,7 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
 # Create v2 panel that splits plots into groups
 create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_column, clust_column, 
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)), 
-                                   uniq_GO = F, umap_mtplyr = 6, xlsx_name = NULL, ...) {
+                                   uniq_GO = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, ...) {
   
   # Set point size
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
@@ -1059,14 +1027,11 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
   
   # Find GO terms
   GO_df <- input_markers %>%
-    group_by(cluster) %>%
+    group_by(group) %>%
     do({
-      arrange(., p_val_adj) %>%
-        pull(gene) %>%
-        run_gprofiler(
-          genome = params$genome,
-          ordered_query = T
-        )
+      arrange(., desc(logFC)) %>%
+        pull(feature) %>%
+        run_gprofiler(genome = params$genome)
     }) %>%
     ungroup()
   
@@ -1085,10 +1050,10 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
     clust <- fig_clusters[i]
     
     fig_marks <- input_markers %>%
-      filter(cluster == clust)
+      filter(group == clust)
     
     fig_GO <- GO_df %>%
-      filter(cluster == clust)
+      filter(group == clust)
     
     # Set colors
     umap_col <- input_cols[clust]
@@ -1141,107 +1106,6 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
   }
 }
 
-# Create panels for manuscript
-create_paper_figures <- function(input_sobj, input_cols, summary_fig = NULL, input_umap = NULL, clust_column,
-                                 color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)),
-                                 order_boxes = T, uniq_GO = F, umap_mtplyr = 6, xlsx_name = NULL, ...) {
-  
-  # Set point size
-  umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
-  ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
-  
-  # Find marker genes
-  Idents(input_sobj) <- input_sobj %>%
-    FetchData(clust_column)
-  
-  markers <- find_markers(input_sobj)
-  
-  # Find GO terms
-  GO_df <- markers %>%
-    group_by(cluster) %>%
-    do({
-      arrange(., p_val_adj) %>%
-        pull(gene) %>%
-        run_gprofiler(
-          genome = params$genome,
-          ordered_query = T
-        )
-    }) %>%
-    ungroup()
-  
-  if (uniq_GO && nrow(GO_df) > 0) {
-    GO_df <- GO_df %>%
-      group_by(term_id) %>%
-      filter(n() == 1) %>%
-      ungroup()
-  }
-  
-  # Set cluster order based on order of input_cols
-  fig_clusters <- input_cols %>%
-    set_cluster_order(markers)
-  
-  # Create figures
-  for (i in seq_along(fig_clusters)) {
-    cat("\n#### ", fig_clusters[i], "\n", sep = "")
-    
-    # Filter markers and GO terms
-    clust <- fig_clusters[i]
-    
-    fig_marks <- markers %>%
-      filter(cluster == clust)
-    
-    fig_GO <- GO_df %>%
-      filter(cluster == clust)
-    
-    # Create reference umap
-    ref_umap <- input_umap
-    umap_col <- input_cols[clust]
-    
-    if (is.null(input_umap)) {
-      umap_levels <- input_cols[names(input_cols) != clust]
-      umap_levels <- names(c(umap_levels, umap_col))
-      
-      ref_umap <- input_sobj %>%
-        create_ref_umap(
-          feature     = clust_column,
-          plot_cols   = input_cols,
-          feat_levels = umap_levels,
-          pt_mtplyr   = ref_mtplyr,
-          color_guide = color_guide
-        )
-    }
-    
-    # Create panel
-    marker_fig <- input_sobj %>%
-      create_marker_fig(
-        input_markers = fig_marks,
-        input_GO      = fig_GO,
-        clust_column  = clust_column,
-        input_umap    = ref_umap,
-        umap_color    = umap_col,
-        box_colors    = input_cols,
-        order_boxes   = order_boxes,
-        umap_mtplyr   = umap_mtplyr,
-        xlsx_name     = xlsx_name,
-        sheet_name    = clust,
-        ...
-      )
-    
-    if (!is.null(summary_fig)) {
-      marker_fig <- plot_grid(
-        summary_fig, marker_fig,
-        rel_heights = c(0.3, 0.7),
-        ncol  = 1,
-        align = "vh",
-        axis  = "trbl"
-      )
-    }
-    
-    print(marker_fig)
-    cat("\n\n---\n\n<br>\n\n<br>\n\n")
-  }
-}
-
 ```
 
 ```{r "Packages", include = F}
@@ -1260,7 +1124,8 @@ R_packages <- c(
   "mixtools",   "clustifyr",
   "boot",       "scales",
   "patchwork",  "ComplexHeatmap",
-  "devtools",   "broom"
+  "devtools",   "broom",
+  "presto"
 )
 
 for (package in R_packages) {
