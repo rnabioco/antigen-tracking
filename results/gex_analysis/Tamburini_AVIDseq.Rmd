@@ -1,0 +1,344 @@
+---
+title: "Antigen Tracking"
+author: "Ryan Sheridan"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    df_print: "paged"
+    code_folding: "hide"
+    self_contained: true
+    highlight: "kate"
+params:
+  genome:        "GRCm"            # Genome to use for GO analysis (GRCm or GRCh)
+  template_dir:  "../../src"       # Direcotry containing template Rmarkdowns
+  rds_dir:       "../../sobjs/so"  # Direcotry to use for loading/saving Seurat objects
+  # xlsx_dir:      "gene_lists"      # Directory to use for writing gene lists (comment out to skip)
+  p_max_markers: 0.05              # Max p-value for marker genes
+  FC_min:        0                 # Min fold change for marker genes
+  auc_min:       0.8               # Min AUC for marker genes
+  pct_in_min:    50                # Min percentage cells expressing marker in group 
+  pct_out_max:   50                # Max percentage cells expressing marker outside group
+  uniq_markers:  TRUE              # Remove markers that are present in more than one group
+  p_max_GO:      0.05              # Max p-value for GO terms
+  order_query:   TRUE              # Markers are ordered by fold change and submitted as an ordered query
+  uniq_GO:       TRUE              # Remove GO terms that are present in more than one group
+  
+  # These parameters specify the input Seurat objects and cell types that should be used for analysis
+  # sobj_in: Seurat object from Shannon containing CD45- and CD45+ cells for the timepoint. This object is
+  # divided based on CD45+/- and the provided cell type.
+  # sobj_out: The output Seurat object that is saved after dividing based on CD45+/- and cell type.
+  # cell_type: Cell type used for dividing Seurat objects. These labels are matched with the "cell_type1" column.
+  # Subtypes from the "cell_type2" column are also removed if they contain <15 cells.
+  # title: Section title
+  sobjs:
+    value:
+      d2_DC:
+        sobj_in:   "d2_so.rds"
+        sobj_out:  "d2_DC_sobj.rds"
+        cell_type: "DC"
+        title:     "Myeloid Cells (Day 2)"
+      d14_DC:
+        sobj_in:   "d14_so.rds"
+        sobj_out:  "d14_DC_sobj.rds"
+        cell_type: "DC"
+        title:     "Myeloid Cells (Day 14)"
+      d2_LEC:
+        sobj_in:   "d2_so.rds"
+        sobj_out:  "d2_LEC_sobj.rds"
+        cell_type: "LEC"
+        title:     "Endothelial/Stromal Cells (Day 2)"
+      d14_LEC:
+        sobj_in:   "d14_so.rds"
+        sobj_out:  "d14_LEC_sobj.rds"
+        cell_type: "LEC"
+        title:     "Endothelial/Stromal Cells (Day 14)"
+      d2_FRC:
+        sobj_in:   "d2_so.rds"
+        sobj_out:  "d2_FRC_sobj.rds"
+        cell_type: "fibroblast"
+        title:     "Fibroblast/Stromal Cells (Day 2)"
+      d14_FRC:
+        sobj_in:   "d14_so.rds"
+        sobj_out:  "d14_FRC_sobj.rds"
+        cell_type: "fibroblast"
+        title:     "Fibroblast/Stromal Cells (Day 14)"
+        
+  # These parameters specify paths to clustifyr references for each cell_type provided above
+  sobj_refs:
+    value:
+      LEC: "../clustifyr/ref_LEC_xiang.rda"
+    
+---
+
+<br>
+
+#### Parameters
+
+* Markers p-value cutoff: **`r params$p_max_markers`**
+* Minimum marker gene log fold change: **`r params$FC_min`**
+* Minimum marker gene AUC: **`r params$auc_min`**
+* Minimum percentage of cells expressing marker in group: **`r params$pct_in_min`%**
+* Maximum percentage of cells expressing marker outside group: **`r params$pct_out_max`%**
+* Remove markers present in more than one group: **`r params$uniq_markers`**
+
+* Genome for GO query: **`r params$genome`**
+* GO terms p-value cutoff: **`r params$p_max_GO`**
+* Order markers by fold change and submit as an ordered GO query: **`r params$order_query`**
+* Remove GO terms present in more than one group: **`r params$uniq_GO`**
+
+---
+
+<br>
+
+`r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
+
+```{r "TEST", echo = F, eval = F}
+
+# Matrices
+mats <- c(
+  CD45_neg = "../CD45neg_d2/filtered_feature_bc_matrix",
+  CD45_pos = "../CD45pos_d2/filtered_feature_bc_matrix"
+)
+
+# Create Seurat object and cluster
+so_list <- mats %>%
+  imap(~ {
+    .x %>%
+      create_sobj(proj_name = .y) %>%
+      norm_sobj()
+  })
+
+so_merge <- merge(so_list$CD45_neg, so_list$CD45_pos)
+
+so_merge <- so_merge %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  cluster_RNA()
+
+# Assign cell types
+so_merge <- so_merge %>%
+  clustify(
+    cluster_col = "RNA_clusters",
+    ref_mat = ref_tabula_muris_drop,
+    threshold = 0.5
+  )
+
+type_names <- list(
+  macrophage  = "DC",
+  monocyte    = "DC",
+  unassigned  = "DC",
+  endothelial = "LEC",
+  mesenchymal = "fibroblast",
+  luminal     = "epithelial",
+  "T cell"    = "T cell",
+  "B cell"    = "B cell"
+)
+
+so_merge@meta.data <- so_merge@meta.data %>%
+  rownames_to_column("cell_id") %>%
+  mutate(type = map_chr(type, ~ {
+    type_names[str_detect(.x, names(type_names))] %>%
+      as.character()
+  })) %>%
+  column_to_rownames("cell_id")
+
+so_merge %>%
+  plot_features(
+    feature = "type",
+    plot_cols = theme_cols
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 3))) +
+  blank_theme +
+  theme(legend.title = element_blank())
+
+```
+
+```{r "SHANNONS CODE", eval = T, echo = F}
+
+neg2_data <- Read10X("../CD45neg_d2/filtered_feature_bc_matrix/")
+pos2_data <- Read10X("../CD45pos_d2/filtered_feature_bc_matrix/")
+
+neg2_mrna <- neg2_data$`Gene Expression`
+neg2_adt <- neg2_data$`Antibody Capture`
+neg2_so <- CreateSeuratObject(counts = neg2_mrna)
+neg2_so[['adt']] <- CreateAssayObject(counts = neg2_adt)
+
+pos2_mrna <- pos2_data$`Gene Expression`
+pos2_adt <- pos2_data$`Antibody Capture`
+pos2_so <- CreateSeuratObject(counts = pos2_mrna)
+pos2_so[['adt']] <- CreateAssayObject(counts = pos2_adt)
+
+d2_so <- merge(neg2_so, pos2_so)
+
+d2_so[["percent.mt"]] <- PercentageFeatureSet(d2_so, pattern = "^mt-")
+# VlnPlot(d2_so, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+# FeatureScatter(d2_so, feature1 = "nCount_RNA", feature2 = "percent.mt")
+# FeatureScatter(d2_so, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+d2_so <- subset(d2_so, subset = percent.mt < 25 & nFeature_RNA > 100 & nFeature_RNA < 5000)
+
+d2_so <- NormalizeData(d2_so, normalization.method = "LogNormalize", scale.factor = 10000)
+d2_so <- FindVariableFeatures(d2_so, selection.method = "vst")
+
+d2_all.genes <- rownames(d2_so)
+d2_so <- ScaleData(d2_so, features = d2_all.genes)
+d2_so <- RunPCA(d2_so, features = VariableFeatures(object = d2_so))
+# ElbowPlot(d2_so)
+
+d2_so <- FindNeighbors(d2_so, dims = 1:30)
+d2_so <- FindClusters(d2_so, resolution = 1.0)
+# d2_so <- RunTSNE(d2_so, dims = 1:30)
+d2_so <- RunUMAP(d2_so, dims = 1:30)
+# DimPlot(d2_so, reduction = "umap", group.by = "seurat_clusters", label = T)
+#ggsave(paste(plots_folder, "cluster_umap_d2.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
+
+# d2_so <- NormalizeData(d2_so, assay = "adt", normalization.method = "CLR")
+# d2_so <- ScaleData(d2_so, assay = "adt")
+
+```
+
+```{r "Load data", echo = F}
+
+# Set paths/names
+so_paths <- params$sobjs %>%
+  pull_nest_vec("sobj_in") %>%
+  map_chr(~ file.path(params$rds_dir, .x))
+
+so_out <- params$sobjs %>%
+  pull_nest_vec("sobj_out") %>%
+  map_chr(~ file.path(params$rds_dir, .x))
+
+so_types <- params$sobjs %>%
+  pull_nest_vec("cell_type")
+
+so_titles <- params$sobjs %>%
+  pull_nest_vec("title")
+
+# Load and subset objects
+# Avoid loading same objects twice
+if (!all(file.exists(so_out))) {
+  sobjs <- unique(so_paths) %>%                             # Load objects
+    setNames(., .) %>%
+    map(read_rds)
+  
+  sobjs <- sobjs[match(so_paths, names(sobjs))]
+  names(sobjs) <- names(so_paths)
+  
+  inc_types <- so_types %>%
+    map(~ if_else(
+      .x == "LEC",
+      list(c("B cell", "T cell", "epithelial")),
+      list(c("B cell", "T cell"))
+    )) %>%
+    flatten()
+  
+  sobjs <- imap(sobjs, subset_sobj, so_types, inc_types)    # Subset objects
+  sobjs <- imap(sobjs, run_clustifyr, so_types)             # Run clustifyr
+  
+  # Write new objects
+  sobjs %>%
+    iwalk(~ write_rds(.x, path = so_out[.y]))
+
+} else {
+  sobjs <- so_out %>%
+    map(read_rds)
+}
+
+# Color palettes
+common_cols <- c(
+  "Epithelial" = "#6a51a3",
+  "B Cell"     = "#E69F00",
+  "T Cell"     = "#009E73",
+  "Unassigned" = "#ffffff"
+)
+
+so_cols <- so_types %>%
+  map(
+    set_type_cols,
+    sobjs_in   = sobjs,
+    type_key   = so_types,
+    cols_in    = ito_cols,
+    other_cols = common_cols
+  )
+
+```
+
+```{r "Run markers chunks", echo = F}
+
+# Create list of chunks
+template <- str_c(params$template_dir, "/markers_template.Rmd")
+
+chunks <- names(sobjs) %>%
+  map(~ knit_expand(template))
+
+```
+
+`r knit_child(text = chunks)`
+
+## Session info
+
+```{r, comment = "", echo = F}
+session_info()
+```
+
+
+
+```{r "TEST CLUSTERS", eval = F, echo = F}
+
+# Load reference
+load(params$sobj_refs$LEC)
+
+so_in <- sobjs[["d14_LEC"]] %>%
+  FindNeighbors(
+    reduction = "pca",
+    dims = 1:40
+  )
+
+# Create plots for different resolutions
+cutoffs <- seq(0.8, 2, 0.2)
+
+cutoffs %>%
+  map(~ {
+    res <- so_in %>%
+      FindClusters(
+        resolution = .x,
+        verbose = F
+      ) %>%
+      clustify(
+        ref_mat = ref_LEC_xiang,
+        cluster_col = "seurat_clusters"
+      )
+    
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(
+        subtype = if_else(cell_type == "LEC", type, subtype),
+        UMAP_1 = UMAP_1.x,
+        UMAP_2 = UMAP_2.x
+      ) %>%
+      column_to_rownames("cell_id")
+    
+    res %>%
+      plot_features(
+        feature = "type",
+        plot_cols = theme_cols
+      ) +
+      ggtitle(.x) +
+      guides(color = guide_legend(override.aes = list(size = 3))) +
+      blank_theme +
+      theme(
+        panel.border = element_rect(color = "black", fill = NA),
+        legend.title = element_blank()
+      )
+  }) %>%
+  plot_grid(
+    plotlist = .,
+    align = "vh",
+    axis  = "trbl"
+  )
+
+```
+
+
