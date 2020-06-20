@@ -431,23 +431,18 @@ common_cols <- c(
   "T Cell" = "#009E73"
 )
 
-DC_cols <- sobjs_sub[so_types[names(sobjs_sub)] == "DC"] %>%
-  set_type_cols(
-    cols_in = ito_cols,
+so_cols <- so_types %>%
+  map(
+    set_type_cols,
+    sobjs_in   = sobjs_sub,
+    type_key   = so_types,
+    cols_in    = ito_cols,
     other_cols = common_cols
   )
 
-LEC_cols <- sobjs_sub[so_types[names(sobjs_sub)] == "LEC"] %>%
-  set_type_cols(
-    cols_in = ito_cols,
-    other_cols = common_cols
-  )
-  
-FRC_cols <- sobjs_sub[so_types[names(sobjs_sub)] == "fibroblast"] %>%
-  set_type_cols(
-    cols_in = ito_cols,
-    other_cols = common_cols
-  )
+DC_cols <- so_cols[["d2_DC"]]
+LEC_cols <- so_cols[["d2_LEC"]]
+FRC_cols <- so_cols[["d2_FRC"]]
 
 # Parameter lists
 fig3_params <- list(
@@ -598,7 +593,8 @@ LEC_sobjs <- sobjs_sub[LEC_idx] %>%
   map(
     clustify, 
     ref_mat = ref_LEC_xiang, 
-    cluster_col = "RNA_clusters"
+    cluster_col = "RNA_clusters",
+    threshold = 0.5
   ) %>%
   map(~ {
     .x@meta.data <- .x@meta.data %>%
