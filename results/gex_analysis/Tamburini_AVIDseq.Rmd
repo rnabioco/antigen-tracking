@@ -69,8 +69,7 @@ params:
   # These parameters specify paths to clustifyr references for each cell_type provided above
   sobj_refs:
     value:
-      LEC: "../clustifyr/ref_LEC_xiang.rda"
-    
+      LEC: "../../clustifyr/ref_LEC_xiang.rda"
 ---
 
 <br>
@@ -94,110 +93,6 @@ params:
 <br>
 
 `r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
-
-```{r "TEST", echo = F, eval = F}
-
-# Matrices
-mats <- c(
-  CD45_neg = "../CD45neg_d2/filtered_feature_bc_matrix",
-  CD45_pos = "../CD45pos_d2/filtered_feature_bc_matrix"
-)
-
-# Create Seurat object and cluster
-so_list <- mats %>%
-  imap(~ {
-    .x %>%
-      create_sobj(proj_name = .y) %>%
-      norm_sobj()
-  })
-
-so_merge <- merge(so_list$CD45_neg, so_list$CD45_pos)
-
-so_merge <- so_merge %>%
-  FindVariableFeatures() %>%
-  ScaleData() %>%
-  cluster_RNA()
-
-# Assign cell types
-so_merge <- so_merge %>%
-  clustify(
-    cluster_col = "RNA_clusters",
-    ref_mat = ref_tabula_muris_drop,
-    threshold = 0.5
-  )
-
-type_names <- list(
-  macrophage  = "DC",
-  monocyte    = "DC",
-  unassigned  = "DC",
-  endothelial = "LEC",
-  mesenchymal = "fibroblast",
-  luminal     = "epithelial",
-  "T cell"    = "T cell",
-  "B cell"    = "B cell"
-)
-
-so_merge@meta.data <- so_merge@meta.data %>%
-  rownames_to_column("cell_id") %>%
-  mutate(type = map_chr(type, ~ {
-    type_names[str_detect(.x, names(type_names))] %>%
-      as.character()
-  })) %>%
-  column_to_rownames("cell_id")
-
-so_merge %>%
-  plot_features(
-    feature = "type",
-    plot_cols = theme_cols
-  ) +
-  guides(color = guide_legend(override.aes = list(size = 3))) +
-  blank_theme +
-  theme(legend.title = element_blank())
-
-```
-
-```{r "SHANNONS CODE", eval = T, echo = F}
-
-neg2_data <- Read10X("../CD45neg_d2/filtered_feature_bc_matrix/")
-pos2_data <- Read10X("../CD45pos_d2/filtered_feature_bc_matrix/")
-
-neg2_mrna <- neg2_data$`Gene Expression`
-neg2_adt <- neg2_data$`Antibody Capture`
-neg2_so <- CreateSeuratObject(counts = neg2_mrna)
-neg2_so[['adt']] <- CreateAssayObject(counts = neg2_adt)
-
-pos2_mrna <- pos2_data$`Gene Expression`
-pos2_adt <- pos2_data$`Antibody Capture`
-pos2_so <- CreateSeuratObject(counts = pos2_mrna)
-pos2_so[['adt']] <- CreateAssayObject(counts = pos2_adt)
-
-d2_so <- merge(neg2_so, pos2_so)
-
-d2_so[["percent.mt"]] <- PercentageFeatureSet(d2_so, pattern = "^mt-")
-# VlnPlot(d2_so, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
-# FeatureScatter(d2_so, feature1 = "nCount_RNA", feature2 = "percent.mt")
-# FeatureScatter(d2_so, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-d2_so <- subset(d2_so, subset = percent.mt < 25 & nFeature_RNA > 100 & nFeature_RNA < 5000)
-
-d2_so <- NormalizeData(d2_so, normalization.method = "LogNormalize", scale.factor = 10000)
-d2_so <- FindVariableFeatures(d2_so, selection.method = "vst")
-
-d2_all.genes <- rownames(d2_so)
-d2_so <- ScaleData(d2_so, features = d2_all.genes)
-d2_so <- RunPCA(d2_so, features = VariableFeatures(object = d2_so))
-# ElbowPlot(d2_so)
-
-d2_so <- FindNeighbors(d2_so, dims = 1:30)
-d2_so <- FindClusters(d2_so, resolution = 1.0)
-# d2_so <- RunTSNE(d2_so, dims = 1:30)
-d2_so <- RunUMAP(d2_so, dims = 1:30)
-# DimPlot(d2_so, reduction = "umap", group.by = "seurat_clusters", label = T)
-#ggsave(paste(plots_folder, "cluster_umap_d2.pdf", sep = ""), plot, width = 6, height = 4, units = c("in"), useDingbats = F)
-
-# d2_so <- NormalizeData(d2_so, assay = "adt", normalization.method = "CLR")
-# d2_so <- ScaleData(d2_so, assay = "adt")
-
-```
 
 ```{r "Load data", echo = F}
 
@@ -284,6 +179,213 @@ session_info()
 ```
 
 
+
+```{r "TEST", eval = F, echo = F}
+
+# Matrices
+mats <- c(
+  CD45_neg = "../CD45neg_d2/filtered_feature_bc_matrix",
+  CD45_pos = "../CD45pos_d2/filtered_feature_bc_matrix"
+)
+
+# Create Seurat object and cluster
+so_list <- mats %>%
+  imap(~ {
+    .x %>%
+      create_sobj(proj_name = .y) %>%
+      norm_sobj()
+  })
+
+so_merge <- merge(so_list$CD45_neg, so_list$CD45_pos)
+
+so_merge <- so_merge %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  cluster_RNA()
+
+# Assign cell types
+so_merge <- so_merge %>%
+  clustify(
+    cluster_col = "RNA_clusters",
+    ref_mat = ref_tabula_muris_drop,
+    threshold = 0.5
+  )
+
+type_names <- list(
+  macrophage  = "DC",
+  monocyte    = "DC",
+  unassigned  = "DC",
+  endothelial = "LEC",
+  mesenchymal = "fibroblast",
+  luminal     = "epithelial",
+  "T cell"    = "T cell",
+  "B cell"    = "B cell"
+)
+
+so_merge@meta.data <- so_merge@meta.data %>%
+  rownames_to_column("cell_id") %>%
+  mutate(type = map_chr(type, ~ {
+    type_names[str_detect(.x, names(type_names))] %>%
+      as.character()
+  })) %>%
+  column_to_rownames("cell_id")
+
+so_merge %>%
+  plot_features(
+    feature = "type",
+    plot_cols = theme_cols
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 3))) +
+  blank_theme +
+  theme(legend.title = element_blank())
+
+```
+
+```{r "SHANNONS CODE", eval = F, echo = F}
+
+# Create Seurat objects
+neg2_data <- Read10X("../CD45neg_d2/filtered_feature_bc_matrix/")
+pos2_data <- Read10X("../CD45pos_d2/filtered_feature_bc_matrix/")
+
+neg2_mrna <- neg2_data$`Gene Expression`
+neg2_adt <- neg2_data$`Antibody Capture`
+neg2_so <- CreateSeuratObject(counts = neg2_mrna)
+neg2_so[['adt']] <- CreateAssayObject(counts = neg2_adt)
+
+pos2_mrna <- pos2_data$`Gene Expression`
+pos2_adt <- pos2_data$`Antibody Capture`
+pos2_so <- CreateSeuratObject(counts = pos2_mrna)
+pos2_so[['adt']] <- CreateAssayObject(counts = pos2_adt)
+
+d2_so <- merge(neg2_so, pos2_so)
+
+# QC filtering
+d2_so[["percent.mt"]] <- PercentageFeatureSet(d2_so, pattern = "^mt-")
+d2_so <- subset(d2_so, subset = percent.mt < 25 & nFeature_RNA > 100 & nFeature_RNA < 5000)
+
+# Normalize gene expression data
+d2_so <- NormalizeData(d2_so, normalization.method = "LogNormalize", scale.factor = 10000)
+d2_so <- FindVariableFeatures(d2_so, selection.method = "vst")
+d2_all.genes <- rownames(d2_so)
+d2_so <- ScaleData(d2_so, features = d2_all.genes)
+
+# Cluster gene expression data
+d2_so <- RunPCA(d2_so, features = VariableFeatures(object = d2_so))
+d2_so <- FindNeighbors(d2_so, dims = 1:30)
+d2_so <- FindClusters(d2_so, resolution = 1.0)
+d2_so <- RunUMAP(d2_so, dims = 1:30)
+
+# Assign cell types
+d2_res1 <- clustify(
+  input       = d2_so,
+  cluster_col = "seurat_clusters",
+  ref_mat     = clustifyrdata::immgen_ref,
+  seurat_out  = T, 
+  threshold   = 0.5, 
+  verbose     = T
+)
+
+d2_res1_type <- FetchData(d2_res1, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+
+d2_res2 <- clustify(
+  input       = d2_so,
+  cluster_col = "seurat_clusters",
+  ref_mat     = clustifyrdata::ref_tabula_muris_drop,
+  seurat_out  = T, 
+  threshold   = 0.5, 
+  verbose     = T
+)
+
+d2_res2_type <- FetchData(d2_res2, vars = c("seurat_clusters", "type", "r")) %>%
+  rownames_to_column(var = "cell_id") %>%
+  dplyr::select(-cell_id) %>%
+  unique()
+
+d2.new.cluster.ids <- c(
+  "DC",         "DC",     "DC",     "DC", 
+  "DC",         "DC",     "DC",     "DC", 
+  "DC",         "T cell", "DC",     "T cell", 
+  "fibroblast", "LEC",    "B cell", "epithelial", 
+  "DC",         "DC",     "DC",     "epithelial", 
+  "fibroblast"
+)
+
+d2_so@meta.data$cell_type1 <- d2.new.cluster.ids[d2_so$seurat_clusters]
+
+d2_DC_so <- subset(d2_so, subset = cell_type1 == "DC")
+d2_DC_all.genes <- rownames(d2_DC_so)
+d2_DC_so <- ScaleData(d2_DC_so, features = d2_DC_all.genes)
+d2_DC_so <- FindVariableFeatures(object = d2_DC_so)
+d2_DC_so <- RunPCA(d2_DC_so, features = VariableFeatures(object = d2_DC_so))
+
+# Migratory DC reference
+migDC_data <- read_csv("https://sharehost.hms.harvard.edu/immgen/GSE15907/GSE15907_Normalized_Data.csv")
+
+migDC <- migDC_data %>%
+  dplyr::select(
+    ProbeSetID, GeneSymbol, 
+    "DC.IIhilang-103-11b+.SLN#1",  "DC.IIhilang-103-11b+.SLN#2",
+    "DC.IIhilang-103-11b+.SLN#3",  "DC.IIhilang+103+11blo.SLN#1",
+    "DC.IIhilang+103+11blo.SLN#2", "DC.IIhilang+103+11blo.SLN#3",
+    "DC.IIhilang+103-11b+.SLN#1",  "DC.IIhilang+103-11b+.SLN#2", 
+    "DC.IIhilang+103-11b+.SLN#3",  "DC.IIhilang-103-11blo.SLN#1",
+    "DC.IIhilang-103-11blo.SLN#2", "DC.IIhilang-103-11blo.SLN#3"
+  )
+
+ref_migDC <- migDC %>%
+  dplyr::select(-ProbeSetID) %>%
+  group_by(GeneSymbol) %>%
+  summarize_all(sum) %>%
+  remove_rownames() %>%
+  column_to_rownames("GeneSymbol")
+
+# Find variable genes with M3Drop
+d2_DC_norm_data <- M3DropCleanData(
+  expr_mat      = as.matrix(d2_DC_so@assays$RNA@counts),
+  labels        = rownames(d2_DC_so@assays$RNA@counts),
+  is.counts     = TRUE,
+  suppress.plot = TRUE
+)
+
+d2_DC_fits <- M3DropDropoutModels(
+  expr_mat      = d2_DC_norm_data$data, 
+  suppress.plot = TRUE
+)
+
+d2_DC_markers_M3Drop <- M3DropFeatureSelection(
+  expr_mat      = d2_DC_norm_data$data,
+  mt_method     = "fdr",
+  mt_threshold  = 0.01,
+  suppress.plot = TRUE
+)
+
+d2_DC_markers <- d2_DC_markers_M3Drop$Gene
+
+# Classify DC subtypes
+d2_migDC_res <- clustify(
+  input       = d2_DC_so,
+  cluster_col = "seurat_clusters",
+  ref_mat     = ref_migDC,
+  query_genes = d2_DC_markers,
+  seurat_out  = T, 
+  threshold   = 0.5, 
+  verbose     = T
+)
+
+d2DC.new.cluster.ids <- c(
+  "CCR7hi mig cDC2", "cDC2 Tbet-",            "cDC2 Tbet-",      "CCR7hi mig cDC1",
+  "cDC2 Tbet-",      "CCR7hi XCR1- mig cDC2", "CCR7hi mig cDC2", "CCR7hi mig cDC2",
+  "cDC2 Tbet-",      "cDC1",                  "cDC2 Tbet-",      "CCR7hi Langerhans", 
+  "CCR7hi mig cDC2", "cDC2 Tbet-",            "cDC1",            "cDC2 Tbet-", 
+  "cDC1",            "Monocyte"
+)
+
+d2_DC_so@meta.data$cell_typeDC <- d2DC.new.cluster.ids[d2_DC_so$seurat_clusters]
+
+```
 
 ```{r "TEST CLUSTERS", eval = F, echo = F}
 

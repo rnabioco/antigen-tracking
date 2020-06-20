@@ -3,6 +3,7 @@
 
 # Load Seurat object
 so_name   <- "{{.x}}"
+so_type   <- so_types[so_name]
 so_title  <- so_titles[so_name]
 type_cols <- so_cols[[so_name]]
 sobj      <- sobjs[[so_name]]
@@ -12,12 +13,12 @@ mtplyr_2 <- if_else(ncol(sobj) < 500, 6, 1)
 mtplyr_3 <- if_else(ncol(sobj) < 500, mtplyr_2 * 2.5, 1)
 
 # Format meta.data and add pseudo count
-type_column <- "cell_type2"
-data_column <- c("Fold-change relative to T/B cell abundance" = "ova_fc")
+subtype_column <- "subtype"
+data_column <- c("Relative OVA Signal" = "ova_fc")
 
 sobj@meta.data <- sobj@meta.data %>%
   rownames_to_column("cell_id") %>%
-  rename(cell_type = all_of(type_column)) %>%
+  rename(subtype = all_of(subtype_column)) %>%
   mutate(
     pseudo = ifelse(!!sym(data_column) > 0, !!sym(data_column), NA),
     pseudo = min(pseudo, na.rm = T) * 0.5,
@@ -26,11 +27,11 @@ sobj@meta.data <- sobj@meta.data %>%
   column_to_rownames("cell_id")
 
 # Get vector of cell types
-cell_types <- sobj@meta.data %>%
-  pull(cell_type) %>%
+subtypes <- sobj@meta.data %>%
+  pull(subtype) %>%
   unique()
 
-names(cell_types) <- cell_types
+names(subtypes) <- subtypes
 
 # Section descriptions
 marker_desc <- "Gene expression signal is shown for the top marker genes (top, middle)."
@@ -48,7 +49,7 @@ A UMAP projection colored by subtype is shown on the left and ovalbumin signal f
 # Subtype UMAP
 type_umap <- sobj %>%
   plot_features(
-    feature     = "cell_type",
+    feature     = "subtype",
     pt_size     = 0.1 * mtplyr_3,
     pt_outline  = 0.4,
     plot_cols   = type_cols,
@@ -61,17 +62,17 @@ type_umap <- sobj %>%
 # OVA boxes
 box_data <- sobj@meta.data %>%
   as_tibble(rownames = "cell_id") %>%
-  mutate(cell_type = fct_reorder(cell_type, !!sym(data_column), median))
+  mutate(subtype = fct_reorder(subtype, !!sym(data_column), median))
 
-type_order    <- levels(box_data$cell_type)
+type_order    <- levels(box_data$subtype)
 control_types <- c("B Cell", "T Cell")
 control_types <- control_types[control_types %in% type_order]
 type_order    <- type_order[!type_order %in% control_types]
 type_order    <- c(control_types, type_order)
 
 ova_boxes <- box_data %>%
-  mutate(cell_type = fct_relevel(cell_type, type_order)) %>%
-  ggplot(aes(!!sym(data_column), cell_type, fill = cell_type)) +
+  mutate(subtype = fct_relevel(subtype, type_order)) %>%
+  ggplot(aes(!!sym(data_column), subtype, fill = subtype)) +
   geom_violin(size = 0.3, draw_quantiles = c(0.25, 0.75), alpha = 0.75) +
   stat_summary(geom = "point", color = "black", fun = median) +
   scale_x_log10(labels = trans_format("log10", math_format(10^.x))) +
@@ -127,7 +128,7 @@ create_marker_panel_v1(
   input_sobj       = sobj,
   input_cols       = type_cols,
   input_umap       = fig_umap,
-  clust_column     = "cell_type",
+  clust_column     = "subtype",
   xlsx_name        = xlsx_name,
   n_boxes          = 18,
   all_violins      = T,
@@ -140,22 +141,37 @@ create_marker_panel_v1(
 
 ### Ovalbumin Markers
 
-Cells were divided into groups based on ovalbumin signal. The ovalbumin groups are shown on the left and ovalbumin signal is shown on the right. The proportion of subtypes and cell clusters that make up each group is shown at the bottom.
+LECs were divided into groups based on ovalbumin signal. The ovalbumin groups are shown on the left and ovalbumin signal is shown on the right. The proportion of subtypes and cell clusters that make up each group is shown at the bottom.
 ```{r "{{.x}} OVA groups summary 1", include = F}
 
-# Fit gaussian mixture model for OVA
-gmm_res <- fit_GMM(
-  sobj_in = sobj,
-  data_column = "adt_ovalbumin"
-)
+# Use GMM to divide subtypes based on OVA signal
+gmm_res <- sobj %>%
+  subset(cell_type == so_type) %>%
+  fit_GMM(data_column = "adt_ovalbumin")
 
-sobj <- sobj %>% 
-  AddMetaData(gmm_res$res)
+gmm_df <- gmm_res$res %>%
+  rownames_to_column("cell_id")
+
+# Add OVA groups to meta.data
+gmm_df <- gmm_df %>%
+  column_to_rownames("cell_id")
+
+sobj <- sobj %>%
+  AddMetaData(gmm_df)
+
+sobj@meta.data <- sobj@meta.data %>%
+  rownames_to_column("cell_id") %>%
+  mutate(
+    GMM_grp = if_else(is.na(GMM_grp), "Other", GMM_grp),
+    type_ova_grp = str_c(GMM_grp, "-", subtype)
+  ) %>%
+  column_to_rownames("cell_id")
 
 # Set OVA colors
 ova_cols <- c(
-  low = "#56B4E9",
-  high = "#d7301f"
+  Low   = "#56B4E9",
+  High  = "#d7301f",
+  Other = "#ffffff"
 )
 
 # OVA group UMAP
@@ -181,7 +197,7 @@ ova_umap <- sobj %>%
   plot_features(
     feature    = "adt_ovalbumin",
     data_slot  = "counts",
-    plot_cols  = c("#fafafa", ova_cols["high"]),
+    plot_cols  = c("#fafafa", ova_cols["High"]),
     pt_size    = 0.1 * mtplyr_3,
     pt_outline = 0.4,
     min_pct    = 0.01,
@@ -198,17 +214,17 @@ ova_umap <- sobj %>%
   )
 
 # OVA hist
-x_coord <- gmm_res$res %>%
-  filter(GMM_grp == "low") %>%
+x_coord <- gmm_df %>%
+  filter(GMM_grp == "Low") %>%
   pull(adt_ovalbumin) %>%
   max()
 
-ova_hist <- gmm_res$res %>%
+ova_hist <- gmm_df %>%
   ggplot() +
   geom_histogram(aes(adt_ovalbumin, ..density..), bins = 50, fill = "#d9d9d9") +
   geom_vline(xintercept = x_coord, size = 0.5, linetype = 2) +
-  add_stat_fun(gmm_res, ova_cols, "low") +
-  add_stat_fun(gmm_res, ova_cols, "high") +
+  add_stat_fun(gmm_res, ova_cols, "Low") +
+  add_stat_fun(gmm_res, ova_cols, "High") +
   labs(title = "Ovalbumin Group", y = "Density") +
   theme_info +
   theme(
@@ -225,7 +241,8 @@ type_bar <- sobj %>%
   plot_cell_count(
     group_id    = "GMM_grp",
     group_order = names(ova_cols),
-    fill_id     = "cell_type",
+    fill_id     = "subtype",
+    bar_line    = 0.25,
     plot_colors = type_cols
   ) +
   guides(fill = guide_legend(ncol = 1)) +
@@ -310,10 +327,10 @@ Each subtype was divided into groups based on ovalbumin signal. A UMAP projectio
 # Use GMM to divide subtypes based on OVA signal
 GMM_res <- NULL
 
-cell_types %>%
+subtypes %>%
   walk(~ {
     GMM_res <<- sobj %>%
-      subset(cell_type == .x) %>%
+      subset(subtype == .x) %>%
       fit_GMM(data_column = "adt_ovalbumin") %>%
       .$res %>%
       rownames_to_column("cell_id") %>%
@@ -329,14 +346,14 @@ sobj <- sobj %>%
 
 sobj@meta.data <- sobj@meta.data %>%
   rownames_to_column("cell_id") %>%
-  mutate(type_ova_grp = str_c(GMM_grp, "-", cell_type)) %>%
+  mutate(type_ova_grp = str_c(GMM_grp, "-", subtype)) %>%
   column_to_rownames("cell_id")
 
 # Set OVA colors
-type_ova_cols <- paired_cols[seq_along(cell_types)] %>%
+type_ova_cols <- paired_cols[seq_along(subtypes)] %>%
   unlist()
 
-names(type_ova_cols) <- cell_types %>%
+names(type_ova_cols) <- subtypes %>%
   map(~ str_c(names(ova_cols), "-", .x)) %>%
   unlist()
 
@@ -360,26 +377,26 @@ ova_grp_umap <- sobj %>%
 # OVA boxes
 box_data <- sobj@meta.data %>%
   as_tibble(rownames = "cell_id") %>%
-  group_by(cell_type) %>%
+  group_by(subtype) %>%
   mutate(type_med = median(!!sym(data_column))) %>%
   group_by(type_ova_grp) %>%
   mutate(clust_med = median(!!sym(data_column))) %>%
   ungroup() %>%
   arrange(type_med, clust_med) %>%
   mutate(
-    cell_type = fct_inorder(cell_type),
+    subtype = fct_inorder(subtype),
     type_ova_grp = fct_inorder(type_ova_grp)
   )
 
-type_order    <- levels(box_data$cell_type)
+type_order    <- levels(box_data$subtype)
 control_types <- c("B Cell", "T Cell")
 control_types <- control_types[control_types %in% type_order]
 type_order    <- type_order[!type_order %in% control_types]
 type_order    <- c(control_types, type_order)
 
 ova_boxes <- box_data %>%
-  mutate(cell_type = fct_relevel(cell_type, type_order)) %>%
-  ggplot(aes(cell_type, !!sym(data_column), color = type_ova_grp)) +
+  mutate(subtype = fct_relevel(subtype, type_order)) %>%
+  ggplot(aes(subtype, !!sym(data_column), color = type_ova_grp)) +
   geom_quasirandom(size = 0.25 * mtplyr_2) +
   scale_y_log10(labels = trans_format("log10", math_format(10 ^ .x))) +
   coord_flip() +
@@ -445,12 +462,12 @@ Marker genes were identified by splitting cells based on subtype and comparing t
 ```{r "{{.x}} Subtype OVA markers 2", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Find OVA markers separately for each OVA group
-fig_markers <- cell_types %>%
+fig_markers <- subtypes %>%
   map(~ {
     find_group_markers(
       input_grp  = .x,
       input_sobj = sobj,
-      grp_col    = "cell_type",
+      grp_col    = "subtype",
       clust_col  = "type_ova_grp"
     )
   }) %>%
@@ -469,7 +486,7 @@ create_marker_panel_v2(
   input_sobj       = sobj,
   input_markers    = fig_markers,
   input_cols       = type_ova_cols,
-  grp_column       = "cell_type",
+  grp_column       = "subtype",
   clust_column     = "type_ova_grp",
   xlsx_name        = xlsx_name,
   n_boxes          = 34,
