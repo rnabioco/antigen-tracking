@@ -308,7 +308,7 @@ run_clustifyr <- function(sobj_in, name, type_vec, resolution = 1.4, type_column
     res <- sobj_in %>%
       FindNeighbors(
         reduction = "pca",
-        dims = 1:40
+        dims = 1:30
       ) %>%
       FindClusters(
         resolution = resolution,
@@ -424,10 +424,9 @@ add_stat_fun <- function(gmm_in, cols_in, key) {
 # Overlay feature data on UMAP or tSNE
 # Cannot change number of columns when using FeaturePlot with split.by
 plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slot = "data", 
-                          split_id = NULL, pt_size = 0.25, pt_outline = NULL, plot_cols = c("#fafafa", "#e31a1c"),
+                          split_id = NULL, pt_size = 0.25, pt_outline = NULL, plot_cols = NULL,
                           feat_levels = NULL, split_levels = NULL, min_pct = NULL, max_pct = NULL, 
-                          calc_cor = F, lm_line = F, lab_size = 3.7, lab_pos = c(0.8, 0.9), show_title = F, 
-                          ...) {
+                          calc_cor = F, lm_line = F, lab_size = 3.7, lab_pos = c(0.8, 0.9), ...) {
   
   # Format imput data
   counts <- sobj_in
@@ -466,13 +465,6 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
     y <- names(y)
   }
   
-  if (show_title) {    
-    counts <- counts %>%
-      gather(key, value, !!sym(feature))
-
-    feature <- "value"
-  }
-  
   # Set min and max values for feature
   if (!is.null(min_pct) || !is.null(max_pct)) {
     counts <- counts %>%
@@ -494,7 +486,7 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   }
   
   # Set facet order
-  if (!is.null(split_id)) {
+  if (!is.null(split_id) && length(split_id) == 1) {
     counts <- counts %>%
       mutate(split_id = !!sym(split_id))
     
@@ -527,17 +519,39 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   
   # Create scatter plot
   res <- counts %>%
-    arrange(!!sym(feature)) %>%
-    ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature)))
+    arrange(!!sym(feature))
   
   if (!is.null(pt_outline)) {
-    res <- res +
-      geom_point(aes(fill = !!sym(feature)), size = pt_outline, color = "black", show.legend = F)
+    
+    if (!is.numeric(counts[[feature]])) {
+      res <- res %>%
+        ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature), fill = !!sym(feature)))
+      
+      feats <- counts[[feature]] %>%
+        unique()
+      
+      for (f in feats) {
+        f_counts <- counts %>%
+          filter(!!sym(feature) == f)
+        
+        res <- res +
+          geom_point(data = f_counts, aes(fill = !!sym(feature)), size = pt_outline, color = "black", show.legend = F) +
+          geom_point(data = f_counts, size = pt_size)
+      }
+      
+    } else {
+      res <- res %>%
+        ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature))) +
+        geom_point(aes(fill = !!sym(feature)), size = pt_outline, color = "black", show.legend = F) +
+        geom_point(size = pt_size)
+    }
+    
+  } else {
+    res <- res %>%
+      ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature))) +
+      geom_point(size = pt_size)
   }
 
-  res <- res +
-    geom_point(size = pt_size)
-  
   # Add regression line
   if (lm_line) {
     res <- res +
@@ -556,27 +570,31 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
       )
   }
   
-  # Show facet-style title
-  if (show_title) {
-    res <- res +
-      facet_wrap(~ key, scales = "free") +
-      theme(legend.title = element_blank())
+  # Set feature colors
+  if (!is.null(plot_cols)) {
+    if (is.numeric(counts[[feature]])) {
+      res <- res +
+        scale_color_gradient(low = plot_cols[1], high = plot_cols[2])
+
+    } else {
+      res <- res +
+        scale_color_manual(values = plot_cols) +
+        scale_fill_manual(values = plot_cols)
+    }
   }
   
-  # Set feature colors
-  if (is.numeric(counts[[feature]])) {
-    res <- res +
-      scale_color_gradient(low = plot_cols[1], high = plot_cols[2])
-
-  } else {
-    res <- res +
-      scale_color_manual(values = plot_cols)
-  }
-
   # Split plot into facets
   if (!is.null(split_id)) {
-    res <- res +
-      facet_wrap(~ split_id, ...)
+    if (length(split_id) == 1) {
+      res <- res +
+        facet_wrap(~ split_id, ...)
+      
+    } else if (length(split_id) == 2) {
+      eq <- str_c(split_id[1], " ~ ", split_id[2])
+      
+      res <- res +
+        facet_grid(as.formula(eq), ...)
+    }
   }
   
   res
@@ -1380,21 +1398,12 @@ ito_cols <- c(
   palette_OkabeIto[7:8]
 )
 
-ito_cols_paired <- ito_cols %>%
-  map(~ c(.x, darken(.x, 0.3)))
-
-names(ito_cols_paired) <- ito_cols 
-
 ito_cols <- ito_cols %>%
   darken(0.4) %>% 
   c(ito_cols, ., "#000000")
 
 # Set color palette
-theme_cols <- base_cols
-paired_cols <- base_cols_paired
-
 theme_cols <- ito_cols
-paired_cols <- ito_cols_paired
 
 ```
 

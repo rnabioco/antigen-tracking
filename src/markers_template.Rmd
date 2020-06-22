@@ -110,7 +110,7 @@ Marker genes were identified by comparing all subtypes. `r marker_desc` `r GO_de
 
 # Create figures
 fig_umap <- type_umap +
-  guides(color = col_guide) +
+  guides(color = outline_guide) +
   theme(
     legend.position = "top",
     legend.title    = element_blank(),
@@ -350,11 +350,14 @@ sobj@meta.data <- sobj@meta.data %>%
   column_to_rownames("cell_id")
 
 # Set OVA colors
-type_ova_cols <- paired_cols[seq_along(subtypes)] %>%
+type_cols["Unassigned"] <- "#999999"
+
+type_ova_cols <- type_cols %>%
+  map(~ c(.x, darken(.x, 0.3))) %>%
   unlist()
 
-names(type_ova_cols) <- subtypes %>%
-  map(~ str_c(names(ova_cols), "-", .x)) %>%
+names(type_ova_cols) <- names(type_cols) %>%
+  map(~ str_c(names(ova_cols[1:2]), "-", .x)) %>%
   unlist()
 
 # OVA group UMAP
