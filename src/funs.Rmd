@@ -229,7 +229,7 @@ subset_sobj <- function(sobj_in, name, type_vec, include_list, type_column = "ce
   
   res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
-    rename(
+    mutate(
       cell_type = !!sym(type_column),
       subtype = !!sym(subtype_column)
     ) %>%
@@ -518,6 +518,7 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   }
   
   # Create scatter plot
+  # To add outline for each cluster create separate layers
   res <- counts %>%
     arrange(!!sym(feature))
   
@@ -530,9 +531,13 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
       feats <- counts[[feature]] %>%
         unique()
       
-      for (f in feats) {
+      if (!is.null(feat_levels)) {
+        feats <- feat_levels[feat_levels %in% feats]
+      }
+      
+      for (feat in feats) {
         f_counts <- counts %>%
-          filter(!!sym(feature) == f)
+          filter(!!sym(feature) == feat)
         
         res <- res +
           geom_point(data = f_counts, aes(fill = !!sym(feature)), size = pt_outline, color = "black", show.legend = F) +
@@ -871,7 +876,7 @@ create_marker_umaps <- function(input_sobj, input_markers, umap_col, add_outline
 create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_cols,
                                 group = NULL, include_legend = F, all_boxes = F,
                                 all_violins = F, order_boxes = T, n_boxes = 10,
-                                n_rows = 2, pt_mtplyr = 1, ...) {
+                                n_rows = 2, pt_mtplyr = 1, exclude_clust = NULL, ...) {
   
   # Retrieve and format data for boxplots
   input_markers <- input_markers %>%
@@ -880,7 +885,8 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
   box_data <- input_sobj %>%
     FetchData(c(clust_column, input_markers)) %>%
     as_tibble(rownames = "cell_id") %>%
-    mutate(grp = str_remove(!!sym(clust_column), "^[a-zA-Z0-9_]+-"))
+    filter(!(!!sym(clust_column) %in% exclude_clust)) %>%
+    mutate(grp = str_remove(!!sym(clust_column), "^[a-zA-Z0-9_]+-"))  # This is specific for Shannon's subtype clusters
   
   input_markers <- input_markers %>%
     str_trunc(9)
@@ -1120,7 +1126,8 @@ set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
 # Create v1 panel for marker genes
 create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, order_boxes = T,
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)),
-                                   uniq = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, ...) {
+                                   uniq = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, exclude_clust = NULL, 
+                                   ...) {
   
   # Set point size
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
@@ -1154,6 +1161,8 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
   # Set cluster order based on order of input_cols
   fig_clusters <- input_cols %>%
     set_cluster_order(markers)
+  
+  fig_clusters <- fig_clusters[!fig_clusters %in% exclude_clust]
   
   # Create figures
   for (i in seq_along(fig_clusters)) {
@@ -1199,6 +1208,7 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
         umap_mtplyr   = umap_mtplyr,
         xlsx_name     = xlsx_name,
         sheet_name    = clust,
+        exclude_clust = exclude_clust,
         ...
       )
     
@@ -1209,9 +1219,10 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
 }
 
 # Create v2 panel that splits plots into groups
-create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_column, clust_column, 
+create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_column, clust_column,
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)), 
-                                   uniq_GO = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, ...) {
+                                   uniq_GO = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, clust_regex = "^[a-zA-Z0-9_]+-",
+                                   ...) {
   
   # Set point size
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
@@ -1255,13 +1266,15 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
     umap_col <- input_cols[clust]
     
     group <- clust %>%
-      str_remove("^[a-zA-Z0-9_]+-")
+      str_remove(clust_regex)
     
     grp_regex <- str_c("-", group, "$") %>%
       str_replace("\\+", "\\\\+")            # include this to escape "+" in names
     
     fig_cols <- input_cols[grepl(grp_regex, names(input_cols))]
     fig_cols <- c( "Other" = "#fafafa", fig_cols)
+    ref_cols <- fig_cols[names(fig_cols) != clust]
+    ref_cols <- c(ref_cols, umap_col)
     
     # Create reference UMAP
     ref_umap <- input_sobj %>%
@@ -1274,8 +1287,8 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
       )) %>%
       create_ref_umap(
         feature     = clust_column,
-        plot_cols   = fig_cols,
-        feat_levels = names(fig_cols),
+        plot_cols   = ref_cols,
+        feat_levels = names(ref_cols),
         pt_mtplyr   = ref_mtplyr,
         color_guide = color_guide
       )

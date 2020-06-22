@@ -2,6 +2,7 @@
 title: "Antigen Tracking"
 author: "Ryan Sheridan"
 date: "`r Sys.Date()`"
+
 output:
   html_document:
     toc: true
@@ -11,6 +12,7 @@ output:
     code_folding: "hide"
     self_contained: true
     highlight: "kate"
+    
 params:
   genome:        "GRCm"            # Genome to use for GO analysis (GRCm or GRCh)
   template_dir:  "../../src"       # Direcotry containing template Rmarkdowns
@@ -386,144 +388,3 @@ d2DC.new.cluster.ids <- c(
 d2_DC_so@meta.data$cell_typeDC <- d2DC.new.cluster.ids[d2_DC_so$seurat_clusters]
 
 ```
-
-```{r "TEST CLUSTERS", eval = F, echo = F}
-
-# Load reference
-load(params$sobj_refs$LEC)
-
-so_in <- sobjs[["d14_LEC"]] %>%
-  FindNeighbors(
-    reduction = "pca",
-    dims = 1:30,
-  )
-
-# Get subtypes for different resolutions/thresholds
-resln <- c(0.6, 1, 1.4, 1.8, 3)
-r <- seq(0.5, 0.8, 0.1)
-
-res_df <- expand.grid(resln, r) %>%
-  rename(resln = Var1, r_thresh = Var2) %>%
-  as_tibble()
-
-plot_df <- map2(res_df$resln, res_df$r_thresh, ~ {
-  res <- so_in %>%
-    FindClusters(resolution = .x) %>%
-    clustify(
-      ref_mat     = ref_LEC_xiang,
-      cluster_col = "seurat_clusters",
-      threshold   = .y
-    )
-  
-  res <- res@meta.data %>%
-    as_tibble(rownames = "cell_id") %>%
-    mutate(
-      subtype  = if_else(cell_type == "LEC", type.clustify, subtype),
-      subtype  = str_to_title_v2(subtype),
-      UMAP_1   = UMAP_1.x,
-      UMAP_2   = UMAP_2.x,
-      n_clust  = n_distinct(seurat_clusters),
-      r        = r.clustify,
-      r_thresh = .y
-    ) %>%
-    select(
-      cell_id, orig.ident, seurat_clusters, 
-      cell_type, subtype, n_clust, 
-      r, r_thresh, UMAP_1, UMAP_2
-    )
-  
-  res
-}) %>%
-  bind_rows()
-
-# Subtype UMAPs
-subtype_gg <- plot_df %>%
-  plot_features(
-    feature    = "subtype",
-    pt_outline = 0.5,
-    pt_size    = 0.05,
-    plot_cols  = so_cols[["d14_LEC"]], 
-    split_id   = c("n_clust", "r_thresh"), 
-    switch     = "y"
-  ) +
-  blank_theme +
-  labs(subtitle = "Clustifyr Threshold", y = "Number of Clusters") +
-  guides(color = outline_guide) +
-  blank_theme +
-  theme(
-    plot.subtitle = element_text(hjust = 0.5),
-    panel.border  = element_rect(fill = NA, color = "black", size = 0.2),
-    legend.title  = element_blank(),
-    axis.title.y  = element_text()
-  )
-
-# Reference UMAPs
-outline_guide$ncol <- 1
-
-ref_gg <- plot_df %>%
-  mutate(r_thresh = "Clusters") %>%
-  unique() %>%
-  plot_features(
-    feature    = "seurat_clusters",
-    pt_outline = 0.5,
-    pt_size    = 0.05,
-    split_id   = c("n_clust", "r_thresh"), 
-    switch     = "y"
-  ) +
-  blank_theme +
-  labs(y = "Number of Clusters") +
-  guides(fill = outline_guide) +
-  blank_theme +
-  theme(
-    plot.subtitle = element_text(hjust = 0.5),
-    panel.border  = element_rect(fill = NA, color = "black", size = 0.2),
-    legend.title  = element_blank(),
-    axis.title.y  = element_text()
-  )
-
-# Correlation UMAPs
-cor_df <- plot_df %>%
-  mutate(r_thresh = "Correlation") %>%
-  unique()
-
-cor_gg <- cor_df %>%
-  ggplot(aes(UMAP_1, UMAP_2, color = r))
-
-walk(unique(ref_df$seurat_clusters), ~ {
-  pt_1 <- cor_df %>%
-    filter(r <= 0.6) %>%
-    filter(seurat_clusters == .x)
-  
-  pt_2 <- cor_df %>%
-    filter(r > 0.6) %>%
-    filter(seurat_clusters == .x)
-  
-  cor_gg <<- cor_gg +
-    geom_point(data = pt_1, color = "black", size = 0.5) +
-    geom_point(data = pt_1, color = "white", size = 0.05) +
-    geom_point(data = pt_2, color = "black", size = 0.5) +
-    geom_point(data = pt_2, size = 0.05)
-})
-
-cor_gg <- cor_gg +
-  facet_grid(n_clust ~ r_thresh, switch = "y") +
-  labs(y = "Number of Clusters") +
-  blank_theme +
-  theme(
-    panel.border = element_rect(fill = NA, color = "black", size = 0.2),
-    legend.title = element_blank(),
-    axis.title.y = element_text()
-  )
-
-# Create final figure
-plot_grid(
-  ref_gg, cor_gg, subtype_gg,
-  rel_widths = c(0.37, 0.37, 1),
-  nrow  = 1,
-  align = "vh",
-  axis  = "tbrl"
-)
-
-```
-
-

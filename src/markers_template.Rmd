@@ -14,7 +14,7 @@ mtplyr_3 <- if_else(ncol(sobj) < 500, mtplyr_2 * 2.5, 1)
 
 # Format meta.data and add pseudo count
 subtype_column <- "subtype"
-data_column <- c("Relative OVA Signal" = "ova_fc")
+data_column <- c("Relative ova signal" = "ova_fc")
 
 sobj@meta.data <- sobj@meta.data %>%
   rownames_to_column("cell_id") %>%
@@ -109,14 +109,6 @@ Marker genes were identified by comparing all subtypes. `r marker_desc` `r GO_de
 ```{r "{{.x}} Subtype markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
-fig_umap <- type_umap +
-  guides(color = outline_guide) +
-  theme(
-    legend.position = "top",
-    legend.title    = element_blank(),
-    legend.text     = element_text(size = 10)
-  )
-
 xlsx_name <- params$xlsx_dir
 
 if (!is.null(xlsx_name)) {
@@ -127,11 +119,11 @@ if (!is.null(xlsx_name)) {
 create_marker_panel_v1(
   input_sobj       = sobj,
   input_cols       = type_cols,
-  input_umap       = fig_umap,
   clust_column     = "subtype",
   xlsx_name        = xlsx_name,
   n_boxes          = 18,
   all_violins      = T,
+  color_guide      = outline_guide,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
   panel.spacing.x  = unit(0.2, "cm"),
   strip.text       = element_text(size = 11)
@@ -183,7 +175,7 @@ ova_grp_umap <- sobj %>%
     plot_cols   = ova_cols,
     feat_levels = names(ova_cols)
   ) +
-  guides(color = col_guide) +
+  guides(color = outline_guide) +
   ggtitle("Ovalbumin Group") +
   blank_theme +
   theme(
@@ -307,10 +299,12 @@ create_marker_panel_v1(
   input_sobj       = sobj,
   input_cols       = ova_cols,
   clust_column     = "GMM_grp",
+  exclude_clust    = "Other",
   xlsx_name        = xlsx_name,
   n_boxes          = 34,
   all_violins      = T,
   order_boxes      = F,
+  color_guide      = outline_guide,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
   panel.spacing.y  = unit(0, "cm"),
   panel.spacing.x  = unit(0.2, "cm"),
@@ -369,7 +363,7 @@ ova_grp_umap <- sobj %>%
     plot_cols   = type_ova_cols,
     feat_levels = names(type_ova_cols)
   ) +
-  guides(color = guide_legend(override.aes = list(size = 3.5, shape = 16), nrow = 10)) +
+  guides(color = guide_legend(override.aes = list(size = 3.5, shape = 21, stroke = 0.25, color = "black"), nrow = 10)) +
   blank_theme +
   theme(
     legend.position = "bottom",
@@ -451,6 +445,7 @@ create_marker_panel_v1(
   xlsx_name        = xlsx_name,
   n_boxes          = 16,
   all_violins      = T,
+  color_guide      = outline_guide,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
   panel.spacing.y  = unit(0, "cm"),
   panel.spacing.x  = unit(0.2, "cm"),
@@ -495,6 +490,7 @@ create_marker_panel_v2(
   n_boxes          = 34,
   all_violins      = T,
   order_boxes      = F,
+  color_guide      = outline_guide,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
   panel.spacing.y  = unit(0, "cm"),
   panel.spacing.x  = unit(0.2, "cm"),
@@ -502,6 +498,7 @@ create_marker_panel_v2(
 )
 
 ```
+
 
 
 ```{r "{{.x}} TEST", eval = F, echo = F}
