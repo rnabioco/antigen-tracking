@@ -61,7 +61,7 @@ params:
   # These parameters specify paths to clustifyr references for each cell_type provided above
   sobj_refs:
     value:
-      LEC: "clustifyr/ref_LEC_xiang.rda"
+      LEC: "ref/ref_LEC_xiang.rda"
 ---
 
 ---
@@ -826,3 +826,51 @@ corr_params %>%
 <br>
 
 <br>
+
+## Supplemental `r plus_one("n_plot")`
+
+Correlation between vaccinia virus counts and ova counts
+
+```{r, fig.width = 20, fig.height = 34}
+
+pad <- c(2, 2, 10.5, 2, 10.5, 2)
+
+corr_params %>%
+  pmap(
+    plot_corr,
+    x         = c("RNA counts (log10)" = "nCount_RNA"),
+    y         = c("ova counts (log10)" = "adt_ovalbumin"),
+    feat      = "subtype",
+    split_id  = "subtype",
+    data_slot = "counts",
+    pt_size   = 1,
+    scales    = "free",
+    ncol      = 3
+  ) %>%
+  map2(pad, ~ {
+    .x + theme(
+      legend.position = "none",
+      strip.text      = element_text(size = 14),
+      plot.margin     = unit(c(0.2, 0.2, .y, 0.2), "cm")
+    )
+  }) %>%
+  plot_grid(
+    plotlist    = .,
+    rel_heights = c(1, 1, 1),
+    align       = "v",
+    ncol        = 2
+  )
+
+```
+
+---
+
+<br>
+
+<br>
+
+
+
+
+
+

@@ -71,7 +71,7 @@ params:
   # These parameters specify paths to clustifyr references for each cell_type provided above
   sobj_refs:
     value:
-      LEC: "clustifyr/ref_LEC_xiang.rda"
+      LEC: "ref/ref_LEC_xiang.rda"
 ---
 
 <br>
