@@ -296,41 +296,44 @@ run_clustifyr <- function(sobj_in, name, type_vec, resolution = 1.4, type_column
   
   type_in <- type_vec[[name]]
   
-  ref <- params$sobj_refs[[type_in]]
+  ref <- params$sobj_refs[[type_in]] %>%
+    here()
   
-  if (!is.null(ref)) {
-    load(ref)
-    
-    ref <- ref %>%
-      basename() %>% 
-      str_remove("\\.rda$")
-    
-    res <- sobj_in %>%
-      FindNeighbors(
-        reduction = "pca",
-        dims = 1:30
-      ) %>%
-      FindClusters(
-        resolution = resolution,
-        verbose = F
-      ) %>%
-      clustify(
-        ref_mat = eval(parse(text = ref)),
-        cluster_col = clust_column
-      )
-    
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
-        !!sym(subtype_column) := if_else(!!sym(type_column) == type_in, type, !!sym(type_column)),
-        !!sym(subtype_column) := str_to_title_v2(!!sym(subtype_column))
-      ) %>%
-      rename(
-        UMAP_1 = UMAP_1.x,
-        UMAP_2 = UMAP_2.x
-      ) %>%
-      column_to_rownames("cell_id")
+  if (is_empty(ref)) {
+    return(res)
   }
+  
+  load(ref)
+  
+  ref <- ref %>%
+    basename() %>% 
+    str_remove("\\.rda$")
+  
+  res <- sobj_in %>%
+    FindNeighbors(
+      reduction = "pca",
+      dims = 1:30
+    ) %>%
+    FindClusters(
+      resolution = resolution,
+      verbose = F
+    ) %>%
+    clustify(
+      ref_mat = eval(parse(text = ref)),
+      cluster_col = clust_column
+    )
+  
+  res@meta.data <- res@meta.data %>%
+    rownames_to_column("cell_id") %>%
+    mutate(
+      !!sym(subtype_column) := if_else(!!sym(type_column) == type_in, type, !!sym(type_column)),
+      !!sym(subtype_column) := str_to_title_v2(!!sym(subtype_column))
+    ) %>%
+    rename(
+      UMAP_1 = UMAP_1.x,
+      UMAP_2 = UMAP_2.x
+    ) %>%
+    column_to_rownames("cell_id")
   
   res
 }
@@ -829,7 +832,7 @@ create_ref_umap <- function(input_sobj, pt_mtplyr = 1, color_guide, ...) {
   res <- input_sobj %>%
     plot_features(
       pt_size     = 0.1 * pt_mtplyr,
-      pt_outline  = 0.4,
+      pt_outline  = 0.1 * pt_mtplyr + 0.3,
       ...
     ) +
     guides(color = color_guide) +
@@ -846,7 +849,8 @@ create_ref_umap <- function(input_sobj, pt_mtplyr = 1, color_guide, ...) {
 # Create UMAPs showing marker gene signal
 create_marker_umaps <- function(input_sobj, input_markers, umap_col, add_outline = NULL, pt_mtplyr = 1) {
   
-  pt_size <- 0.25 * pt_mtplyr
+  # pt_size <- 0.25 * pt_mtplyr
+  pt_size <- 0.1 * pt_mtplyr
   
   res <- input_markers %>%
     map(~ {
@@ -1095,18 +1099,8 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column,
   res <- plot_grid(
     marks_umap, marks_boxes, GO_bubbles,
     rel_heights = fig_heights,
-    ncol        = 1,
-    align       = "v",
-    axis        = "rl"
+    ncol        = 1
   )
-  
-  if (nrow(input_markers) < n_boxes) {
-    res <- plot_grid(
-      marks_umap, marks_boxes, GO_bubbles,
-      rel_heights = fig_heights,
-      ncol        = 1
-    )
-  }
   
   res
 }
@@ -1132,8 +1126,9 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
                                    ...) {
   
   # Set point size
+  # ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
-  ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
+  ref_mtplyr <- umap_mtplyr
   
   # Find marker genes
   markers <- input_sobj %>%
@@ -1227,8 +1222,9 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
                                    ...) {
   
   # Set point size
+  # ref_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr * 2.5, 1)
   umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
-  ref_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr * 2.5, 1)
+  ref_mtplyr <- umap_mtplyr
   
   # Figure colors and order
   fig_clusters <- input_cols %>%
@@ -1336,12 +1332,10 @@ R_packages <- c(
   "boot",       "scales",
   "patchwork",  "ComplexHeatmap",
   "devtools",   "broom",
-  "presto"
+  "presto",     "here"
 )
 
-for (package in R_packages) {
-  library(package, character.only = T)
-}
+purrr::walk(R_packages, library, character.only = T)
 
 ```
 
@@ -1422,5 +1416,84 @@ theme_cols <- ito_cols
 
 ```
 
-```{r, ref.label = c("Functions", "Packages", "Themes"), eval = F}
+```{r "Data", echo = F}
+
+# Set paths/names
+so_paths <- params$sobjs %>%
+  pull_nest_vec("sobj_in") %>%
+  map_chr(~ here(params$rds_dir, .x))
+
+so_out <- params$sobjs %>%
+  pull_nest_vec("sobj_out") %>%
+  map_chr(~ here(params$rds_dir, .x))
+
+so_types <- params$sobjs %>%
+  pull_nest_vec("cell_type")
+
+so_titles <- params$sobjs %>%
+  pull_nest_vec("title")
+
+# Load and subset objects
+# Avoid loading same objects twice
+if (!all(file.exists(so_out))) {
+  
+  sobjs <- unique(so_paths) %>%                           # Load objects
+    setNames(., .) %>%
+    map(read_rds)
+  
+  sobjs <- sobjs[match(so_paths, names(sobjs))]
+  names(sobjs) <- names(so_paths)
+  
+  inc_types <- so_types %>%
+    map(~ if_else(
+      .x == "LEC",
+      list(c("B cell", "T cell", "epithelial")),
+      list(c("B cell", "T cell"))
+    )) %>%
+    flatten()
+  
+  sobjs <- imap(sobjs, subset_sobj, so_types, inc_types)  # Subset objects
+  sobjs <- imap(sobjs, run_clustifyr, so_types)           # Run clustifyr
+  
+  # Combine CCR7hi XCR- Mig cDC2s and CCR7hi Mig cDC2s
+  DC_idx <- so_types[names(sobjs)] == "DC"
+  sobjs[DC_idx] <- sobjs[DC_idx] %>%
+    map(~ {
+      .x@meta.data <- .x@meta.data %>%
+        rownames_to_column("cell_id") %>%
+        mutate(subtype = if_else(subtype == "CCR7hi XCR1- Mig cDC2", "CCR7hi Mig cDC2", subtype)) %>%
+        column_to_rownames("cell_id")
+      
+      .x
+    })
+  
+  # Write new objects
+  sobjs %>%
+    iwalk(~ write_rds(.x, path = so_out[.y]))
+
+} else {
+  sobjs <- so_out %>%
+    map(read_rds)
+}
+
+# Color palettes
+common_cols <- c(
+  "Epithelial" = "#6a51a3",
+  "B Cell"     = "#E69F00",
+  "T Cell"     = "#009E73",
+  "Unassigned" = "#ffffff"
+)
+
+so_cols <- so_types %>%
+  map(
+    set_type_cols,
+    sobjs_in   = sobjs,
+    type_key   = so_types,
+    cols_in    = ito_cols,
+    other_cols = common_cols
+  )
+
+```
+
+```{r, ref.label = c("Functions", "Packages", "Themes", "Data"), eval = F}
 ```

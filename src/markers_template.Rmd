@@ -51,7 +51,7 @@ type_umap <- sobj %>%
   plot_features(
     feature     = "subtype",
     pt_size     = 0.1 * mtplyr_3,
-    pt_outline  = 0.4,
+    pt_outline  = 0.1 * mtplyr_3 + 0.3,
     plot_cols   = type_cols,
     feat_levels = names(type_cols)
   ) +
@@ -171,7 +171,7 @@ ova_grp_umap <- sobj %>%
   plot_features(
     feature     = "GMM_grp",
     pt_size     = 0.1 * mtplyr_3,
-    pt_outline  = 0.4,
+    pt_outline  = 0.1 * mtplyr_3 + 0.3,
     plot_cols   = ova_cols,
     feat_levels = names(ova_cols)
   ) +
@@ -191,7 +191,7 @@ ova_umap <- sobj %>%
     data_slot  = "counts",
     plot_cols  = c("#fafafa", ova_cols["High"]),
     pt_size    = 0.1 * mtplyr_3,
-    pt_outline = 0.4,
+    pt_outline = 0.1 * mtplyr_3 + 0.3,
     min_pct    = 0.01,
     max_pct    = 0.99
   ) +
@@ -355,7 +355,7 @@ ova_grp_umap <- sobj %>%
   plot_features(
     feature     = "type_ova_grp",
     pt_size     = 0.1 * mtplyr_3,
-    pt_outline  = 0.4,
+    pt_outline  = 0.1 * mtplyr_3 + 0.3,
     plot_cols   = type_ova_cols,
     feat_levels = names(type_ova_cols)
   ) +

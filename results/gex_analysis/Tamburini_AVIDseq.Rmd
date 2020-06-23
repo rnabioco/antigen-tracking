@@ -1,5 +1,5 @@
 ---
-title: "Antigen Tracking"
+title: "Antigen Tracking Analysis"
 author: "Ryan Sheridan"
 date: "`r Sys.Date()`"
 
@@ -15,9 +15,9 @@ output:
     
 params:
   genome:        "GRCm"            # Genome to use for GO analysis (GRCm or GRCh)
-  template_dir:  "../../src"       # Direcotry containing template Rmarkdowns
-  rds_dir:       "../../sobjs/so"  # Direcotry to use for loading/saving Seurat objects
-  # xlsx_dir:      "gene_lists"      # Directory to use for writing gene lists (comment out to skip)
+  template_dir:  "src"             # Directory containing template Rmarkdowns
+  rds_dir:       "sobjs/so"        # Direcotry to use for loading/saving Seurat objects
+  # xlsx_dir:                      # Directory to use for writing gene lists (comment out to skip)
   p_max_markers: 0.05              # Max p-value for marker genes
   FC_min:        0                 # Min fold change for marker genes
   auc_min:       0.6               # Min AUC for marker genes
@@ -39,39 +39,39 @@ params:
     value:
       d2_DC:
         sobj_in:   "d2_so.rds"
-        sobj_out:  "d2_DC_sobj.rds"
+        sobj_out:  "d2_DC_so_2.rds"
         cell_type: "DC"
         title:     "Myeloid Cells (Day 2)"
       d14_DC:
         sobj_in:   "d14_so.rds"
-        sobj_out:  "d14_DC_sobj.rds"
+        sobj_out:  "d14_DC_so_2.rds"
         cell_type: "DC"
         title:     "Myeloid Cells (Day 14)"
       d2_LEC:
         sobj_in:   "d2_so.rds"
-        sobj_out:  "d2_LEC_sobj.rds"
+        sobj_out:  "d2_LEC_so_2.rds"
         cell_type: "LEC"
         title:     "Endothelial/Stromal Cells (Day 2)"
       d14_LEC:
         sobj_in:   "d14_so.rds"
-        sobj_out:  "d14_LEC_sobj.rds"
+        sobj_out:  "d14_LEC_so_2.rds"
         cell_type: "LEC"
         title:     "Endothelial/Stromal Cells (Day 14)"
       d2_FRC:
         sobj_in:   "d2_so.rds"
-        sobj_out:  "d2_FRC_sobj.rds"
+        sobj_out:  "d2_FRC_so_2.rds"
         cell_type: "fibroblast"
         title:     "Fibroblast/Stromal Cells (Day 2)"
       d14_FRC:
         sobj_in:   "d14_so.rds"
-        sobj_out:  "d14_FRC_sobj.rds"
+        sobj_out:  "d14_FRC_so_2.rds"
         cell_type: "fibroblast"
         title:     "Fibroblast/Stromal Cells (Day 14)"
         
   # These parameters specify paths to clustifyr references for each cell_type provided above
   sobj_refs:
     value:
-      LEC: "../../clustifyr/ref_LEC_xiang.rda"
+      LEC: "clustifyr/ref_LEC_xiang.rda"
 ---
 
 <br>
@@ -94,78 +94,12 @@ params:
 
 <br>
 
-`r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
-
-```{r "Load data", echo = F}
-
-# Set paths/names
-so_paths <- params$sobjs %>%
-  pull_nest_vec("sobj_in") %>%
-  map_chr(~ file.path(params$rds_dir, .x))
-
-so_out <- params$sobjs %>%
-  pull_nest_vec("sobj_out") %>%
-  map_chr(~ file.path(params$rds_dir, .x))
-
-so_types <- params$sobjs %>%
-  pull_nest_vec("cell_type")
-
-so_titles <- params$sobjs %>%
-  pull_nest_vec("title")
-
-# Load and subset objects
-# Avoid loading same objects twice
-if (!all(file.exists(so_out))) {
-  sobjs <- unique(so_paths) %>%                           # Load objects
-    setNames(., .) %>%
-    map(read_rds)
-  
-  sobjs <- sobjs[match(so_paths, names(sobjs))]
-  names(sobjs) <- names(so_paths)
-  
-  inc_types <- so_types %>%
-    map(~ if_else(
-      .x == "LEC",
-      list(c("B cell", "T cell", "epithelial")),
-      list(c("B cell", "T cell"))
-    )) %>%
-    flatten()
-  
-  sobjs <- imap(sobjs, subset_sobj, so_types, inc_types)  # Subset objects
-  sobjs <- imap(sobjs, run_clustifyr, so_types)           # Run clustifyr
-  
-  # Write new objects
-  sobjs %>%
-    iwalk(~ write_rds(.x, path = so_out[.y]))
-
-} else {
-  sobjs <- so_out %>%
-    map(read_rds)
-}
-
-# Color palettes
-common_cols <- c(
-  "Epithelial" = "#6a51a3",
-  "B Cell"     = "#E69F00",
-  "T Cell"     = "#009E73",
-  "Unassigned" = "#ffffff"
-)
-
-so_cols <- so_types %>%
-  map(
-    set_type_cols,
-    sobjs_in   = sobjs,
-    type_key   = so_types,
-    cols_in    = ito_cols,
-    other_cols = common_cols
-  )
-
-```
+`r knitr::knit_child(here::here(params$template_dir, "setup.Rmd"))`
 
 ```{r "Run markers chunks", echo = F}
 
 # Create list of chunks
-template <- str_c(params$template_dir, "/markers_template.Rmd")
+template <- here(params$template_dir, "markers_template.Rmd")
 
 chunks <- names(sobjs) %>%
   map(~ knit_expand(template))

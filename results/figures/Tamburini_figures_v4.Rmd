@@ -14,60 +14,59 @@ output:
     highlight: "kate"
     
 params:
-  template_dir: "../../src"
-  rds_dir: "../../sobjs/so"
-  p_val_xlsx: "figure_3_pvals.xlsx"
+  template_dir: "src"
+  rds_dir: "sobjs/so"
+  p_val_xlsx: "results/figures/figure_3_pvals.xlsx"
   
   # These parameters specify the input Seurat objects and cell types that should be used for analysis
-  # divided based on CD45+/- and the provided cell type.
-  # Subtypes from the "cell_type2" column are also removed if they contain <15 cells.
-  # These parameters specify paths to clustifyr references for each cell_type provided above
   # sobj_in: Seurat object from Shannon containing CD45- and CD45+ cells for the timepoint. This object is
+  # divided based on CD45+/- and the provided cell type.
   # sobj_out: The output Seurat object that is saved after dividing based on CD45+/- and cell type.
   # cell_type: Cell type used for dividing Seurat objects. These labels are matched with the "cell_type1" column.
-  # title: Section title
+  # Subtypes from the "cell_type2" column are also removed if they contain <15 cells.
+  # title: Plot title
   sobjs:
     value:
       d2_DC:
         sobj_in:   "d2_so.rds"
-        sobj_out:  "d2_DC_sobj.rds"
+        sobj_out:  "d2_DC_so_2.rds"
         cell_type: "DC"
         title:     "Myeloid Cells (Day 2)"
       d14_DC:
         sobj_in:   "d14_so.rds"
-        sobj_out:  "d14_DC_sobj.rds"
+        sobj_out:  "d14_DC_so_2.rds"
         cell_type: "DC"
         title:     "Myeloid Cells (Day 14)"
       d2_LEC:
         sobj_in:   "d2_so.rds"
-        sobj_out:  "d2_LEC_sobj.rds"
+        sobj_out:  "d2_LEC_so_2.rds"
         cell_type: "LEC"
         title:     "Endothelial/Stromal Cells (Day 2)"
       d14_LEC:
         sobj_in:   "d14_so.rds"
-        sobj_out:  "d14_LEC_sobj.rds"
+        sobj_out:  "d14_LEC_so_2.rds"
         cell_type: "LEC"
         title:     "Endothelial/Stromal Cells (Day 14)"
       d2_FRC:
         sobj_in:   "d2_so.rds"
-        sobj_out:  "d2_FRC_sobj.rds"
+        sobj_out:  "d2_FRC_so_2.rds"
         cell_type: "fibroblast"
         title:     "Fibroblast/Stromal Cells (Day 2)"
       d14_FRC:
         sobj_in:   "d14_so.rds"
-        sobj_out:  "d14_FRC_sobj.rds"
+        sobj_out:  "d14_FRC_so_2.rds"
         cell_type: "fibroblast"
         title:     "Fibroblast/Stromal Cells (Day 14)"
         
   # These parameters specify paths to clustifyr references for each cell_type provided above
   sobj_refs:
     value:
-      LEC: "../../clustifyr/ref_LEC_xiang.rda"
+      LEC: "clustifyr/ref_LEC_xiang.rda"
 ---
 
 ---
 
-`r knitr::knit_child(file.path(params$template_dir, "funs.Rmd"))`
+`r knitr::knit_child(here::here(params$template_dir, "setup.Rmd"))`
 
 ```{r "Plotting functions", echo = F}
 
@@ -416,69 +415,7 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
 
 ```
 
-```{r "Load data", echo = F}
-
-# Set paths/names
-so_paths <- params$sobjs %>%
-  pull_nest_vec("sobj_in") %>%
-  map_chr(~ file.path(params$rds_dir, .x))
-
-so_out <- params$sobjs %>%
-  pull_nest_vec("sobj_out") %>%
-  map_chr(~ file.path(params$rds_dir, .x))
-
-so_types <- params$sobjs %>%
-  pull_nest_vec("cell_type")
-
-so_titles <- params$sobjs %>%
-  pull_nest_vec("title")
-
-# Load and subset objects
-# Avoid loading same objects twice
-if (!all(file.exists(so_out))) {
-  sobjs <- unique(so_paths) %>%                           # Load objects
-    setNames(., .) %>%
-    map(read_rds)
-  
-  sobjs <- sobjs[match(so_paths, names(sobjs))]
-  names(sobjs) <- names(so_paths)
-  
-  inc_types <- so_types %>%
-    map(~ if_else(
-      .x == "LEC",
-      list(c("B cell", "T cell", "epithelial")),
-      list(c("B cell", "T cell"))
-    )) %>%
-    flatten()
-  
-  sobjs <- imap(sobjs, subset_sobj, so_types, inc_types)  # Subset objects
-  sobjs <- imap(sobjs, run_clustifyr, so_types)           # Run clustifyr
-  
-  # Write new objects
-  sobjs %>%
-    iwalk(~ write_rds(.x, path = so_out[.y]))
-
-} else {
-  sobjs <- so_out %>%
-    map(read_rds)
-}
-
-# Color palettes
-common_cols <- c(
-  "Epithelial" = "#6a51a3",
-  "B Cell"     = "#E69F00",
-  "T Cell"     = "#009E73",
-  "Unassigned" = "#ffffff"
-)
-
-so_cols <- so_types %>%
-  map(
-    set_type_cols,
-    sobjs_in   = sobjs,
-    type_key   = so_types,
-    cols_in    = ito_cols,
-    other_cols = common_cols
-  )
+```{r "Setup", echo = F}
 
 # Parameter lists
 fig3_names <- c("d2_DC", "d14_DC", "d14_LEC", "d14_FRC")
@@ -500,7 +437,7 @@ n_plot <- 0
 
 ```
 
-```{r, ref.label = c("Plotting functions", "Load data"), eval = F}
+```{r, ref.label = c("Plotting functions", "Setup"), eval = F}
 ```
 
 ## Figure 3
@@ -534,7 +471,7 @@ if (!is.null(params$p_val_xlsx)) {
     bind_rows()
   
   p_vals %>%
-    write.xlsx(params$p_val_xlsx)
+    write.xlsx(here(params$p_val_xlsx))
 }
 
 # Create final figure
@@ -615,7 +552,7 @@ Clustering for LEC subtype assignment using [Xiang et al.](https://www.frontiers
 ```{r, fig.width = 18, fig.height = 10}
 
 # Load reference
-load(params$sobj_refs$LEC)
+load(here(params$sobj_refs$LEC))
 
 so_in <- sobjs[["d14_LEC"]] %>%
   FindNeighbors(
