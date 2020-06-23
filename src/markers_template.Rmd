@@ -319,22 +319,18 @@ Each subtype was divided into groups based on ovalbumin signal. A UMAP projectio
 ```{r "{{.x}} Subtype OVA groups summary 1", include = F}
 
 # Use GMM to divide subtypes based on OVA signal
-GMM_res <- NULL
-
-subtypes %>%
-  walk(~ {
-    GMM_res <<- sobj %>%
+GMM_res <- subtypes %>%
+  map(~ {
+    sobj %>%
       subset(subtype == .x) %>%
       fit_GMM(data_column = "adt_ovalbumin") %>%
       .$res %>%
-      rownames_to_column("cell_id") %>%
-      bind_rows(GMM_res)
-  })
-
-# Add OVA groups to meta.data
-GMM_res <- GMM_res %>%
+      rownames_to_column("cell_id")
+  }) %>%
+  bind_rows() %>%
   column_to_rownames("cell_id")
 
+# Add OVA groups to meta.data
 sobj <- sobj %>%
   AddMetaData(GMM_res)
 

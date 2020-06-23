@@ -359,6 +359,8 @@ merge_sobj <- function(sobj_list, sample_order = NULL) {
 # Fit gaussian mixture model for given signal
 fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin") {
   
+  set.seed(42)
+  
   # Fit GMM for OVA signal
   data_df <- sobj_in %>%
     FetchData(data_column)
