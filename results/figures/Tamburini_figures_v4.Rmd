@@ -328,6 +328,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
 
 # Plot correlation
 plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title, ...) {
+  
   res <- sobj_in %>%
     FetchData(c(x, y, feat), slot = data_slot) %>%
     mutate(
@@ -827,50 +828,65 @@ corr_params %>%
 
 <br>
 
-## Supplemental `r plus_one("n_plot")`
+```{r, fig.width = 15, fig.height = 15, eval = F, echo = F}
 
-Correlation between vaccinia virus counts and ova counts
+# Viccinia genes
+vv_genes <- read_tsv(here("ref/VACV_genes.txt"), col_names = "name")
 
-```{r, fig.width = 20, fig.height = 34}
+# Matrix sparsity
+sobjs %>%
+  map_dbl(~ {
+    vv_counts <- .x %>%
+      GetAssayData(slot = "counts")
+    
+    vv_counts <- vv_counts[vv_genes$name, ] %>%
+      as.matrix()
+    
+    length(vv_counts[vv_counts == 0]) / length(vv_counts)
+  })
 
-pad <- c(2, 2, 10.5, 2, 10.5, 2)
+# Sum vaccinia counts per cell
+vv_sobjs <- sobjs %>%
+  map(~ {
+    vv_counts <- .x %>%
+      GetAssayData(slot = "counts")
+    
+    vv_counts <- vv_counts[vv_genes$name, ] %>%
+      as.matrix() %>%
+      colSums()
+    
+    res <- .x %>%
+      AddMetaData(
+        metadata = vv_counts,
+        col.name = "vv_counts"
+      )
+    
+    res
+  })
 
-corr_params %>%
+# Create scatter plots
+vv_params <- list(
+  sobj_in    = vv_sobjs, 
+  plot_title = so_titles[names(sobjs)], 
+  cols_in    = so_cols[names(sobjs)]
+)
+
+vv_params %>%
   pmap(
     plot_corr,
-    x         = c("RNA counts (log10)" = "nCount_RNA"),
+    x         = c("VV counts (log10)" = "vv_counts"),
     y         = c("ova counts (log10)" = "adt_ovalbumin"),
     feat      = "subtype",
-    split_id  = "subtype",
     data_slot = "counts",
-    pt_size   = 1,
-    scales    = "free",
-    ncol      = 3
+    pt_size   = 0.5
   ) %>%
-  map2(pad, ~ {
-    .x + theme(
-      legend.position = "none",
-      strip.text      = element_text(size = 14),
-      plot.margin     = unit(c(0.2, 0.2, .y, 0.2), "cm")
-    )
-  }) %>%
   plot_grid(
-    plotlist    = .,
-    rel_heights = c(1, 1, 1),
-    align       = "v",
-    ncol        = 2
+    plotlist = .,
+    ncol     = 2,
+    align    = "vh",
+    axis     = "trbl"
   )
 
 ```
-
----
-
-<br>
-
-<br>
-
-
-
-
 
 
