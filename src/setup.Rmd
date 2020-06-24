@@ -1326,7 +1326,7 @@ R_packages <- c(
   "gprofiler2", "knitr",
   "cowplot",    "ggbeeswarm",
   "ggrepel",    "RColorBrewer",
-  "xlsx",       "colorblindr",
+  "openxlsx",   "colorblindr",
   "ggforce",    "broom",
   "mixtools",   "clustifyr",
   "boot",       "scales",
