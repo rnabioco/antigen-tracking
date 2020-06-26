@@ -7,7 +7,7 @@ so_type   <- so_types[so_name]
 so_title  <- so_titles[so_name]
 type_cols <- so_cols[[so_name]]
 sobj      <- sobjs[[so_name]]
-xlsx_name <- params$xlsx_dir
+xlsx_name <- here(params$xlsx_dir)
 
 mtplyr_1 <- if_else(ncol(sobj) < 500, 3, 1)
 mtplyr_2 <- if_else(ncol(sobj) < 500, 6, 1)
@@ -113,8 +113,8 @@ Marker genes were identified by comparing all subtypes. `r marker_desc` `r GO_de
 ```{r "{{.x}} Subtype markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
-if (!is.null(xlsx_name)) {
-  xlsx_name <- xlsx_name %>%
+if (!is_empty(xlsx_name)) {
+  xlsx_path <- xlsx_name %>%
     str_c("/", so_name, "_subtype")
 }
 
@@ -122,7 +122,7 @@ create_marker_panel_v1(
   input_sobj       = sobj,
   input_cols       = type_cols,
   clust_column     = "subtype",
-  xlsx_name        = xlsx_name,
+  xlsx_name        = xlsx_path,
   n_boxes          = 18,
   all_violins      = T,
   color_guide      = outline_guide,
@@ -136,7 +136,7 @@ create_marker_panel_v1(
 ### Cluster Markers
 
 A UMAP projection colored by cell cluster is shown on the left and ovalbumin signal for each cluster is shown on the right.
-```{r "{{.x}} Cluster OVA", fig.width = 9, fig.height = 4.2}
+```{r "{{.x}} Cluster summary", fig.width = 9, fig.height = 4.2}
 
 # Set cluster order and colors
 cell_clusts <- sobj@meta.data %>%
@@ -207,17 +207,17 @@ Marker genes were identified by comparing all clusters. `r marker_desc` `r GO_de
 ```{r "{{.x}} Cluster markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
-if (!is.null(xlsx_name)) {
-  xlsx_name <- xlsx_name %>%
-    str_c("/", rds_name, "_cluster")
+if (!is_empty(xlsx_name)) {
+  xlsx_path <- xlsx_name %>%
+    str_c("/", so_name, "_cluster")
 }
 
 create_marker_panel_v1(
   input_sobj       = sobj,
   input_cols       = clust_cols,
   clust_column     = "subtype_cluster",
-  xlsx_name        = xlsx_name,
-  n_boxes          = 10,
+  xlsx_name        = xlsx_path,
+  n_boxes          = 12,
   all_violins      = T,
   color_guide      = outline_guide,
   panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
@@ -384,8 +384,8 @@ Marker genes were identified by comparing all ovalbumin groups. `r marker_desc` 
 ```{r "{{.x}} OVA groups markers", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
-if (!is.null(xlsx_name)) {
-  xlsx_name <- xlsx_name %>%
+if (!is_empty(xlsx_name)) {
+  xlsx_path <- xlsx_name %>%
     str_c("/", so_name, "_ova")
 }
 
@@ -394,7 +394,7 @@ create_marker_panel_v1(
   input_cols       = ova_cols,
   clust_column     = "GMM_grp",
   exclude_clust    = "Other",
-  xlsx_name        = xlsx_name,
+  xlsx_name        = xlsx_path,
   n_boxes          = 34,
   all_violins      = T,
   order_boxes      = F,
@@ -528,11 +528,16 @@ Marker genes were identified by comparing all ovalbumin groups together. `r mark
 ```{r "{{.x}} Subtype OVA markers 1", fig.width = 8.5, fig.height = 14, results = "asis"}
 
 # Create figures
+if (!is_empty(xlsx_name)) {
+  xlsx_path <- xlsx_name %>%
+    str_c("/", so_name, "_subtype_ova_1")
+}
+
 create_marker_panel_v1(
   input_sobj       = sobj,
   input_cols       = type_ova_cols,
   clust_column     = "type_ova_grp",
-  xlsx_name        = xlsx_name,
+  xlsx_name        = xlsx_path,
   n_boxes          = 16,
   all_violins      = T,
   color_guide      = outline_guide,
@@ -563,9 +568,9 @@ fig_markers <- subtypes %>%
   bind_rows()
 
 # Create figures
-if (!is.null(xlsx_name)) {
-  xlsx_name <- xlsx_name %>%
-    str_c("/", so_name, "_subtype_ova")
+if (!is_empty(xlsx_name)) {
+  xlsx_path <- xlsx_name %>%
+    str_c("/", so_name, "_subtype_ova_2")
 }
 
 create_marker_panel_v2(
@@ -574,7 +579,7 @@ create_marker_panel_v2(
   input_cols       = type_ova_cols,
   grp_column       = "subtype",
   clust_column     = "type_ova_grp",
-  xlsx_name        = xlsx_name,
+  xlsx_name        = xlsx_path,
   n_boxes          = 34,
   all_violins      = T,
   order_boxes      = F,

@@ -14,19 +14,21 @@ output:
     highlight: "kate"
     
 params:
-  genome:        "GRCm"            # Genome to use for GO analysis (GRCm or GRCh)
-  template_dir:  "src"             # Directory containing template Rmarkdowns
-  rds_dir:       "sobjs/so"        # Direcotry to use for loading/saving Seurat objects
-  # xlsx_dir:                      # Directory to use for writing gene lists (comment out to skip)
-  p_max_markers: 0.05              # Max p-value for marker genes
-  FC_min:        0                 # Min fold change for marker genes
-  auc_min:       0.6               # Min AUC for marker genes
-  pct_in_min:    50                # Min percentage cells expressing marker in group 
-  pct_out_max:   50                # Max percentage cells expressing marker outside group
-  uniq_markers:  TRUE              # Remove markers that are present in more than one group
-  p_max_GO:      0.05              # Max p-value for GO terms
-  order_query:   TRUE              # Markers are ordered by fold change and submitted as an ordered query
-  uniq_GO:       TRUE              # Remove GO terms that are present in more than one group
+  genome:        "mmusculus"                        # Genome to use for GO analysis
+  template_dir:  "src"                              # Directory containing template Rmarkdowns
+  rds_dir:       "sobjs/so"                         # Direcotry to use for loading/saving Seurat objects
+  xlsx_dir:      "results/gex_analysis/gene_lists"  # Directory to use for writing gene lists (comment out to skip)
+  p_max_markers: 0.05                               # Max p-value for marker genes
+  FC_min:        0                                  # Min fold change for marker genes
+  auc_min:       0.6                                # Min AUC for marker genes
+  pct_in_min:    45                                 # Min percentage cells expressing marker in group 
+  pct_out_max:   55                                 # Max percentage cells expressing marker outside group
+  uniq_markers:  TRUE                               # Remove markers that are present in more than one group
+  p_max_GO:      0.05                               # Max p-value for GO terms
+  term_size:     15                                 # Min size of GO term
+  intrsct_size:  3                                  # Min intersection with GO term
+  order_query:   TRUE                               # Markers are ordered by fold change and submitted as an ordered query
+  uniq_GO:       TRUE                               # Remove GO terms that are present in more than one group
   
   # These parameters specify the input Seurat objects and cell types that should be used for analysis
   # sobj_in: Seurat object from Shannon containing CD45- and CD45+ cells for the timepoint. This object is
@@ -87,6 +89,8 @@ params:
 
 * Genome for GO query: **`r params$genome`**
 * GO terms p-value cutoff: **`r params$p_max_GO`**
+* Minimum size of GO term: **`r params$term_size`**
+* Minimum intersection with GO term: **`r params$intrsct_size`**
 * Order markers by fold change and submit as an ordered GO query: **`r params$order_query`**
 * Remove GO terms present in more than one group: **`r params$uniq_GO`**
 
