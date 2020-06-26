@@ -1,3 +1,8 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
 
 ```{r "{{.x}} Setup", echo = F}
 
@@ -11,7 +16,7 @@ xlsx_name <- here(params$xlsx_dir)
 
 mtplyr_1 <- if_else(ncol(sobj) < 500, 3, 1)
 mtplyr_2 <- if_else(ncol(sobj) < 500, 6, 1)
-mtplyr_3 <- if_else(ncol(sobj) < 500, mtplyr_2 * 2.5, 1)
+mtplyr_3 <- if_else(ncol(sobj) < 750, mtplyr_2 * 2.5, 1)
 
 # Format meta.data and add pseudo count
 subtype_column <- "subtype"
@@ -23,11 +28,6 @@ sobj@meta.data <- sobj@meta.data %>%
   rename(
     subtype = !!sym(subtype_column),
     subtype_cluster = !!sym(clust_column)
-  ) %>%
-  mutate(
-    pseudo = ifelse(!!sym(data_column) > 0, !!sym(data_column), NA),
-    pseudo = min(pseudo, na.rm = T) * 0.5,
-    !!sym(data_column) := !!sym(data_column) + pseudo
   ) %>%
   column_to_rownames("cell_id")
 
@@ -656,3 +656,27 @@ sobj %>%
 
 ```
 
+```{r "{{.x}} CELL CYCLE", eval = F, echo = F}
+
+s.genes <- cc.genes$s.genes %>%
+  str_to_title()
+
+g2m.genes <- cc.genes$g2m.genes %>%
+  str_to_title()
+
+so_in <- sobjs[[2]]
+
+so_in <- so_in %>%
+  CellCycleScoring(
+    s.features = s.genes, 
+    g2m.features = g2m.genes,
+    set.ident = T
+  )
+
+so_in %>%
+  plot_features(
+    feature = "Phase",
+    pt_size = 1
+  )
+
+```

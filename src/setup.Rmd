@@ -93,137 +93,15 @@ set_type_cols <- function(type_in, sobjs_in, type_key, type_column = "subtype",
   res
 }
 
-# Import matrices and create Seurat object
-create_sobj <- function(matrix_dir, proj_name, gene_min = 100, gene_max = 5000, 
-                        mito_max = 25, mito_str = "^mt-", min_cells = 0, ...) {
-  
-  # Load matrices
-  mat_list <- Read10X(matrix_dir)
-  rna_mat <- mat_list
-  
-  # Create Seurat object using gene expression data
-  if (is_list(mat_list)) {
-    rna_mat <- mat_list[["Gene Expression"]]
-  }
-  
-  res <- rna_mat %>%
-    CreateSeuratObject(
-      project = proj_name,
-      min.cells = min_cells
-    )
-  
-  # Add antibody capture data to Seurat object
-  if (is_list(mat_list)) {
-    adt_mat <- res %>%
-      colnames() %>%
-      mat_list[["Antibody Capture"]][, .]
-    
-    res[["ADT"]] <- CreateAssayObject(adt_mat)
-  }
-  
-  # Calculate percentage of mitochondrial reads
-  res <- res %>%
-    PercentageFeatureSet(
-      pattern = mito_str, 
-      col.name = "Percent_mito"
-    )
-  
-  # Add QC classifications to meta.data
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_ids") %>%
-    mutate(qc_class = "Pass filters") %>%
-    column_to_rownames("cell_ids")
-  
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(
-      qc_class = str_replace(qc_class, "Singlet", "Pass filters"),
-      qc_class = ifelse(nFeature_RNA <= gene_min, "Low gene count", qc_class),
-      qc_class = ifelse(nFeature_RNA >= gene_max, "High gene count", qc_class),
-      qc_class = ifelse(Percent_mito >= mito_max, "High mito reads", qc_class)
-    ) %>%
-    column_to_rownames("cell_id")
-  
-  res
-}
-
-# Filter and normalize matrices
-norm_sobj <- function(sobj_in, sample_order = NULL) {
-  res <- sobj_in %>%
-    subset(qc_class == "Pass filters") %>%
-    NormalizeData(normalization.method = "LogNormalize")
-  
-  if ("ADT" %in% names(res)) {
-    res <- res %>%
-      NormalizeData(
-        assay = "ADT",
-        normalization.method = "CLR"
-      )
-  }
-  
-  # Add meta.data columns
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_ids") %>%
-    mutate(orig.ident = fct_relevel(orig.ident, sample_order)) %>%
-    column_to_rownames("cell_ids")
-  
-  res
-}
-
-# Cluster gene expression data
-cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 1, 
-                        dims = 1:30, prefix = "", ...) {
-  # Use FindNeighbors to construct a K-nearest neighbors graph based on the euclidean distance in 
-  # PCA space, and refine the edge weights between any two cells based on the
-  # shared overlap in their local neighborhoods (Jaccard similarity).
-  # Use FindClusters to apply modularity optimization techniques such as the Louvain algorithm 
-  # (default) or SLM, to iteratively group cells together
-  
-  # Perform PCA
-  # By default only variable features are used for PCA
-  res <- sobj_in %>%
-    RunPCA(assay = assay, ...) %>%
-    AddMetaData(
-      metadata = FetchData(., c("PC_1", "PC_2")),
-      col.name = str_c(prefix, c("PC_1", "PC_2"))
-    )
-    
-    # Create nearest neighbors graph and find clusters
-  res <- res %>%
-    FindNeighbors(
-      assay     = assay,
-      reduction = "pca",
-      dims      = dims
-    ) %>%
-    FindClusters(
-      resolution = resolution,
-      verbose    = F
-    ) %>%
-    AddMetaData(
-      metadata = Idents(.),
-      col.name = str_c(assay, "_clusters")
-    )
-    
-    # Run UMAP, UMAP coordinates will get added to the meta.data by clustifyr
-  res <- res %>%
-    RunUMAP(
-      assay = assay,
-      dims  = dims,
-      reduction.name = str_c(prefix, "umap"),
-      reduction.key  = str_c(prefix, "UMAP_")
-    )
-  
-  res
-}
-
 # Subset Seurat objects for plotting
 subset_sobj <- function(sobj_in, name, type_vec, include_list, type_column = "cell_type1", subtype_column = "cell_type2",
-                        clust_column = "cell_type3", min_cells = 15, orig_idents = c("_1" = "CD45_neg", "_2" = "CD45_pos"),
-                        type_filt = c("DC" = "CD45_pos", "LEC" = "CD45_neg", "fibroblast" = "CD45_neg"),
-                        cap_names = T, ...) {
+                        clust_column = "cell_type3", data_column = "ova_fc", min_cells = 15, cap_names = T,
+                        orig_idents = c("_1" = "CD45_neg", "_2" = "CD45_pos"),
+                        type_filt = c("DC" = "CD45_pos", "LEC" = "CD45_neg", "fibroblast" = "CD45_neg"), ...) {
   
   res <- sobj_in
   
+  # Pull info for cell_type from reference lists
   type_in <- type_vec[[name]]
   include_types <- include_list[[name]]
   
@@ -233,10 +111,9 @@ subset_sobj <- function(sobj_in, name, type_vec, include_list, type_column = "ce
       cell_type       = !!sym(type_column),
       subtype         = !!sym(subtype_column),
       subtype_cluster = !!sym(clust_column)
-      # subtype_cluster = if_else(!grepl("^[0-9]+\\-", subtype_cluster), str_c("0-", subtype_cluster), subtype_cluster)
     ) %>%
     column_to_rownames("cell_id")
-
+  
   # Set orig.ident based on cell_id suffix
   if (!is.null(orig_idents)) {
     res@meta.data <- res@meta.data %>%
@@ -259,7 +136,7 @@ subset_sobj <- function(sobj_in, name, type_vec, include_list, type_column = "ce
     subset(subset = cell_type %in% c(type_in, include_types))
   
   if (!type_in %in% pull(res@meta.data, cell_type)) {
-    stop(str_c("ERROR: Cell type not present after filtering for ", CD45_status))
+    stop(str_c("ERROR: Cell type not present after filtering for ", type_filt[type_in]))
   }
   
   # Filter cells based on number of cells per subtype
@@ -274,24 +151,54 @@ subset_sobj <- function(sobj_in, name, type_vec, include_list, type_column = "ce
       subset(cells = keep_cells)
   }
   
-  # Re-run UMAP
+  # Score cell cycle genes
+  s.genes <- cc.genes$s.genes %>%
+    str_to_title()
+  
+  g2m.genes <- cc.genes$g2m.genes %>%
+    str_to_title()
+  
   res <- res %>%
+    CellCycleScoring(
+      s.features   = s.genes, 
+      g2m.features = g2m.genes
+    )
+  
+  # Re-process object
+  res <- res %>%
+    FindVariableFeatures(selection.method = "vst") %>%
+    ScaleData(vars.to.regress = c("S.Score", "G2M.Score")) %>%
     RunPCA() %>%
     RunUMAP(dims = 1:40) %>%
     AddMetaData(FetchData(., c("PC_1", "PC_2"))) %>%
     AddMetaData(FetchData(., c("UMAP_1", "UMAP_2")))
+  
+  # Add pseudo count
+  if (0 %in% pull(res@meta.data, !!sym(data_column))) {
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(
+        pseudo = ifelse(!!sym(data_column) > 0, !!sym(data_column), NA),
+        pseudo = min(pseudo, na.rm = T) * 0.5,
+        !!sym(data_column) := !!sym(data_column) + pseudo
+      ) %>%
+      column_to_rownames("cell_id")
+  }
 
   # Capitalize subtypes
   res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
-    mutate(subtype = str_to_title_v2(subtype)) %>%
+    mutate(
+      subtype = str_to_title_v2(subtype),
+      subtype_cluster = str_to_title_v2(subtype_cluster)
+    ) %>%
     column_to_rownames("cell_id")
   
   res
 }
 
 # Re-cluster and run clustify
-run_clustifyr <- function(sobj_in, name, type_vec, resolution = 1.4, type_column = "cell_type",
+run_clustifyr <- function(sobj_in, name, type_vec, resolution = 1.8, type_column = "cell_type",
                           subtype_column = "subtype", clust_column = "subtype_cluster") {
   
   res <- sobj_in
@@ -318,7 +225,7 @@ run_clustifyr <- function(sobj_in, name, type_vec, resolution = 1.4, type_column
   res <- sobj_in %>%
     FindNeighbors(
       reduction = "pca",
-      dims = 1:30
+      dims = 1:40
     ) %>%
     FindClusters(
       resolution = resolution,
@@ -1204,7 +1111,7 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
         ...
       )
     
-    cat(nrow(fig_marks), "marker genes were identified,", nrow(fig_GO), "GO terms were identified.")
+    cat(nrow(fig_marks), "marker genes and", nrow(fig_GO), "GO terms were identified.")
     print(marker_fig)
     cat("\n\n---\n\n<br>\n\n<br>\n\n")
   }
@@ -1452,11 +1359,15 @@ if (!all(file.exists(so_out))) {
   
   # Combine CCR7hi XCR- Mig cDC2s and CCR7hi Mig cDC2s
   DC_idx <- so_types[names(sobjs)] == "DC"
+  
   sobjs[DC_idx] <- sobjs[DC_idx] %>%
     map(~ {
       .x@meta.data <- .x@meta.data %>%
         rownames_to_column("cell_id") %>%
-        mutate(subtype = if_else(subtype == "CCR7hi XCR1- Mig cDC2", "CCR7hi Mig cDC2", subtype)) %>%
+        mutate(
+          subtype = str_replace(subtype, "^CCR7hi XCR1- Mig cDC2$", "CCR7hi Mig cDC2"),
+          subtype_cluster = str_replace(subtype_cluster, "-CCR7hi XCR1- Mig cDC2$", "-CCR7hi Mig cDC2")
+        ) %>%
         column_to_rownames("cell_id")
       
       .x

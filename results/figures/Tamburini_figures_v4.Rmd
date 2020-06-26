@@ -177,16 +177,6 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
     FetchData(c(subtype_column, box_counts, umap_counts, "UMAP_1", "UMAP_2"), slot = data_slot) %>%
     as_tibble(rownames = "cell_id")
   
-  # Add pseudo count
-  if (0 %in% pull(data_df, box_counts)) {
-    data_df <- data_df %>%
-      mutate(
-        pseudo = ifelse(!!sym(box_counts) > 0, !!sym(box_counts), NA),
-        pseudo = min(pseudo, na.rm = T) * 0.5,
-        !!sym(box_counts) := !!sym(box_counts) + pseudo
-      )
-  }
-  
   if (!is.null(names(box_counts))) {
     data_df <- data_df %>%
       rename(!!box_counts)
@@ -495,59 +485,6 @@ gg_list %>%
 
 ## Supplemental `r plus_one("n_plot")`
 
-Figures for all FRC timepoints
-
-```{r, fig.width = 13, fig.height = 10}
-
-# Figure parameters
-FRC_names <- c("d2_FRC", "d14_FRC")
-FRC_sobjs <- sobjs[FRC_names]
-
-FRC_params <- list(
-  sobj_in      = FRC_sobjs,
-  plot_title   = so_titles[names(FRC_sobjs)],
-  cols_in      = so_cols[names(FRC_sobjs)],
-  pt_size      = c(1.5, 0.1),
-  pt_outline   = c(2, 0.4),
-  pt_size_2    = c(1.5, 0.3),
-  pt_outline_2 = c(2, 0.5)
-)
-
-# Create panel plots
-gg_list <- FRC_params %>%
-  pmap(
-    create_fig3,
-    box_counts  = c("Relative ova signal" = "ova_fc"), 
-    umap_counts = c("ova counts" = "adt_ovalbumin"),
-    data_slot   = "counts"
-  ) %>%
-  flatten()
-
-# Set violin scales equal
-violin_idx <- seq_along(gg_list) %% 3 == 2
-gg_list[violin_idx] <- gg_list[violin_idx] %>%
-  equalize_x(log_tran = T)
-
-# Create final figure
-gg_list %>%
-  wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
-  plot_annotation(tag_levels = "a") &
-  theme(
-    plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
-    plot.tag = element_text(size = 24, face = "plain"),
-    plot.tag.position = c(-0.08, 1)
-  )
-
-```
-
----
-
-<br>
-
-<br>
-
-## Supplemental `r plus_one("n_plot")`
-
 Clustering for LEC subtype assignment using [Xiang et al.](https://www.frontiersin.org/articles/10.3389/fcvm.2020.00052/full#B40) reference
 
 ```{r, fig.width = 18, fig.height = 10}
@@ -555,17 +492,13 @@ Clustering for LEC subtype assignment using [Xiang et al.](https://www.frontiers
 # Load reference
 load(here(params$sobj_refs$LEC))
 
-so_in <- sobjs[["d14_LEC"]] %>%
-  FindNeighbors(
-    reduction = "pca",
-    dims = 1:30
-  )
+so_in <- sobjs[["d14_LEC"]]
 
 # Get subtypes for different resolutions/thresholds
-resln <- c(0.6, 1, 1.4, 1.8, 3)
+reslns <- c(0.6, 1, 1.4, 1.8, 2.2)
 r <- seq(0.5, 0.8, 0.1)
 
-res_df <- expand.grid(resln, r) %>%
+res_df <- expand.grid(reslns, r) %>%
   rename(resln = Var1, r_thresh = Var2) %>%
   as_tibble()
 
@@ -588,13 +521,13 @@ plot_df <- map2(res_df$resln, res_df$r_thresh, ~ {
       subtype  = str_to_title_v2(subtype),
       UMAP_1   = UMAP_1.x,
       UMAP_2   = UMAP_2.x,
-      n_clust  = n_distinct(seurat_clusters),
+      n_clust  = str_c(n_distinct(seurat_clusters), " (", .x, ")"),
       r        = r.clustify,
       r_thresh = .y
     ) %>%
     select(
       cell_id, orig.ident, seurat_clusters, 
-      cell_type, subtype, n_clust, 
+      cell_type, subtype, n_clust,
       r, r_thresh, UMAP_1, UMAP_2
     )
   
@@ -608,7 +541,7 @@ subtype_gg <- plot_df %>%
     feature    = "subtype",
     pt_outline = 0.5,
     pt_size    = 0.05,
-    plot_cols  = so_cols[["d14_LEC"]], 
+    plot_cols  = so_cols[["d14_LEC"]],
     split_id   = c("n_clust", "r_thresh"), 
     switch     = "y"
   ) +
@@ -725,6 +658,59 @@ LEC_params <- list(
 
 # Create panel plots
 gg_list <- LEC_params %>%
+  pmap(
+    create_fig3,
+    box_counts  = c("Relative ova signal" = "ova_fc"), 
+    umap_counts = c("ova counts" = "adt_ovalbumin"),
+    data_slot   = "counts"
+  ) %>%
+  flatten()
+
+# Set violin scales equal
+violin_idx <- seq_along(gg_list) %% 3 == 2
+gg_list[violin_idx] <- gg_list[violin_idx] %>%
+  equalize_x(log_tran = T)
+
+# Create final figure
+gg_list %>%
+  wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
+  plot_annotation(tag_levels = "a") &
+  theme(
+    plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
+    plot.tag = element_text(size = 24, face = "plain"),
+    plot.tag.position = c(-0.08, 1)
+  )
+
+```
+
+---
+
+<br>
+
+<br>
+
+## Supplemental `r plus_one("n_plot")`
+
+Figures for all FRC timepoints
+
+```{r, fig.width = 13, fig.height = 10}
+
+# Figure parameters
+FRC_names <- c("d2_FRC", "d14_FRC")
+FRC_sobjs <- sobjs[FRC_names]
+
+FRC_params <- list(
+  sobj_in      = FRC_sobjs,
+  plot_title   = so_titles[names(FRC_sobjs)],
+  cols_in      = so_cols[names(FRC_sobjs)],
+  pt_size      = c(1.5, 0.1),
+  pt_outline   = c(2, 0.4),
+  pt_size_2    = c(1.5, 0.3),
+  pt_outline_2 = c(2, 0.5)
+)
+
+# Create panel plots
+gg_list <- FRC_params %>%
   pmap(
     create_fig3,
     box_counts  = c("Relative ova signal" = "ova_fc"), 
