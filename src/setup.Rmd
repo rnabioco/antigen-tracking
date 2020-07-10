@@ -18,6 +18,23 @@ plot_color_palette <- function(input_cols) {
   res
 }
 
+# Create color palette
+create_gradient <- function(cols_in, n = NULL) {
+  
+  if (is.null(n)) {
+    n <- length(cols_in)
+  }
+  
+  colorRampPalette(cols_in)(n)
+}
+
+create_col_fun <- function(cols_in) {
+  
+  function(n = NULL) {
+    create_gradient(cols_in, n)
+  }
+}
+
 # Pull items from list of vectors
 pull_nest_vec <- function(list_in, idx) {
   res <- map_chr(list_in, ~ .x[[idx]])
@@ -274,13 +291,17 @@ merge_sobj <- function(sobj_list, sample_order = NULL) {
 }
 
 # Fit gaussian mixture model for given signal
-fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin") {
+fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin",
+                    data_slot = "counts", prob = 0.5) {
   
   set.seed(42)
   
   # Fit GMM for OVA signal
   data_df <- sobj_in %>%
-    FetchData(data_column)
+    FetchData(data_column, slot = data_slot) %>%
+    rownames_to_column("cell_id") %>%
+    mutate(!!sym(data_column) := !!sym(data_column) + 1) %>%
+    column_to_rownames("cell_id")
   
   mixmdl <- data_df %>%
     pull(data_column) %>%
@@ -307,7 +328,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin") {
   ) %>%
     dplyr::rename(!!sym(data_column) := data) %>%
     rename(all_of(comp_names)) %>%
-    mutate(GMM_grp = if_else(Low > 0.5, "Low", "High")) %>%
+    mutate(GMM_grp = if_else(High >= prob, "High", "Low")) %>%
     column_to_rownames("cell_id")
   
   res <- list(
@@ -330,7 +351,7 @@ add_stat_fun <- function(gmm_in, cols_in, key) {
   plot_mix_comps <- function(x, mu, sigma, lam) {
     lam * dnorm(x, mu, sigma)
   }
-  
+
   stat_function(
     geom  = "line",
     fun   = plot_mix_comps,
@@ -753,21 +774,28 @@ create_ref_umap <- function(input_sobj, pt_mtplyr = 1, color_guide, ...) {
 }
 
 # Create UMAPs showing marker gene signal
-create_marker_umaps <- function(input_sobj, input_markers, umap_col, add_outline = NULL, pt_mtplyr = 1) {
+create_marker_umaps <- function(input_sobj, input_markers, umap_col = NULL, add_outline = NULL, pt_mtplyr = 1) {
   
   # pt_size <- 0.25 * pt_mtplyr
   pt_size <- 0.1 * pt_mtplyr
   
+  if (!is.null(umap_col)) {
+    input_markers <- set_names(
+      x  = rep(umap_col, length(input_markers)),
+      nm = input_markers
+    )
+  }
+  
   res <- input_markers %>%
-    map(~ {
+    imap(~ {
       input_sobj %>%
         plot_features(
-          feature    = .x, 
-          plot_cols  = c("#fafafa", umap_col),
+          feature    = .y,
+          plot_cols  = c("#fafafa", .x),
           pt_outline = add_outline,
           pt_size    = pt_size
         ) +
-        ggtitle(.x) +
+        ggtitle(.y) +
         blank_theme +
         theme(
           plot.title        = element_text(size = 13),
@@ -1273,35 +1301,6 @@ outline_guide <- guide_legend(override.aes = list(
   stroke = 0.25
 ))
 
-# Base color palettes
-base_cols <- c(
-  "#225ea8",  # blue
-  "#e31a1c",  # red
-  "#238443",  # green
-  "#ec7014",  # orange
-  "#6a51a3",  # purple
-  "#c51b7d",  # pink
-  "#8c510a",  # brown
-  "#217D87",  # teal, darken("#41b6c4", 0.3)
-  "#F0E442",  # yellow, palette_OkabeIto[4]
-  "#000000"   # black
-)
-
-base_cols_paired <- base_cols %>%
-  map(~ {
-    .x %>%
-        lighten(0.25) %>%
-        desaturate(0.2) %>%
-        c(.x)
-    })
-
-names(base_cols_paired) <- base_cols
-
-base_cols <- base_cols %>%
-  lighten(0.25) %>%
-  desaturate(0.2) %>%
-  c(base_cols, .)
-
 # Okabe Ito color palettes
 ito_cols <- c(
   palette_OkabeIto[1:4], "#d7301f", 
@@ -1310,11 +1309,11 @@ ito_cols <- c(
 )
 
 ito_cols <- ito_cols %>%
-  darken(0.4) %>% 
+  darken(0.4) %>%
   c(ito_cols, ., "#686868", "#000000")
 
 # Set color palette
-theme_cols <- ito_cols
+get_cols <- create_col_fun(ito_cols)
 
 ```
 
@@ -1395,7 +1394,7 @@ so_cols <- so_types %>%
     set_type_cols,
     sobjs_in   = sobjs,
     type_key   = so_types,
-    cols_in    = ito_cols,
+    cols_in    = get_cols(),
     other_cols = common_cols
   )
 

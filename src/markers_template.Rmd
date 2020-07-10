@@ -1,8 +1,3 @@
----
-output: html_document
-editor_options: 
-  chunk_output_type: inline
----
 
 ```{r "{{.x}} Setup", echo = F}
 
@@ -13,6 +8,7 @@ so_title  <- so_titles[so_name]
 type_cols <- so_cols[[so_name]]
 sobj      <- sobjs[[so_name]]
 xlsx_name <- here(params$xlsx_dir)
+xlsx_path <- NULL
 
 mtplyr_1 <- if_else(ncol(sobj) < 500, 3, 1)
 mtplyr_2 <- if_else(ncol(sobj) < 500, 6, 1)
@@ -238,14 +234,12 @@ gmm_res <- sobj %>%
   fit_GMM(data_column = "adt_ovalbumin")
 
 gmm_df <- gmm_res$res %>%
-  rownames_to_column("cell_id")
+  as_tibble(rownames = "cell_id") %>%
+  mutate(mu = gmm_res$mu[GMM_grp])
 
 # Add OVA groups to meta.data
-gmm_df <- gmm_df %>%
-  column_to_rownames("cell_id")
-
 sobj <- sobj %>%
-  AddMetaData(gmm_df)
+  AddMetaData(gmm_res$res)
 
 sobj@meta.data <- sobj@meta.data %>%
   rownames_to_column("cell_id") %>%
@@ -302,17 +296,14 @@ ova_umap <- sobj %>%
   )
 
 # OVA hist
-x_coord <- gmm_df %>%
-  filter(GMM_grp == "Low") %>%
-  pull(adt_ovalbumin) %>%
-  max()
-
 ova_hist <- gmm_df %>%
   ggplot() +
-  geom_histogram(aes(adt_ovalbumin, ..density..), bins = 50, fill = "#d9d9d9") +
-  geom_vline(xintercept = x_coord, size = 0.5, linetype = 2) +
-  add_stat_fun(gmm_res, ova_cols, "Low") +
-  add_stat_fun(gmm_res, ova_cols, "High") +
+  geom_density(aes(adt_ovalbumin, after_stat(density), fill = GMM_grp), size = 0.4) +
+  geom_hline(yintercept = 0, color = "white", size = 0.5) +
+  geom_vline(xintercept = gmm_df$mu, size = 0.5, linetype = 2) +
+  
+  scale_fill_manual(values = ova_cols) + 
+  scale_x_log10() +
   labs(title = "Ovalbumin Group", y = "Density") +
   theme_info +
   theme(

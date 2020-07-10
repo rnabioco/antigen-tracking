@@ -17,7 +17,7 @@ params:
   genome:        "mmusculus"                        # Genome to use for GO analysis
   template_dir:  "src"                              # Directory containing template Rmarkdowns
   rds_dir:       "sobjs/so"                         # Direcotry to use for loading/saving Seurat objects
-  xlsx_dir:      "results/gex_analysis/gene_lists"  # Directory to use for writing gene lists (comment out to skip)
+  # xlsx_dir:      "results/gex_analysis/gene_lists"  # Directory to use for writing gene lists (comment out to skip)
   p_max_markers: 0.05                               # Max p-value for marker genes
   FC_min:        0                                  # Min fold change for marker genes
   auc_min:       0.6                                # Min AUC for marker genes
