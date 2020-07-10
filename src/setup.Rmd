@@ -754,12 +754,16 @@ find_group_markers <- function(input_grp, input_sobj, grp_column, clust_column) 
 }
 
 # Create reference UMAP for comparisons
-create_ref_umap <- function(input_sobj, pt_mtplyr = 1, color_guide, ...) {
+create_ref_umap <- function(input_sobj, pt_mtplyr = 1, pt_outline = NULL, color_guide, ...) {
+  
+  if (is.null(pt_outline)) {
+    pt_outline <- 0.1 * pt_mtplyr + 0.3
+  }
   
   res <- input_sobj %>%
     plot_features(
       pt_size     = 0.1 * pt_mtplyr,
-      pt_outline  = 0.1 * pt_mtplyr + 0.3,
+      pt_outline  = pt_outline,
       ...
     ) +
     guides(color = color_guide) +
@@ -774,7 +778,8 @@ create_ref_umap <- function(input_sobj, pt_mtplyr = 1, color_guide, ...) {
 }
 
 # Create UMAPs showing marker gene signal
-create_marker_umaps <- function(input_sobj, input_markers, umap_col = NULL, add_outline = NULL, pt_mtplyr = 1) {
+create_marker_umaps <- function(input_sobj, input_markers, umap_col = NULL, 
+                                add_outline = NULL, pt_mtplyr = 1, low_col = "#fafafa") {
   
   # pt_size <- 0.25 * pt_mtplyr
   pt_size <- 0.1 * pt_mtplyr
@@ -791,7 +796,7 @@ create_marker_umaps <- function(input_sobj, input_markers, umap_col = NULL, add_
       input_sobj %>%
         plot_features(
           feature    = .y,
-          plot_cols  = c("#fafafa", .x),
+          plot_cols  = c(low_col, .x),
           pt_outline = add_outline,
           pt_size    = pt_size
         ) +
