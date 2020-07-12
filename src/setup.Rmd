@@ -291,8 +291,7 @@ merge_sobj <- function(sobj_list, sample_order = NULL) {
 }
 
 # Fit gaussian mixture model for given signal
-fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin",
-                    data_slot = "counts", prob = 0.5) {
+fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts", prob = 0.5, quiet = F) {
   
   set.seed(42)
   
@@ -303,9 +302,19 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin",
     mutate(!!sym(data_column) := !!sym(data_column) + 1) %>%
     column_to_rownames("cell_id")
   
+  quiet_EM <- quietly(~ normalmixEM(.))
+  
+  if (!quiet) {
+    quiet_EM <- normalmixEM
+  }
+  
   mixmdl <- data_df %>%
     pull(data_column) %>%
-    normalmixEM()
+    quiet_EM()
+  
+  if (quiet) {
+    mixmdl <- mixmdl$result
+  }
   
   # New column names
   ova_names <- c("Low", "High")
@@ -337,6 +346,46 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin",
     sigma  = mixmdl$sigma,
     lambda = mixmdl$lambda
   )
+  
+  res
+}
+
+# Classify cells based on OVA signal
+classify_ova <- function(sobj_in, type_filt = NULL, data_column = "adt_ovalbumin", data_slot = "counts", ...) {
+  
+  # Filter Seurat object
+  sobj_filt <- sobj_in
+  
+  if (!is.null(type_filt)) {
+    sobj_filt <- sobj_filt %>%
+      subset(cell_type == type_filt)
+  }
+  
+  # Fit GMM
+  gmm_res <- sobj_filt %>%
+    fit_GMM(
+      data_column = data_column,
+      data_slot   = data_slot,
+      ...
+    )
+  
+  gmm_df <- gmm_res$res %>%
+    rownames_to_column("cell_id") %>%
+    mutate(
+      mu = gmm_res$mu[GMM_grp],
+      GMM_grp = str_to_lower(GMM_grp),
+      GMM_grp = str_c("ova ", GMM_grp),
+    ) %>%
+    column_to_rownames("cell_id")
+  
+  # Add OVA groups to meta.data
+  res <- sobj_in %>%
+    AddMetaData(gmm_df)
+  
+  res@meta.data <- res@meta.data %>%
+    rownames_to_column("cell_id") %>%
+    mutate(GMM_grp = if_else(is.na(GMM_grp), "Other", GMM_grp)) %>%
+    column_to_rownames("cell_id")
   
   res
 }
@@ -519,7 +568,8 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   if (!is.null(plot_cols)) {
     if (is.numeric(counts[[feature]])) {
       res <- res +
-        scale_color_gradient(low = plot_cols[1], high = plot_cols[2])
+        scale_color_gradientn(colors = plot_cols)
+        # scale_color_gradient(low = plot_cols[1], high = plot_cols[2])
 
     } else {
       res <- res +
@@ -778,8 +828,8 @@ create_ref_umap <- function(input_sobj, pt_mtplyr = 1, pt_outline = NULL, color_
 }
 
 # Create UMAPs showing marker gene signal
-create_marker_umaps <- function(input_sobj, input_markers, umap_col = NULL, 
-                                add_outline = NULL, pt_mtplyr = 1, low_col = "#fafafa") {
+create_marker_umaps <- function(input_sobj, input_markers, umap_col = NULL, add_outline = NULL, 
+                                pt_mtplyr = 1, low_col = "#fafafa") {
   
   # pt_size <- 0.25 * pt_mtplyr
   pt_size <- 0.1 * pt_mtplyr
@@ -1252,9 +1302,6 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
 
 ```{r "Packages", include = F}
 
-# Default chunk options
-knitr::opts_chunk$set(message = F, warning = F)
-
 # Load packages
 R_packages <- c(
   "tidyverse",  "Seurat",
@@ -1271,6 +1318,95 @@ R_packages <- c(
 )
 
 purrr::walk(R_packages, library, character.only = T)
+
+```
+
+```{r "Params", echo = F}
+
+# Default chunk options
+knitr::opts_chunk$set(message = F, warning = F)
+
+# Set paths/names
+so_paths <- params$sobjs %>%
+  pull_nest_vec("sobj_in") %>%
+  map_chr(~ here(params$rds_dir, .x))
+
+so_out <- params$sobjs %>%
+  pull_nest_vec("sobj_out") %>%
+  map_chr(~ here(params$rds_dir, .x))
+
+so_types <- params$sobjs %>%
+  pull_nest_vec("cell_type")
+
+so_titles <- params$sobjs %>%
+  pull_nest_vec("title")
+
+# Load Seurat objects?
+load_sobjs <- all(file.exists(so_out))
+
+```
+
+```{r "Create sobjs", eval = !load_sobjs, echo = F}
+
+# Load and subset objects
+# Avoid loading same objects twice
+sobjs <- unique(so_paths) %>%                           # Load objects
+  setNames(., .) %>%
+  map(read_rds)
+
+sobjs <- sobjs[match(so_paths, names(sobjs))]
+names(sobjs) <- names(so_paths)
+
+inc_types <- so_types %>%
+  map(~ if_else(
+    .x == "LEC",
+    list(c("B cell", "T cell", "epithelial")),
+    list(c("B cell", "T cell"))
+  )) %>%
+  flatten()
+
+sobjs <- imap(sobjs, subset_sobj, so_types, inc_types)  # Subset objects
+sobjs <- imap(sobjs, run_clustifyr, so_types)           # Run clustifyr
+
+# Combine CCR7hi XCR- Mig cDC2s and CCR7hi Mig cDC2s
+DC_idx <- so_types[names(sobjs)] == "DC"
+
+sobjs[DC_idx] <- sobjs[DC_idx] %>%
+  map(~ {
+    .x@meta.data <- .x@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(
+        subtype = str_replace(subtype, "^CCR7hi XCR1- Mig cDC2$", "CCR7hi Mig cDC2"),
+        subtype_cluster = str_replace(subtype_cluster, "-CCR7hi XCR1- Mig cDC2$", "-CCR7hi Mig cDC2")
+      ) %>%
+      column_to_rownames("cell_id")
+    
+    .x
+  })
+
+# Classify cells based on OVA signal
+sobjs <- sobjs %>%
+  imap(~ {
+    classify_ova(
+      sobj_in     = .x,
+      type_fil    = so_types[.y],
+      data_column = "adt_ovalbumin",
+      data_slot   = "counts",
+      quiet       = T
+    )
+  })
+
+# Write new objects
+sobjs %>%
+  iwalk(~ write_rds(.x, path = so_out[.y]))
+
+```
+
+```{r "Load sobjs", eval = load_sobjs, echo = F}
+
+# Load Seurat objects
+sobjs <- so_out %>%
+    map(read_rds)
 
 ```
 
@@ -1317,76 +1453,17 @@ ito_cols <- ito_cols %>%
   darken(0.4) %>%
   c(ito_cols, ., "#686868", "#000000")
 
-# Set color palette
+# Set default palette
 get_cols <- create_col_fun(ito_cols)
 
-```
+# OVA colors
+ova_cols <- c(
+  "ova high" = "#d7301f",
+  "ova low"  = "#56B4E9",
+  "Other"    = "#ffffff"
+)
 
-```{r "Data", echo = F}
-
-# Set paths/names
-so_paths <- params$sobjs %>%
-  pull_nest_vec("sobj_in") %>%
-  map_chr(~ here(params$rds_dir, .x))
-
-so_out <- params$sobjs %>%
-  pull_nest_vec("sobj_out") %>%
-  map_chr(~ here(params$rds_dir, .x))
-
-so_types <- params$sobjs %>%
-  pull_nest_vec("cell_type")
-
-so_titles <- params$sobjs %>%
-  pull_nest_vec("title")
-
-# Load and subset objects
-# Avoid loading same objects twice
-if (!all(file.exists(so_out))) {
-  
-  sobjs <- unique(so_paths) %>%                           # Load objects
-    setNames(., .) %>%
-    map(read_rds)
-  
-  sobjs <- sobjs[match(so_paths, names(sobjs))]
-  names(sobjs) <- names(so_paths)
-  
-  inc_types <- so_types %>%
-    map(~ if_else(
-      .x == "LEC",
-      list(c("B cell", "T cell", "epithelial")),
-      list(c("B cell", "T cell"))
-    )) %>%
-    flatten()
-  
-  sobjs <- imap(sobjs, subset_sobj, so_types, inc_types)  # Subset objects
-  sobjs <- imap(sobjs, run_clustifyr, so_types)           # Run clustifyr
-  
-  # Combine CCR7hi XCR- Mig cDC2s and CCR7hi Mig cDC2s
-  DC_idx <- so_types[names(sobjs)] == "DC"
-  
-  sobjs[DC_idx] <- sobjs[DC_idx] %>%
-    map(~ {
-      .x@meta.data <- .x@meta.data %>%
-        rownames_to_column("cell_id") %>%
-        mutate(
-          subtype = str_replace(subtype, "^CCR7hi XCR1- Mig cDC2$", "CCR7hi Mig cDC2"),
-          subtype_cluster = str_replace(subtype_cluster, "-CCR7hi XCR1- Mig cDC2$", "-CCR7hi Mig cDC2")
-        ) %>%
-        column_to_rownames("cell_id")
-      
-      .x
-    })
-  
-  # Write new objects
-  sobjs %>%
-    iwalk(~ write_rds(.x, path = so_out[.y]))
-
-} else {
-  sobjs <- so_out %>%
-    map(read_rds)
-}
-
-# Color palettes
+# Cell subtype palettes
 common_cols <- c(
   "Epithelial" = "#6a51a3",
   "B Cell"     = "#E69F00",

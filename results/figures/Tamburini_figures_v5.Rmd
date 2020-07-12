@@ -163,7 +163,7 @@ equalize_x <- function(gg_list_in, log_tran = T, ...) {
   res
 }
 
-# Function to create figure panel
+# Create figure 3 panels
 create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot = "counts",
                         box_counts = c("Relative ova signal" = "ova_fc"), umap_counts = c("ova counts" = "adt_ovalbumin"), 
                         plot_title = NULL, arrow_axis = F, pt_size = 0.1, pt_outline = 0.4, pt_size_2 = 0.3, pt_outline_2 = 0.5,
@@ -312,6 +312,247 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
   }
   
   names(res) <- rep(plot_title, length(res))
+  
+  res
+}
+
+# Create figure 4 panels
+create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001,
+                        pt_outline = 0.4, low_col = c("white", "white")) {
+
+  # Theme elements
+  legd_guide <- guide_legend(override.aes = list(
+    size   = 3.5,
+    shape  = 21,
+    color  = "black",
+    stroke = 0.25
+  ))
+  
+  text_theme <- theme(
+    axis.title  = element_text(size = 10),
+    legend.text = element_text(size = 8),
+    axis.text   = element_text(size = 8)
+  )
+
+  # Data for OVA group UMAP
+  ova_order <- names(ova_cols)
+  
+  data_df <- sobj_in@meta.data %>%
+    as_tibble(rownames = "cell_id") %>%
+    group_by(GMM_grp) %>%
+    mutate(cell_count = n_distinct(cell_id)) %>%
+    ungroup() %>%
+    mutate(GMM_grp = fct_relevel(GMM_grp, ova_order)) %>%
+    arrange(GMM_grp) %>%
+    mutate(
+      cell_count = str_c(GMM_grp, "\n(n = ", cell_count, ")"),
+      cell_count = fct_inorder(cell_count)
+    )
+  
+  # Set OVA group colors
+  names(ova_order) <- levels(data_df$cell_count)
+  
+  cols_df <- tibble(
+    grp        = ova_order,
+    cell_count = names(ova_order)
+  )
+  
+  cols_df <- cols_df %>%
+    mutate(color = ova_cols[grp])
+  
+  umap_cols <- set_names(
+    x  = cols_df$color,
+    nm = cols_df$cell_count
+  )
+
+  ova_guide <- legd_guide
+  ova_guide$reverse <- T
+  
+  # Create OVA group UMAP
+  ova_grp_umap <- data_df %>%
+    plot_features(
+      feature     = "cell_count",
+      pt_size     = pt_size,
+      pt_outline  = pt_outline,
+      plot_cols   = umap_cols,
+      feat_levels = names(ova_order)
+    ) +
+    guides(color = ova_guide, fill = ova_guide) +
+    text_theme +
+    blank_theme +
+    theme(
+      plot.margin     = unit(c(0.2, 1, 0.2, 1.5), "cm"),
+      legend.position = "top",
+      legend.title    = element_blank(),
+      legend.text     = element_text(size = 8)
+      # panel.background = element_rect(fill = "white", color = "grey85", size = 0.1)
+    )
+  
+  # OVA hist
+  ova_hist <- sobj_in@meta.data %>%
+    filter(GMM_grp != "Other") %>%
+    mutate(GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high"))) %>%
+    ggplot() +
+    geom_density(aes(adt_ovalbumin, after_stat(density), fill = GMM_grp), size = 0.3) +
+    geom_vline(aes(xintercept = mu), size = 0.5, linetype = 2, color = "grey35") +
+    coord_cartesian(ylim = c(0, 1.7)) +
+    scale_fill_manual(values = ova_cols) +
+    scale_x_log10(labels = trans_format("log10", math_format(10^.x))) +
+    labs(x = "ova counts", y = "Density") +
+    theme_minimal_hgrid() +
+    text_theme +
+    theme(
+      plot.margin        = unit(c(0.2, 0.5, 0.2, 0.2), "cm"),
+      legend.position    = c(0.05, 0.92),
+      legend.title       = element_blank(),
+      axis.line.y        = element_line(size = 0.5, color = "grey85"),
+      axis.ticks.y       = element_line(size = 0.1),
+      panel.grid.major.y = element_line(size = 0.1)
+    )
+  
+  # OVA subtype bar graphs
+  type_bar <- sobj_in %>%
+    plot_cell_count(
+      group_id    = "GMM_grp",
+      group_order = names(ova_cols),
+      fill_id     = "subtype",
+      bar_line    = 0.25,
+      plot_colors = ref_cols
+    ) +
+    scale_y_continuous(breaks = c(0, 0.5, 1)) +
+    guides(fill = guide_legend(ncol = 1)) +
+    theme_minimal_hgrid() +
+    text_theme +
+    theme(
+      legend.title       = element_blank(),
+      axis.title.x       = element_blank(),
+      axis.line.y        = element_line(size = 0.5, color = "grey85"),
+      axis.ticks.y       = element_line(size = 0.1),
+      panel.grid.major.y = element_blank()
+    )
+  
+  # Reference UMAP
+  ref_umap <- sobj_in %>%
+    create_ref_umap(
+      feature     = "subtype",
+      color_guide = legd_guide,
+      plot_cols   = ref_cols,
+      pt_mtplyr   = pt_size / 0.1,
+      pt_outline  = pt_outline
+    ) +
+    theme(
+      plot.margin     = unit(c(0.2, 1.5, 0.2, 0.2), "cm"),
+      legend.position = "left",
+      legend.margin   = margin(0.2, 0.2, 0.2, 1.5, "cm"),
+      legend.text     = element_text(size = 8)
+      # panel.background = element_rect(fill = "white", color = "grey85", size = 0.1),
+      # axis.line = element_line(size = 0.5)
+    )
+  
+  # Create list of feature UMAPs
+  feat_umaps <- sobj_in %>%
+    create_marker_umaps(
+      pt_mtplyr     = pt_size / 0.1,
+      add_outline   = pt_outline,
+      input_markers = feat_cols,
+      low_col       = low_col
+    ) %>%
+    map(~ {
+      .x +
+        guides(color = guide_colorbar(frame.colour = "black", frame.linewidth = 0.2)) +
+        theme(
+          plot.title = element_text(size = 12)
+          # panel.background = element_rect(fill = "white", color = "grey85", size = 0.1)
+          # axis.line  = element_line(size = 0.5)
+        )
+    })
+  
+  # Top panel of feature UMAPs
+  top_umaps <- append(list(ref_umap), feat_umaps[1:2]) %>%
+    plot_grid(
+      plotlist   = .,
+      rel_widths = c(1, 0.5, 0.5),
+      nrow       = 1
+    )
+  
+  # Bottom panel of feature UMAPs
+  bot_umaps <- feat_umaps[3:6] %>%
+    plot_grid(
+      plotlist = .,
+      nrow     = 1,
+      align    = "h",
+      axis     = "tb"
+    )
+  
+  # Final feature UMAP figure
+  feat_umaps <- plot_grid(
+    top_umaps, bot_umaps,
+    ncol  = 1,
+    align = "vh",
+    axis  = "trbl"
+  ) + 
+    theme(plot.margin = unit(c(1, 0.2, 1.5, 0.2), "cm"))
+  
+  # Feature violin plots
+  box_data <- sobj_in %>%
+    FetchData(c(feats, "GMM_grp")) %>%
+    as_tibble(rownames = "cell_id") %>%
+    pivot_longer(cols = c(-cell_id, -GMM_grp)) %>%
+    filter(GMM_grp != "Other") %>%
+    mutate(
+      name    = fct_relevel(name, names(feat_cols)),
+      GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high"))
+    )
+  
+  feat_boxes <- box_data %>%
+    ggplot(aes(GMM_grp, value, fill = name, alpha = GMM_grp)) +
+    geom_violin(size = 0.3, draw_quantiles = c(0.25, 0.75)) +
+    stat_summary(geom = "point", color = "black", alpha = 1, fun = median) +
+    facet_wrap(~ name, nrow = 1) +
+    scale_fill_manual(values = feat_cols) +
+    scale_alpha_manual(values = c(0.35, 0.75)) +
+    labs(y = "Counts") +
+    theme_minimal_hgrid() +
+    text_theme +
+    theme(
+      strip.text         = element_text(size = 12),
+      legend.position    = "none",
+      axis.title.x       = element_blank(),
+      axis.line.y        = element_line(size = 0.5, color = "grey85"),
+      axis.ticks.y       = element_line(size = 0.1),
+      panel.grid.major.y = element_line(size = 0.1)
+    )
+  
+  # Final top panel
+  top <- plot_grid(
+    ova_grp_umap, ova_hist, type_bar,
+    rel_widths     = c(0.86, 1, 0.9),
+    labels         = letters,
+    label_fontface = "plain",
+    label_size     = 18,
+    align          = "h",
+    axis           = "tb",
+    nrow           = 1
+  )
+  
+  # Final bottom panel
+  blank_gg <- ggplot() +
+    theme_void()
+  
+  bot <- plot_grid(
+    feat_boxes, blank_gg,
+    rel_widths = c(1, 0.2)
+  )
+  
+  # Create final figure
+  res <- plot_grid(
+    top, feat_umaps, bot,
+    rel_heights    = c(0.5, 1, 0.45),
+    ncol           = 1,
+    labels         = c("", "d", "e"),
+    label_fontface = "plain",
+    label_size     = 18
+  )
   
   res
 }
@@ -485,143 +726,9 @@ gg_list %>%
 
 ## Figure 4
 
-```{r "Fig 4", fig.width = 8, fig.height = 7, echo = F, include = F}
-
-# d14_LEC Seurat object
-so_name <- "d14_LEC"
-so_type <- "LEC"
-sobj <- sobjs[[so_name]]
-
-# Use GMM to divide subtypes based on OVA signal
-gmm_res <- sobj %>%
-  subset(cell_type == so_type) %>%
-  fit_GMM(data_column = "adt_ovalbumin")
-
-gmm_df <- gmm_res$res %>%
-  rownames_to_column("cell_id") %>%
-  mutate(
-    mu = gmm_res$mu[GMM_grp],
-    GMM_grp = str_to_lower(GMM_grp),
-    GMM_grp = str_c("ova ", GMM_grp),
-  ) %>%
-  column_to_rownames("cell_id")
-
-# Add OVA groups to meta.data
-sobj <- sobj %>%
-  AddMetaData(gmm_df)
-
-sobj@meta.data <- sobj@meta.data %>%
-  rownames_to_column("cell_id") %>%
-  mutate(
-    GMM_grp      = if_else(is.na(GMM_grp), "Other", GMM_grp),
-    type_ova_grp = str_c(GMM_grp, "-", subtype)
-  ) %>%
-  column_to_rownames("cell_id")
-
-# Set OVA colors
-ova_cols <- c(
-  "ova low"  = "#56B4E9",
-  "ova high" = "#d7301f",
-  "Other"    = "#ffffff"
-)
-
-# OVA group UMAP
-umap_guide <- outline_guide
-umap_guide$reverse <- T
-
-ova_grp_umap <- sobj %>%
-  plot_features(
-    feature     = "GMM_grp",
-    pt_size     = 0.00001,
-    pt_outline  = 0.4,
-    plot_cols   = ova_cols,
-    feat_levels = c("ova high", "ova low", "Other")
-  ) +
-  guides(color = umap_guide, fill = umap_guide) +
-  blank_theme +
-  theme(
-    plot.margin = unit(c(0.2, 1, 0.2, 1.5), "cm"),
-    legend.position = "top",
-    legend.title = element_blank(),
-    legend.text  = element_text(size = 8)
-  )
-
-# OVA hist
-ova_hist <- gmm_df %>%
-  mutate(GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high"))) %>%
-  ggplot() +
-  geom_density(aes(adt_ovalbumin, after_stat(density), fill = GMM_grp), size = 0.3) +
-  geom_vline(xintercept = gmm_df$mu, size = 0.5, linetype = 2, color = "grey35") +
-  coord_cartesian(ylim = c(0, 1.7)) +
-  scale_fill_manual(values = ova_cols) +
-  scale_x_log10() +
-  
-  labs(x = "ova counts", y = "Density") +
-  
-  theme_minimal_hgrid() +
-  theme(
-    plot.margin        = unit(c(0.2, 0.5, 0.2, 0.2), "cm"),
-    legend.position    = c(0.05, 0.92),
-    legend.title       = element_blank(),
-    legend.text        = element_text(size = 8),
-    axis.title         = element_text(size = 10),
-    axis.text          = element_text(size = 8),
-    axis.line.y        = element_line(size = 0.5, color = "grey85"),
-    axis.ticks.y       = element_line(size = 0.1),
-    panel.grid.major.y = element_line(size = 0.1)
-  )
-
-  # theme_info +
-  # theme(
-  #   plot.title      = element_text(size = 13),
-  #   legend.position = c(0.05, 0.92),
-  #   legend.title    = element_blank(),
-  #   legend.text     = element_text(size = 8),
-  #   axis.title      = element_text(size = 12),
-  #   axis.text       = element_text(size = 8),
-  # )
-
-# OVA subtype bar graphs
-type_bar <- sobj %>%
-  plot_cell_count(
-    group_id    = "GMM_grp",
-    group_order = names(ova_cols),
-    fill_id     = "subtype",
-    bar_line    = 0.25,
-    plot_colors = so_cols[[so_name]]
-  ) +
-  scale_y_continuous(breaks = c(0, 0.5, 1)) +
-  guides(fill = guide_legend(ncol = 1)) +
-  theme_minimal_hgrid() +
-  theme(
-    legend.title       = element_blank(),
-    legend.text        = element_text(size = 8),
-    axis.title.x       = element_blank(),
-    axis.title         = element_text(size = 10),
-    axis.text          = element_text(size = 8),
-    axis.line.y        = element_line(size = 0.5, color = "grey85"),
-    axis.ticks.y       = element_line(size = 0.1),
-    panel.grid.major.y = element_blank()
-  )
-
-  
-  # theme(
-  #   plot.title      = element_text(size = 13),
-  #   legend.title    = element_blank(),
-  #   legend.text     = element_text(size = 8),
-  #   axis.title      = element_text(size = 12),
-  #   axis.title.x    = element_blank(),
-  #   axis.text       = element_text(size = 8)
-  #   # axis.text.x     = element_text(size = 10),
-  #   # axis.text.y     = element_text(size = 8),
-  # )
-
-```
-
-```{r "Feature plots", echo = F}
+```{r "Fig 4", fig.width = 10, fig.height = 11.5}
 
 # Feature colors
-# feat_cols <- get_cols()[seq_along(feats)]
 feats <- c( "Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
 
 feat_cols <- set_names(
@@ -629,148 +736,144 @@ feat_cols <- set_names(
   nm = feats
 )
 
-# Feature UMAPs
-ref_umap <- sobj %>%
-  create_ref_umap(
-    feature     = "subtype",
-    color_guide = outline_guide,
-    plot_cols   = so_cols[[so_name]],
-    pt_mtplyr   = 0.00001,
-    pt_outline  = 0.4
-  ) +
-  theme(
-    legend.position = "left",
-    legend.margin   = margin(0.2, 1.1, 0.2, 1.5, "cm"),
-    plot.margin     = unit(c(0.2, 1.75, 0.2, 0.2), "cm")
-    # axis.line = element_line(size = 0.5)
-  )
+# Create final figure
+so_name <- "d14_LEC"
 
-blank_gg <- ggplot() +
-  theme_void()
-
-feat_umaps <- sobj %>%
-  create_marker_umaps(
-    pt_mtplyr     = 0.00001,
-    add_outline   = 0.4,
-    input_markers = feat_cols,
-    low_col       = "white"
-  ) %>%
-  map(~ .x + theme(plot.title = element_text(size = 12)))
-  # map(~ .x + theme(axis.line = element_line(size = 0.5)))
-
-# top_umaps <- append(list(blank_gg, ref_umap), feat_umaps[1:2]) %>%
-top_umaps <- append(list(ref_umap), feat_umaps[1:2]) %>%
-  plot_grid(
-    plotlist = .,
-    # rel_widths = c(0.64, 1.31, 0.99, 0.99),
-    rel_widths = c(1.95, 0.99, 0.99),
-    nrow  = 1,
-    align = "h",
-    axis  = "tb"
-  )
-
-bot_umaps <- feat_umaps[3:6] %>%
-  plot_grid(
-    plotlist = .,
-    nrow     = 1,
-    align    = "h",
-    axis     = "tb"
-  )
-
-feat_umaps <- plot_grid(
-  top_umaps, bot_umaps,
-  ncol  = 1,
-  align = "vh",
-  axis  = "trbl"
-) + 
-  theme(plot.margin = unit(c(1, 0.2, 1.5, 0.2), "cm"))
-  # theme(plot.margin = unit(c(0, 0.2, 0.5, 0.2), "cm"))
-
-# Feature violin plots
-box_data <- sobj %>%
-  FetchData(c(feats, "GMM_grp")) %>%
-  as_tibble(rownames = "cell_id") %>%
-  pivot_longer(cols = c(-cell_id, -GMM_grp)) %>%
-  filter(GMM_grp != "Other") %>%
-  mutate(
-    name    = fct_relevel(name, names(feat_cols)),
-    GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high"))
-  )
-
-feat_boxes <- box_data %>%
-  ggplot(aes(GMM_grp, value, fill = name, alpha = GMM_grp)) +
-  geom_violin(scale = "area", size = 0.3, draw_quantiles = c(0.25, 0.75)) +
-  stat_summary(geom = "point", color = "black", alpha = 1, fun = median) +
-  # stat_summary(fun = "median", geom = "point", shape = 22, size = 1, fill = "white", show.legend = F) +
-  facet_wrap(~ name, nrow = 1) +
-  scale_fill_manual(values = feat_cols) +
-  scale_alpha_manual(values = c(0.35, 0.75)) +
-  
-  # scale_y_continuous(breaks = seq(0, 10, 2)) +
-  
-  labs(y = "Counts") +
-  theme_minimal_hgrid() +
-  theme(
-    strip.text         = element_text(size = 12),
-    legend.position    = "none",
-    axis.title.x       = element_blank(),
-    axis.title         = element_text(size = 10),
-    axis.text          = element_text(size = 8),
-    axis.line.y        = element_line(size = 0.5, color = "grey85"),
-    axis.ticks.y       = element_line(size = 0.1),
-    panel.grid.major.y = element_line(size = 0.1)
+sobjs[[so_name]] %>%
+  create_fig4(
+    ova_cols  = ova_cols,
+    feats     = names(feat_cols),
+    feat_cols = feat_cols,
+    ref_cols  = so_cols[[so_name]]
   )
 
 ```
 
-```{r "V1", fig.width = 10, fig.height = 11.5, results = "hold"}
+---
 
-top <- plot_grid(
-  ova_grp_umap, ova_hist, type_bar,
-  rel_widths = c(0.86, 1, 0.9),
-  labels = letters,
-  label_fontface = "plain",
-  label_size = 18,
-  align = "h", 
-  axis  = "tb",
-  nrow  = 1
+<br>
+
+<br>
+
+## Supplemental `r plus_one("n_plot")`
+
+Day 2 LECs example genes
+
+```{r, fig.width = 10, fig.height = 11.5}
+
+# Feature colors
+feats <- c( "Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
+
+feat_cols <- set_names(
+  x  = get_cols(length(feats)),
+  nm = feats
 )
 
-bot <- plot_grid(
-  feat_boxes, blank_gg,
-  rel_widths = c(1, 0.2)
+ova_cols_2 <- c(
+  "ova low"  = "#56B4E9",
+  "ova high" = "#d7301f",
+  "Other"    = "#ffffff"
 )
 
-plot_grid(
-  top, feat_umaps, bot,
-  rel_heights = c(0.5, 1, 0.45),
-  ncol  = 1,
-  labels = c("", "d", "e"),
-  label_fontface = "plain",
-  label_size = 18
-  # align = "vh",
-  # axis  = "trbl"
+# Create final figure
+so_name <- "d2_LEC"
+
+sobjs[[so_name]] %>%
+  create_fig4(
+    ova_cols   = ova_cols_2,
+    feats      = names(feat_cols),
+    feat_cols  = feat_cols,
+    ref_cols   = so_cols[[so_name]]
+  )
+
+```
+
+---
+
+<br>
+
+<br>
+
+## Supplemental `r plus_one("n_plot")`
+
+Day 2 DCs example genes
+
+```{r, fig.width = 10, fig.height = 11.5}
+
+# Day 2:
+# cDC2 tbet-: Ccl2, Cxcl12, Msr1, Pkm, Gal3, Aif1, Mif
+# CCR7hi migratory cDC2: cdc42ep3, EBI2, Malt1, Jak2
+# cDC1: Ddx3, Skil, Nrp2
+# CCR7hi migratory cDC1: Sema7a, PhiP, CD53, CD81, CD9, Ddx6
+
+# Some genes not found: Gal3, EBI2, Ddx3
+feats <- list(
+  v1 = c("Ccl2", "Cxcl12",   "Msr1",   "Pkm",   "Lgals3", "Aif1"),
+  v2 = c("Mif",  "Cdc42ep3", "Malt1", "Jak2", "Cd9", "Ddx6"),
+  v3 = c("Skil", "Nrp2",     "Sema7a", "Phip",  "Cd53", "Cd81")
 )
 
+# Create final figure
+so_name <- "d2_DC"
 
+walk(feats, ~ {
+  feat_cols <- get_cols(length(.x))
+  feat_cols <- set_names(feat_cols, .x)
+  
+  create_fig4(
+    sobj_in   = sobjs[[so_name]], 
+    ova_cols  = ova_cols_2,
+    feats     = names(feat_cols),
+    feat_cols = feat_cols,
+    ref_cols  = so_cols[[so_name]],
+    low_col   = "white"
+  ) %>%
+    print()    
+})
 
-# top <- list(ova_grp_umap, ova_hist, type_bar) %>%
-#   wrap_plots(ncol = 3, widths = c(0.9, 1, 0.9)) +
-#   plot_annotation(tag_levels = "a") &
-#   theme(
-#     plot.margin = unit(c(0.2, 0.5, 0.2, 0.2), "cm"),
-#   )
-# wrap_plots(
-#   top, feat_umaps, feat_boxes,
-#   ncol = 1, 
-#   heights = c(0.5, 1, 0.45)
-# ) +
-#   plot_annotation(tag_levels = "a") &
-#   theme(
-#     # plot.margin = unit(c(1, 0, 0, 0.2), "cm"),
-#     plot.tag = element_text(size = 24, face = "plain")
-#     # plot.tag.position = c(-0.08, 1)
-#   )
+```
+
+---
+
+<br>
+
+<br>
+
+## Supplemental `r plus_one("n_plot")`
+
+Day 14 example genes
+
+```{r, fig.width = 10, fig.height = 11.5}
+
+# Day 14:
+# cDC2 tbet-: CD53, ywhab
+# cDC2 tbet+: siva1, rock2
+# CCR7hi migratory cDC2: Insm1, CD200
+# CCR7hi migratory cDC1: Ccl22, Dynl12, Eps15, Il21r
+
+# Some genes were not found: Dynl12
+feats <- list(
+  v1 = c("Cd53", "Ywhab", "Siva1", "Rock2", "Insm1", "Cd200"),
+  v2 = c("Cd53", "Ywhab", "Ccl22", "Dynll2", "Eps15", "Il21r")
+)
+
+# Create final figure
+so_name <- "d14_DC"
+
+walk(feats, ~ {
+  feat_cols <- get_cols(length(.x))
+  feat_cols <- set_names(feat_cols, .x)
+  
+  create_fig4(
+    sobj_in   = sobjs[[so_name]], 
+    ova_cols  = ova_cols_2,
+    feats     = names(feat_cols),
+    feat_cols = feat_cols,
+    ref_cols  = so_cols[[so_name]],
+    low_col   = "white"
+  ) %>%
+    print()    
+})
 
 ```
 
