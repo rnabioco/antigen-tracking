@@ -317,8 +317,8 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
 }
 
 # Create figure 4 panels
-create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001,
-                        pt_outline = 0.4, low_col = c("white", "white")) {
+create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001, pt_outline = 0.4, 
+                        low_col = c("white", "white"), sep_bar_labs = F, plot_boxes = F) {
 
   # Theme elements
   legd_guide <- guide_legend(override.aes = list(
@@ -431,6 +431,11 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
       panel.grid.major.y = element_blank()
     )
   
+  if (sep_bar_labs) {
+    type_bar <- type_bar +
+      theme(axis.text.x = element_text(hjust = c(0.9, 0.5, 0.1)))
+  }
+  
   # Reference UMAP
   ref_umap <- sobj_in %>%
     create_ref_umap(
@@ -500,17 +505,15 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     pivot_longer(cols = c(-cell_id, -GMM_grp)) %>%
     filter(GMM_grp != "Other") %>%
     mutate(
-      name    = fct_relevel(name, names(feat_cols)),
+      name    = fct_reorder(name, value, median, .desc = T),
       GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high"))
     )
   
   feat_boxes <- box_data %>%
     ggplot(aes(GMM_grp, value, fill = name, alpha = GMM_grp)) +
-    geom_violin(size = 0.3, draw_quantiles = c(0.25, 0.75)) +
-    stat_summary(geom = "point", color = "black", alpha = 1, fun = median) +
     facet_wrap(~ name, nrow = 1) +
     scale_fill_manual(values = feat_cols) +
-    scale_alpha_manual(values = c(0.35, 0.75)) +
+    scale_alpha_manual(values = c(0.20, 0.75)) +
     labs(y = "Counts") +
     theme_minimal_hgrid() +
     text_theme +
@@ -522,6 +525,37 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
       axis.ticks.y       = element_line(size = 0.1),
       panel.grid.major.y = element_line(size = 0.1)
     )
+  
+  if (plot_boxes) {
+    feat_boxes <- feat_boxes +
+      geom_boxplot(
+        color          = "white",
+        fill           = "white",
+        alpha          = 1,
+        size           = 0.3,
+        width          = 0.6,
+        outlier.colour = "white",
+        outlier.alpha  = 1,
+        outlier.size   = 0.3
+      ) +
+      geom_boxplot(
+        size           = 0.3,
+        width          = 0.6,
+        outlier.colour = "grey85",
+        outlier.alpha  = 1,
+        outlier.size   = 0.3
+      ) +
+      theme(
+        axis.text.x = element_text(hjust = c(0.75, 0.25)),
+        panel.spacing = unit(0.85, "cm")
+      )
+    
+  } else {
+    feat_boxes <- feat_boxes +
+      geom_violin(size = 0.3, draw_quantiles = c(0.25, 0.75)) +
+      stat_summary(geom = "point", color = "black", alpha = 1, fun = median) +
+      theme(panel.spacing = unit(0.5, "cm"))
+  }
   
   # Final top panel
   top <- plot_grid(
@@ -541,7 +575,8 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
   
   bot <- plot_grid(
     feat_boxes, blank_gg,
-    rel_widths = c(1, 0.2)
+    rel_widths = c(1, if_else(plot_boxes, 0.45, 0.2))
+    # rel_widths = c(1, if_else(plot_boxes, 0.65, 0.2))
   )
   
   # Create final figure
@@ -724,42 +759,51 @@ gg_list %>%
 
 <br>
 
-## Figure 4
+## Figure 4 {.tabset .tabset-pills}
 
-```{r "Fig 4", fig.width = 10, fig.height = 11.5}
+```{r "Fig 4", fig.width = 10, fig.height = 11.5, results = "asis"}
 
-# Feature colors
-feats <- c( "Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
-
-feat_cols <- set_names(
-  x  = get_cols(length(feats)),
-  nm = feats
+feats <- list(
+  c("Cavin1", "Fn1", "Prox1", "Tgfa", "Thbs1", "Apold1"),
+  c( "Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
 )
 
 # Create final figure
 so_name <- "d14_LEC"
 
-sobjs[[so_name]] %>%
+cols1 <- "white"
+cols2 <- list(c(cols1, cols1))
+
+plot_args <- list(
+  str_c("v", 1:4),         # Tab title
+  rep(feats, 2),           # Features to plot
+  c(rep(T, 2), rep(F, 2))  # Plot boxes
+)
+
+pwalk(plot_args, ~ {
+  feat_cols <- get_cols(length(..2))
+  feat_cols <- set_names(feat_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
+  
   create_fig4(
-    ova_cols  = ova_cols,
-    feats     = names(feat_cols),
-    feat_cols = feat_cols,
-    ref_cols  = so_cols[[so_name]]
-  )
+    sobj_in      = sobjs[[so_name]], 
+    ova_cols     = ova_cols_1,
+    feats        = names(feat_cols),
+    feat_cols    = feat_cols,
+    ref_cols     = so_cols[[so_name]],
+    sep_bar_labs = T,
+    plot_boxes   = ..3
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
 
 ```
 
----
+## Fig 4 - day 2 LECs {.tabset .tabset-pills}
 
-<br>
-
-<br>
-
-## Supplemental `r plus_one("n_plot")`
-
-Day 2 LECs example genes
-
-```{r, fig.width = 10, fig.height = 11.5}
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
 
 # Feature colors
 feats <- c( "Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
@@ -769,38 +813,37 @@ feat_cols <- set_names(
   nm = feats
 )
 
-ova_cols_2 <- c(
-  "ova low"  = "#56B4E9",
-  "ova high" = "#d7301f",
-  "Other"    = "#ffffff"
-)
-
 # Create final figure
 so_name <- "d2_LEC"
 
-sobjs[[so_name]] %>%
+plot_args <- list(
+  v1 = T,
+  v2 = F
+)
+
+iwalk(plot_args, ~ {
+  cat("\n### ", .y, "\n", sep = "")
+  
   create_fig4(
+    sobj_in    = sobjs[[so_name]],
     ova_cols   = ova_cols_2,
     feats      = names(feat_cols),
     feat_cols  = feat_cols,
-    ref_cols   = so_cols[[so_name]]
-  )
+    ref_cols   = so_cols[[so_name]],
+    plot_boxes = .x,
+    low_col    = c("white")
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
 
 ```
 
----
+## Fig 4 - day 2 DCs {.tabset .tabset-pills}
 
-<br>
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
 
-<br>
-
-## Supplemental `r plus_one("n_plot")`
-
-Day 2 DCs example genes
-
-```{r, fig.width = 10, fig.height = 11.5}
-
-# Day 2:
 # cDC2 tbet-: Ccl2, Cxcl12, Msr1, Pkm, Gal3, Aif1, Mif
 # CCR7hi migratory cDC2: cdc42ep3, EBI2, Malt1, Jak2
 # cDC1: Ddx3, Skil, Nrp2
@@ -808,82 +851,93 @@ Day 2 DCs example genes
 
 # Some genes not found: Gal3, EBI2, Ddx3
 feats <- list(
-  v1 = c("Ccl2", "Cxcl12",   "Msr1",   "Pkm",   "Lgals3", "Aif1"),
-  v2 = c("Mif",  "Cdc42ep3", "Malt1", "Jak2", "Cd9", "Ddx6"),
-  v3 = c("Skil", "Nrp2",     "Sema7a", "Phip",  "Cd53", "Cd81")
+  c("Mif",  "Cd53",   "Malt1", "Pkm",    "Ddx6",     "Lgals3"),
+  c("Ccl2", "Cxcl12", "Msr1",  "Aif1",   "Cdc42ep3", "Jak2"),
+  c("Cd9",  "Skil",   "Nrp2",  "Sema7a", "Phip",     "Cd81")
 )
 
 # Create final figure
 so_name <- "d2_DC"
 
-walk(feats, ~ {
-  feat_cols <- get_cols(length(.x))
-  feat_cols <- set_names(feat_cols, .x)
+cols1 <- "white"
+cols2 <- list(c(cols1, cols1))
+
+plot_args <- list(
+  str_c("v", seq(1, 6)),              # Tab title
+  rep(feats, 2),                      # Features to plot
+  c(rep(T, 3), rep(F, 3)),            # Plot boxes
+  append(cols2, rep(list(cols1), 5))  # UMAP color scale
+)
+
+pwalk(plot_args, ~ {
+  feat_cols <- get_cols(length(..2))
+  feat_cols <- set_names(feat_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
   
   create_fig4(
-    sobj_in   = sobjs[[so_name]], 
-    ova_cols  = ova_cols_2,
-    feats     = names(feat_cols),
-    feat_cols = feat_cols,
-    ref_cols  = so_cols[[so_name]],
-    low_col   = "white"
+    sobj_in      = sobjs[[so_name]], 
+    ova_cols     = ova_cols_2,
+    feats        = names(feat_cols),
+    feat_cols    = feat_cols,
+    ref_cols     = so_cols[[so_name]],
+    low_col      = ..4,
+    sep_bar_labs = T,
+    plot_boxes   = ..3,
   ) %>%
-    print()    
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
 })
 
 ```
 
----
+## Fig 4 - day 14 DCs {.tabset .tabset-pills}
 
-<br>
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
 
-<br>
-
-## Supplemental `r plus_one("n_plot")`
-
-Day 14 example genes
-
-```{r, fig.width = 10, fig.height = 11.5}
-
-# Day 14:
 # cDC2 tbet-: CD53, ywhab
 # cDC2 tbet+: siva1, rock2
 # CCR7hi migratory cDC2: Insm1, CD200
 # CCR7hi migratory cDC1: Ccl22, Dynl12, Eps15, Il21r
 
-# Some genes were not found: Dynl12
+# Some genes not found: Dynl12
 feats <- list(
-  v1 = c("Cd53", "Ywhab", "Siva1", "Rock2", "Insm1", "Cd200"),
-  v2 = c("Cd53", "Ywhab", "Ccl22", "Dynll2", "Eps15", "Il21r")
+  c("Cd53", "Rock2", "Eps15", "Il21r", "Dynll2", "Siva1"),
+  c("Cd53", "Ywhab", "Rock2", "Insm1", "Cd200",  "Ccl22")
 )
 
 # Create final figure
 so_name <- "d14_DC"
 
-walk(feats, ~ {
-  feat_cols <- get_cols(length(.x))
-  feat_cols <- set_names(feat_cols, .x)
+plot_args <- list(
+  str_c("v", seq(1, 4)),   # Title
+  rep(feats, 2),           # Features to plot
+  c(rep(T, 2), rep(F, 2))  # Plot boxes
+)
+
+pwalk(plot_args, ~ {
+  feat_cols <- get_cols(length(..2))
+  feat_cols <- set_names(feat_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
   
   create_fig4(
-    sobj_in   = sobjs[[so_name]], 
-    ova_cols  = ova_cols_2,
-    feats     = names(feat_cols),
-    feat_cols = feat_cols,
-    ref_cols  = so_cols[[so_name]],
-    low_col   = "white"
+    sobj_in      = sobjs[[so_name]], 
+    ova_cols     = ova_cols_2,
+    feats        = names(feat_cols),
+    feat_cols    = feat_cols,
+    ref_cols     = so_cols[[so_name]],
+    low_col      = "white",
+    sep_bar_labs = T,
+    plot_boxes   = ..3
   ) %>%
-    print()    
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
 })
 
 ```
 
----
-
-<br>
-
-<br>
-
-## Supplemental `r plus_one("n_plot")`
+## LEC clustering
 
 Clustering for LEC subtype assignment using [Xiang et al.](https://www.frontiersin.org/articles/10.3389/fcvm.2020.00052/full#B40) reference
 
@@ -1036,7 +1090,7 @@ plot_grid(
 
 <br>
 
-## Supplemental `r plus_one("n_plot")`
+## Fig 3 - all LECs
 
 Figures for all LEC timepoints
 
@@ -1089,7 +1143,7 @@ gg_list %>%
 
 <br>
 
-## Supplemental `r plus_one("n_plot")`
+## Fig 3 - all FRCs
 
 Figures for all FRC timepoints
 
@@ -1142,7 +1196,7 @@ gg_list %>%
 
 <br>
 
-## Supplemental `r plus_one("n_plot")`
+## Cell type ova correlation
 
 Correlation between RNA counts and ova counts grouped by cell type
 
@@ -1172,7 +1226,7 @@ corr_params %>%
 
 <br>
 
-## Supplemental `r plus_one("n_plot")`
+## Cell subtype ova correlation
 
 Correlation between RNA counts and ova counts grouped by cell type and subtype
 

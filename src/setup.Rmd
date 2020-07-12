@@ -1457,7 +1457,13 @@ ito_cols <- ito_cols %>%
 get_cols <- create_col_fun(ito_cols)
 
 # OVA colors
-ova_cols <- c(
+ova_cols_2 <- c(
+  "ova low"  = "#56B4E9",
+  "ova high" = "#d7301f",
+  "Other"    = "#ffffff"
+)
+
+ova_cols_1 <- c(
   "ova high" = "#d7301f",
   "ova low"  = "#56B4E9",
   "Other"    = "#ffffff"
