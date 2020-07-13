@@ -714,9 +714,8 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
 }
 
 # Plot percentage of cells in given groups
-plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NULL,
-                            fill_id, plot_colors = theme_cols,
-                            x_lab = "Cell type", y_lab = "Fraction of cells",
+plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NULL, fill_id, 
+                            plot_colors = theme_cols, x_lab = "Cell type", y_lab = "Fraction of cells",
                             bar_pos = "fill", order_count = T, bar_line = 0, ...) {
   
   res <- sobj_in@meta.data %>%
@@ -1457,16 +1456,23 @@ ito_cols <- ito_cols %>%
 get_cols <- create_col_fun(ito_cols)
 
 # OVA colors
-ova_cols_2 <- c(
-  "ova low"  = "#56B4E9",
-  "ova high" = "#d7301f",
+ova_cols_1 <- c(
+  "ova high" = "#475C81",
+  "ova low"  = "#B8ECFF",
   "Other"    = "#ffffff"
 )
 
-ova_cols_1 <- c(
-  "ova high" = "#d7301f",
-  "ova low"  = "#56B4E9",
+ova_cols_2 <- c(
+  "ova low"  = "#B8ECFF",
+  "ova high" = "#475C81",
   "Other"    = "#ffffff"
+)
+
+# Feature colors
+feat_cols <- c(
+  "#D7301F", "#0072B2",
+  "#009E73", "#4C3250",
+  "#E69F00", "#875C04"
 )
 
 # Cell subtype palettes

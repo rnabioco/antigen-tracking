@@ -164,7 +164,7 @@ equalize_x <- function(gg_list_in, log_tran = T, ...) {
 }
 
 # Create figure 3 panels
-create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot = "counts",
+create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot = "counts", ova_cols = c("#fafafa", "#d7301f"),
                         box_counts = c("Relative ova signal" = "ova_fc"), umap_counts = c("ova counts" = "adt_ovalbumin"), 
                         plot_title = NULL, arrow_axis = F, pt_size = 0.1, pt_outline = 0.4, pt_size_2 = 0.3, pt_outline_2 = 0.5,
                         umap_cell_count = F, box_cell_count = T, control_types = c("B Cell", "T Cell"), ...) {
@@ -262,7 +262,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
     ova_umap <- data_df %>%
       plot_features(
         feature    = umap_counts,
-        plot_cols  = c("#fafafa", "#d7301f"),
+        plot_cols  = ova_cols,
         pt_size    = pt_size_2,
         pt_outline = pt_outline_2,
         min_pct    = 0.01,
@@ -385,25 +385,30 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
       legend.position = "top",
       legend.title    = element_blank(),
       legend.text     = element_text(size = 8)
-      # panel.background = element_rect(fill = "white", color = "grey85", size = 0.1)
     )
   
   # OVA hist
   ova_hist <- sobj_in@meta.data %>%
     filter(GMM_grp != "Other") %>%
     mutate(GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high"))) %>%
-    ggplot() +
-    geom_density(aes(adt_ovalbumin, after_stat(density), fill = GMM_grp), size = 0.3) +
+    ggplot(aes(adt_ovalbumin, after_stat(density), fill = GMM_grp)) +
+    
+    stat_density(geom = "point", position = "identity", size = 0, color = "white") +
+    geom_density(fill = "white", color = "white", size = 0.3, alpha = 0.8) +
+    geom_density(size = 0.3, alpha = 0.8, show.legend = F) +
+  
     geom_vline(aes(xintercept = mu), size = 0.5, linetype = 2, color = "grey35") +
     coord_cartesian(ylim = c(0, 1.7)) +
     scale_fill_manual(values = ova_cols) +
     scale_x_log10(labels = trans_format("log10", math_format(10^.x))) +
     labs(x = "ova counts", y = "Density") +
+    guides(fill = guide_legend(override.aes = list(shape = 22, size = 3.5, stroke = 0.25, color = "black"))) +
     theme_minimal_hgrid() +
     text_theme +
     theme(
       plot.margin        = unit(c(0.2, 0.5, 0.2, 0.2), "cm"),
       legend.position    = c(0.05, 0.92),
+      legend.key.height  = unit(0.15, "cm"),
       legend.title       = element_blank(),
       axis.line.y        = element_line(size = 0.5, color = "grey85"),
       axis.ticks.y       = element_line(size = 0.1),
@@ -411,20 +416,26 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     )
   
   # OVA subtype bar graphs
-  type_bar <- sobj_in %>%
-    plot_cell_count(
-      group_id    = "GMM_grp",
-      group_order = names(ova_cols),
-      fill_id     = "subtype",
-      bar_line    = 0.25,
-      plot_colors = ref_cols
-    ) +
+  type_bar <- sobj_in@meta.data %>%
+    as_tibble(rownames = "cell_id") %>%
+    mutate(
+      subtype = fct_reorder(subtype, cell_id, n_distinct),
+      GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high", "Other"))
+    ) %>%
+    ggplot(aes(GMM_grp, fill = subtype)) +
+    
+    stat_count(position = "fill", geom = "point", size = 0, color = "white") +
+    geom_bar(position = "fill", size = 0.25, color = "black", show.legend = F) +
+    
+    scale_fill_manual(values = ref_cols) +
     scale_y_continuous(breaks = c(0, 0.5, 1)) +
-    guides(fill = guide_legend(ncol = 1)) +
+    guides(fill = guide_legend(ncol = 1, override.aes = list(shape = 22, size = 3.5, stroke = 0.25, color = "black"))) +
+    labs(y = "Fraction of cells") +
     theme_minimal_hgrid() +
     text_theme +
     theme(
       legend.title       = element_blank(),
+      legend.key.height  = unit(0.35, "cm"),
       axis.title.x       = element_blank(),
       axis.line.y        = element_line(size = 0.5, color = "grey85"),
       axis.ticks.y       = element_line(size = 0.1),
@@ -450,8 +461,6 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
       legend.position = "left",
       legend.margin   = margin(0.2, 0.2, 0.2, 1.5, "cm"),
       legend.text     = element_text(size = 8)
-      # panel.background = element_rect(fill = "white", color = "grey85", size = 0.1),
-      # axis.line = element_line(size = 0.5)
     )
   
   # Create list of feature UMAPs
@@ -465,11 +474,7 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     map(~ {
       .x +
         guides(color = guide_colorbar(frame.colour = "black", frame.linewidth = 0.2)) +
-        theme(
-          plot.title = element_text(size = 12)
-          # panel.background = element_rect(fill = "white", color = "grey85", size = 0.1)
-          # axis.line  = element_line(size = 0.5)
-        )
+        theme(plot.title = element_text(size = 12))
     })
   
   # Top panel of feature UMAPs
@@ -500,34 +505,42 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
   
   # Feature violin plots
   box_data <- sobj_in %>%
-    FetchData(c(feats, "GMM_grp")) %>%
+    FetchData(c(feats, "subtype", "GMM_grp")) %>%
     as_tibble(rownames = "cell_id") %>%
-    pivot_longer(cols = c(-cell_id, -GMM_grp)) %>%
-    filter(GMM_grp != "Other") %>%
+    pivot_longer(cols = c(-cell_id, -subtype, -GMM_grp)) %>%
     mutate(
-      name    = fct_reorder(name, value, median, .desc = T),
-      GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high"))
-    )
-  
+      type_name = str_c(subtype, "_", name),
+      type_name = fct_reorder(type_name, value, median, .desc = T)
+    ) %>%
+    group_by(subtype, name) %>%
+    mutate(med = median(value)) %>%
+    ungroup() %>%
+    mutate(name = fct_reorder(name, med, max, .desc = T))
+    
   feat_boxes <- box_data %>%
-    ggplot(aes(GMM_grp, value, fill = name, alpha = GMM_grp)) +
-    facet_wrap(~ name, nrow = 1) +
-    scale_fill_manual(values = feat_cols) +
-    scale_alpha_manual(values = c(0.20, 0.75)) +
+    ggplot(aes(type_name, value, fill = subtype)) +
+    facet_wrap(~ name, nrow = 1, scales = "free_x") +
+    scale_fill_manual(values = ref_cols) +
     labs(y = "Counts") +
     theme_minimal_hgrid() +
     text_theme +
     theme(
       strip.text         = element_text(size = 12),
-      legend.position    = "none",
+      legend.title       = element_blank(),
+      legend.key.height  = unit(0.35, "cm"),
       axis.title.x       = element_blank(),
+      axis.text.x        = element_blank(),
+      axis.line.x        = element_blank(),
+      axis.ticks.x       = element_blank(),
       axis.line.y        = element_line(size = 0.5, color = "grey85"),
-      axis.ticks.y       = element_line(size = 0.1),
-      panel.grid.major.y = element_line(size = 0.1)
+      panel.grid.major.y = element_blank(),
+      panel.background   = element_rect(fill = "#fafafa")
+      # axis.ticks.y       = element_line(size = 0.1),
     )
   
   if (plot_boxes) {
     feat_boxes <- feat_boxes +
+      stat_summary(geom = "point", shape = 22, fun = median, size = 0) +
       geom_boxplot(
         color          = "white",
         fill           = "white",
@@ -536,23 +549,23 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
         width          = 0.6,
         outlier.colour = "white",
         outlier.alpha  = 1,
-        outlier.size   = 0.3
+        outlier.size   = 0.1,
+        coef           = 0
       ) +
       geom_boxplot(
         size           = 0.3,
         width          = 0.6,
         outlier.colour = "grey85",
         outlier.alpha  = 1,
-        outlier.size   = 0.3
+        outlier.size   = 0.1,
+        show.legend    = F,
+        coef           = 0
       ) +
-      theme(
-        axis.text.x = element_text(hjust = c(0.75, 0.25)),
-        panel.spacing = unit(0.85, "cm")
-      )
+      guides(fill = guide_legend(override.aes = list(size = 3.5, stroke = 0.25)))
     
   } else {
     feat_boxes <- feat_boxes +
-      geom_violin(size = 0.3, draw_quantiles = c(0.25, 0.75)) +
+      geom_violin(size = 0.3, scale = "width") +
       stat_summary(geom = "point", color = "black", alpha = 1, fun = median) +
       theme(panel.spacing = unit(0.5, "cm"))
   }
@@ -576,13 +589,12 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
   bot <- plot_grid(
     feat_boxes, blank_gg,
     rel_widths = c(1, if_else(plot_boxes, 0.45, 0.2))
-    # rel_widths = c(1, if_else(plot_boxes, 0.65, 0.2))
   )
   
   # Create final figure
   res <- plot_grid(
-    top, feat_umaps, bot,
-    rel_heights    = c(0.5, 1, 0.45),
+    top, feat_umaps, feat_boxes,
+    rel_heights    = c(0.55, 1.05, 0.35),
     ncol           = 1,
     labels         = c("", "d", "e"),
     label_fontface = "plain",
@@ -717,7 +729,8 @@ gg_list <- fig3_params %>%
     create_fig3,
     box_counts  = c("Relative ova signal" = "ova_fc"), 
     umap_counts = c("ova counts" = "adt_ovalbumin"),
-    data_slot   = "counts"
+    data_slot   = "counts",
+    ova_cols    = c("white", ova_cols_1["ova high"])
   ) %>%
   flatten()
 
@@ -775,23 +788,23 @@ cols1 <- "white"
 cols2 <- list(c(cols1, cols1))
 
 plot_args <- list(
-  str_c("v", 1:4),         # Tab title
-  rep(feats, 2),           # Features to plot
-  c(rep(T, 2), rep(F, 2))  # Plot boxes
+  str_c("v", 1:2),  # Tab title
+  feats,            # Features to plot
+  rep(T, 2)         # Plot boxes
 )
 
 pwalk(plot_args, ~ {
-  feat_cols <- get_cols(length(..2))
-  feat_cols <- set_names(feat_cols, ..2)
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
   cat("\n### ", ..1, "\n", sep = "")
   
   create_fig4(
     sobj_in      = sobjs[[so_name]], 
     ova_cols     = ova_cols_1,
-    feats        = names(feat_cols),
-    feat_cols    = feat_cols,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
     ref_cols     = so_cols[[so_name]],
-    sep_bar_labs = T,
+    sep_bar_labs = F,
     plot_boxes   = ..3
   ) %>%
     print()
@@ -808,18 +821,15 @@ pwalk(plot_args, ~ {
 # Feature colors
 feats <- c( "Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
 
-feat_cols <- set_names(
-  x  = get_cols(length(feats)),
+umap_cols <- set_names(
+  x  = feat_cols[seq_along(feats)],
   nm = feats
 )
 
 # Create final figure
 so_name <- "d2_LEC"
 
-plot_args <- list(
-  v1 = T,
-  v2 = F
-)
+plot_args <- list(v1 = T)
 
 iwalk(plot_args, ~ {
   cat("\n### ", .y, "\n", sep = "")
@@ -827,8 +837,8 @@ iwalk(plot_args, ~ {
   create_fig4(
     sobj_in    = sobjs[[so_name]],
     ova_cols   = ova_cols_2,
-    feats      = names(feat_cols),
-    feat_cols  = feat_cols,
+    feats      = names(umap_cols),
+    feat_cols  = umap_cols,
     ref_cols   = so_cols[[so_name]],
     plot_boxes = .x,
     low_col    = c("white")
@@ -863,22 +873,22 @@ cols1 <- "white"
 cols2 <- list(c(cols1, cols1))
 
 plot_args <- list(
-  str_c("v", seq(1, 6)),              # Tab title
-  rep(feats, 2),                      # Features to plot
-  c(rep(T, 3), rep(F, 3)),            # Plot boxes
-  append(cols2, rep(list(cols1), 5))  # UMAP color scale
+  str_c("v", 1:3),                    # Tab title
+  feats,                              # Features to plot
+  rep(T, 3),                          # Plot boxes
+  append(cols2, rep(list(cols1), 2))  # UMAP color scale
 )
 
 pwalk(plot_args, ~ {
-  feat_cols <- get_cols(length(..2))
-  feat_cols <- set_names(feat_cols, ..2)
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
   cat("\n### ", ..1, "\n", sep = "")
   
   create_fig4(
     sobj_in      = sobjs[[so_name]], 
     ova_cols     = ova_cols_2,
-    feats        = names(feat_cols),
-    feat_cols    = feat_cols,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
     ref_cols     = so_cols[[so_name]],
     low_col      = ..4,
     sep_bar_labs = T,
@@ -910,21 +920,21 @@ feats <- list(
 so_name <- "d14_DC"
 
 plot_args <- list(
-  str_c("v", seq(1, 4)),   # Title
-  rep(feats, 2),           # Features to plot
-  c(rep(T, 2), rep(F, 2))  # Plot boxes
+  str_c("v", 1:2),  # Title
+  feats,            # Features to plot
+  rep(T, 2)         # Plot boxes
 )
 
 pwalk(plot_args, ~ {
-  feat_cols <- get_cols(length(..2))
-  feat_cols <- set_names(feat_cols, ..2)
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
   cat("\n### ", ..1, "\n", sep = "")
   
   create_fig4(
     sobj_in      = sobjs[[so_name]], 
     ova_cols     = ova_cols_2,
-    feats        = names(feat_cols),
-    feat_cols    = feat_cols,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
     ref_cols     = so_cols[[so_name]],
     low_col      = "white",
     sep_bar_labs = T,
