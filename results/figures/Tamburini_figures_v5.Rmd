@@ -318,7 +318,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
 
 # Create figure 4 panels
 create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001, pt_outline = 0.4, 
-                        low_col = c("white", "white"), sep_bar_labs = F, plot_boxes = F) {
+                        low_col = c("white", "white"), sep_bar_labs = F, plot_boxes = F, median_pt = 1) {
 
   # Theme elements
   legd_guide <- guide_legend(override.aes = list(
@@ -394,7 +394,7 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     ggplot(aes(adt_ovalbumin, after_stat(density), fill = GMM_grp)) +
     
     stat_density(geom = "point", position = "identity", size = 0, color = "white") +
-    geom_density(fill = "white", color = "white", size = 0.3, alpha = 0.8) +
+    geom_density(fill = "white", color = "white", size = 0.3, alpha = 0.9) +
     geom_density(size = 0.3, alpha = 0.8, show.legend = F) +
   
     geom_vline(aes(xintercept = mu), size = 0.5, linetype = 2, color = "grey35") +
@@ -521,6 +521,7 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     ggplot(aes(type_name, value, fill = subtype)) +
     facet_wrap(~ name, nrow = 1, scales = "free_x") +
     scale_fill_manual(values = ref_cols) +
+    scale_color_manual(values = ref_cols) +
     labs(y = "Counts") +
     theme_minimal_hgrid() +
     text_theme +
@@ -535,12 +536,12 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
       axis.line.y        = element_line(size = 0.5, color = "grey85"),
       panel.grid.major.y = element_blank(),
       panel.background   = element_rect(fill = "#fafafa")
-      # axis.ticks.y       = element_line(size = 0.1),
     )
   
   if (plot_boxes) {
     feat_boxes <- feat_boxes +
       stat_summary(geom = "point", shape = 22, fun = median, size = 0) +
+      stat_summary(geom = "point", shape = 22, fun = median, size = median_pt + 1, color = "black") +
       geom_boxplot(
         color          = "white",
         fill           = "white",
@@ -559,7 +560,18 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
         outlier.alpha  = 1,
         outlier.size   = 0.1,
         show.legend    = F,
-        coef           = 0
+        coef           = 0,
+        fatten = 0
+      ) +
+      stat_summary(
+        aes(color = subtype),
+        geom        = "point",
+        shape       = 22,
+        fun         = median,
+        size        = median_pt,
+        stroke      = 1,
+        fill        = "white",
+        show.legend = F
       ) +
       guides(fill = guide_legend(override.aes = list(size = 3.5, stroke = 0.25)))
     
@@ -729,8 +741,7 @@ gg_list <- fig3_params %>%
     create_fig3,
     box_counts  = c("Relative ova signal" = "ova_fc"), 
     umap_counts = c("ova counts" = "adt_ovalbumin"),
-    data_slot   = "counts",
-    ova_cols    = c("white", ova_cols_1["ova high"])
+    data_slot   = "counts"
   ) %>%
   flatten()
 
@@ -841,6 +852,7 @@ iwalk(plot_args, ~ {
     feat_cols  = umap_cols,
     ref_cols   = so_cols[[so_name]],
     plot_boxes = .x,
+    median_pt  = 1.5,
     low_col    = c("white")
   ) %>%
     print()
