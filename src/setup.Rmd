@@ -352,14 +352,14 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
 }
 
 # Classify cells based on OVA signal
-classify_ova <- function(sobj_in, type_filt = NULL, data_column = "adt_ovalbumin", data_slot = "counts", ...) {
+classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_column = "adt_ovalbumin", data_slot = "counts", ...) {
   
   # Filter Seurat object
   sobj_filt <- sobj_in
   
-  if (!is.null(type_filt)) {
+  if (!is.null(filt)) {
     sobj_filt <- sobj_filt %>%
-      subset(cell_type == type_filt)
+      subset(!!sym(filt_column) == filt)
   }
   
   # Fit GMM
@@ -1389,7 +1389,8 @@ sobjs <- sobjs %>%
   imap(~ {
     classify_ova(
       sobj_in     = .x,
-      type_filt   = so_types[.y],
+      filt_column = "cell_type",
+      filt        = so_types[.y],
       data_column = "adt_ovalbumin",
       data_slot   = "counts",
       quiet       = T
@@ -1467,6 +1468,18 @@ ova_cols_2 <- c(
   "ova low"  = "#B8ECFF",
   "ova high" = "#475C81",
   "Other"    = "#ffffff"
+)
+
+ova_cols_3 <- c(
+  "Other"    = "#ffffff",
+  "ova high" = "#475C81",
+  "ova low"  = "#B8ECFF"
+)
+
+ova_cols_4 <- c(
+  "Other"    = "#ffffff",
+  "ova low"  = "#B8ECFF",
+  "ova high" = "#475C81"
 )
 
 # Feature colors

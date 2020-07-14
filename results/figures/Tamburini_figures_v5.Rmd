@@ -317,7 +317,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
 }
 
 # Create figure 4 panels
-create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001, pt_outline = 0.4, 
+create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001, pt_outline = 0.4, gmm_filt = NULL,
                         low_col = c("white", "white"), sep_bar_labs = F, plot_boxes = T, median_pt = 1) {
 
   # Theme elements
@@ -333,6 +333,16 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     legend.text = element_text(size = 8),
     axis.text   = element_text(size = 8)
   )
+  
+  # Run GMM
+  if (!is.null(gmm_filt)) {
+    sobj_in <- sobj_in %>%
+      classify_ova(
+        filt_column = names(gmm_filt), 
+        filt        = gmm_filt,
+        quiet       = T
+      )
+  }
 
   # Data for OVA group UMAP
   ova_order <- names(ova_cols)
@@ -508,10 +518,15 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     FetchData(c(feats, "subtype", "GMM_grp")) %>%
     as_tibble(rownames = "cell_id") %>%
     pivot_longer(cols = c(-cell_id, -subtype, -GMM_grp)) %>%
-    mutate(
-      type_name = str_c(subtype, "_", name),
-      type_name = fct_reorder(type_name, value, median, .desc = T)
-    ) %>%
+    mutate(type_name = str_c(subtype, "_", name)) %>%
+    group_by(type_name) %>%
+    mutate(up_qt = boxplot.stats(value)$stats[4]) %>%
+    ungroup() %>%
+    mutate(type_name = fct_reorder(type_name, up_qt, median, .desc = T)) %>%
+    # mutate(
+    #   type_name = str_c(subtype, "_", name),
+    #   type_name = fct_reorder(type_name, value, median, .desc = T)
+    # ) %>%
     group_by(subtype, name) %>%
     mutate(med = median(value)) %>%
     ungroup() %>%
@@ -583,10 +598,21 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
   }
   
   # Final top panel
+  top_lets <- letters
+  bot_lets <- c("", "d", "e")
+  
+  if (!is.null(gmm_filt)) {
+    type_bar <- ggplot() +
+      theme_void()
+    
+    top_lets <- c(letters[1:2], "")
+    bot_lets <- c("", "c", "d")
+  }
+  
   top <- plot_grid(
     ova_grp_umap, ova_hist, type_bar,
     rel_widths     = c(0.86, 1, 0.9),
-    labels         = letters,
+    labels         = top_lets,
     label_fontface = "plain",
     label_size     = 18,
     align          = "h",
@@ -608,7 +634,7 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     top, feat_umaps, feat_boxes,
     rel_heights    = c(0.55, 1.05, 0.35),
     ncol           = 1,
-    labels         = c("", "d", "e"),
+    labels         = bot_lets,
     label_fontface = "plain",
     label_size     = 18
   )
@@ -973,7 +999,7 @@ pwalk(plot_args, ~ {
 
 ```
 
-## Fig 4 - day 2 DCs {.tabset .tabset-pills}
+## Fig 4 - day 2 - cDC2 Tbet- {.tabset .tabset-pills}
 
 ```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
 
@@ -985,17 +1011,13 @@ pwalk(plot_args, ~ {
 
 # Some genes not found: Gal3, EBI2, Ddx3
 feats <- list(
-  c("Ccl2",   "Cxcl12",   "Msr1",    "Pkm",    "Lgals3",   "Aif1"),  # Beth's list, only genes diff expressed are Pkm
-  c("Mif",    "Cdc42ep3", "Malt1",   "Jak2",   "Skil",     "Nrp2"),
-  c("Sema7a", "Phip",     "Cd53",    "Cd81",   "Cd9",      "Ddx6"),
-  c("Il1rn",  "Zeb2",     "Ptgs2",   "Cebpb",  "Il1b",     "Fpr2"),  # These other genes are top ova high markers
-  c("Ctsb",   "Clec4a1",  "Ms4a6d",  "Sod2",   "Tgfbi",    "Grn"),
-  c("Nampt",  "Ly6i",     "Clec4a3", "Ms4a6c", "Ccl4",     "Lgmn"),
-  c("Cybb",   "Gbp2",     "Sirpa",   "Lst1",   "BC005537", "Grina")
+  c("Ccl2", "Mif",    "Msr1", "Pkm", "Lgals3", "Aif1"),
+  c("Ccl2", "Cxcl12", "Msr1", "Pkm", "Lgals3", "Aif1")
 )
 
 # Create final figure
 so_name <- "d2_DC"
+gmm_filt <- c(subtype = "cDC2 Tbet-")
 
 plot_args <- list(
   str_c("v", seq_along(feats)),  # Tab title
@@ -1008,8 +1030,101 @@ pwalk(plot_args, ~ {
   cat("\n### ", ..1, "\n", sep = "")
   
   create_fig4(
-    sobj_in      = sobjs[[so_name]], 
-    ova_cols     = ova_cols_2,
+    sobj_in      = sobjs[[so_name]],
+    gmm_filt     = gmm_filt,
+    ova_cols     = ova_cols_4,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
+    ref_cols     = so_cols[[so_name]],
+    low_col      = c("white", "#fafafa"),
+    sep_bar_labs = T
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
+
+```
+
+## Fig 4 - day 2 - CCR7hi Mig cDC2 {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
+
+# Features to plot
+# cDC2 tbet-: Ccl2, Cxcl12, Msr1, Pkm, Gal3, Aif1, Mif
+# CCR7hi migratory cDC2: cdc42ep3, EBI2, Malt1, Jak2
+# cDC1: Ddx3, Skil, Nrp2
+# CCR7hi migratory cDC1: Sema7a, PhiP, CD53, CD81, CD9, Ddx6
+
+# Some genes not found: Gal3, EBI2, Ddx3
+feats <- list(
+  c("Cdc42ep3", "Malt1", "Jak2", "Tpm1", "Arl5a", "Aplp2")
+)
+
+# Create final figure
+so_name <- "d2_DC"
+gmm_filt <- c(subtype = "CCR7hi Mig cDC2")
+
+plot_args <- list(
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
+)
+
+pwalk(plot_args, ~ {
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
+  
+  create_fig4(
+    sobj_in      = sobjs[[so_name]],
+    gmm_filt     = gmm_filt,
+    ova_cols     = ova_cols_4,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
+    ref_cols     = so_cols[[so_name]],
+    low_col      = c("white", "#fafafa"),
+    sep_bar_labs = T
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
+
+```
+
+## Fig 4 - day 2 - cDC1 {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
+
+# Features to plot
+# cDC2 tbet-: Ccl2, Cxcl12, Msr1, Pkm, Gal3, Aif1, Mif
+# CCR7hi migratory cDC2: cdc42ep3, EBI2, Malt1, Jak2
+# cDC1: Ddx3, Skil, Nrp2
+# CCR7hi migratory cDC1: Sema7a, PhiP, CD53, CD81, CD9, Ddx6
+
+# Some genes not found: Gal3, EBI2
+feats <- list(
+  c("Skil", "Ddx3x", "Nrp2", "Fscn1", "Tmem123", "Serpinb9")
+)
+  
+# Create final figure
+so_name <- "d2_DC"
+gmm_filt <- c(subtype = "cDC1")
+
+plot_args <- list(
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
+)
+
+pwalk(plot_args, ~ {
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
+  
+  create_fig4(
+    sobj_in      = sobjs[[so_name]],
+    gmm_filt     = gmm_filt,
+    ova_cols     = ova_cols_3,
     feats        = names(umap_cols),
     feat_cols    = umap_cols,
     ref_cols     = so_cols[[so_name]],
@@ -1023,10 +1138,57 @@ pwalk(plot_args, ~ {
 
 ```
 
-## Fig 4 - day 14 DCs {.tabset .tabset-pills}
+## Fig 4 - day 2 - CCR7hi Mig cDC1 {.tabset .tabset-pills}
 
 ```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
 
+# Features to plot
+# cDC2 tbet-: Ccl2, Cxcl12, Msr1, Pkm, Gal3, Aif1, Mif
+# CCR7hi migratory cDC2: cdc42ep3, EBI2, Malt1, Jak2
+# cDC1: Ddx3, Skil, Nrp2
+# CCR7hi migratory cDC1: Sema7a, PhiP, CD53, CD81, CD9, Ddx6
+
+# Some genes not found: Gal3, EBI2
+feats <- list(
+  c("Sema7a", "Phip", "Cd53", "Cd81", "Cd9", "Ddx6")
+)
+
+# Create final figure
+so_name <- "d2_DC"
+gmm_filt <- c(subtype = "CCR7hi Mig cDC1")
+
+plot_args <- list(
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
+)
+
+pwalk(plot_args, ~ {
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
+  
+  create_fig4(
+    sobj_in      = sobjs[[so_name]],
+    gmm_filt     = gmm_filt,
+    ova_cols     = ova_cols_4,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
+    ref_cols     = so_cols[[so_name]],
+    low_col      = "white",
+    sep_bar_labs = T
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
+
+```
+
+## Fig 4 - day 14 - cDC2 Tbet- {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
+
+# Features to plot
 # cDC2 tbet-: CD53, ywhab
 # cDC2 tbet+: siva1, rock2
 # CCR7hi migratory cDC2: Insm1, CD200
@@ -1034,16 +1196,12 @@ pwalk(plot_args, ~ {
 
 # Some genes not found: Dynl12
 feats <- list(
-  c("Cd53", "Ywhab", "Siva1", "Rock2", "Insm1", "Cd200"),  # Beth's list, none are diff expressed 
-  c("Cd53", "Ywhab", "Siva1", "Ccl22", "Eps15", "Il21r"),
-  c("Fcgr4", "Cd72", "Wfdc17", "Pou2f2", "Rgs1", "Acp5"),  # These other genes are top ova high markers
-  c("C1qb", "Clec4a1", "Tmem176a", "Clec4a3", "Pltp", "Prkcb"), 
-  c("Gngt2", "Basp1", "Tmem123", "Sirpa", "Lst1", "Cd300e"), 
-  c("Nfkbiz", "Tcf7l2", "Lnpep", "Itgam", "Ccnd2", "Clec4b1")
+  c("Cd53", "Ywhab", "Cdk2ap2", "Sh3bgrl", "Serp1", "Pycard")
 )
 
 # Create final figure
 so_name <- "d14_DC"
+gmm_filt <- c(subtype = "cDC2 Tbet-")
 
 plot_args <- list(
   str_c("v", seq_along(feats)),  # Tab title
@@ -1056,8 +1214,9 @@ pwalk(plot_args, ~ {
   cat("\n### ", ..1, "\n", sep = "")
   
   create_fig4(
-    sobj_in      = sobjs[[so_name]], 
-    ova_cols     = ova_cols_2,
+    sobj_in      = sobjs[[so_name]],
+    gmm_filt     = gmm_filt,
+    ova_cols     = ova_cols_4,
     feats        = names(umap_cols),
     feat_cols    = umap_cols,
     ref_cols     = so_cols[[so_name]],
@@ -1071,7 +1230,145 @@ pwalk(plot_args, ~ {
 
 ```
 
-## Fig 4 - day 14 FRCs {.tabset .tabset-pills}
+## Fig 4 - day 14 - cDC2 Tbet+ {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
+
+# Features to plot
+# cDC2 tbet-: CD53, ywhab
+# cDC2 tbet+: siva1, rock2
+# CCR7hi migratory cDC2: Insm1, CD200
+# CCR7hi migratory cDC1: Ccl22, Dynl12, Eps15, Il21r
+
+# Some genes not found: Dynl12
+feats <- list(
+  c("Siva1", "Rock2", "Dram1", "Dck", "Mat2a", "Larp4b")
+)
+
+# Create final figure
+so_name <- "d14_DC"
+gmm_filt <- c(subtype = "cDC2 Tbet+")
+
+plot_args <- list(
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
+)
+
+pwalk(plot_args, ~ {
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
+  
+  create_fig4(
+    sobj_in      = sobjs[[so_name]],
+    gmm_filt     = gmm_filt,
+    ova_cols     = ova_cols_4,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
+    ref_cols     = so_cols[[so_name]],
+    low_col      = "white",
+    sep_bar_labs = T
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
+
+```
+
+## Fig 4 - day 14 - CCR7hi Mig cDC2 {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
+
+# Features to plot
+# cDC2 tbet-: CD53, ywhab
+# cDC2 tbet+: siva1, rock2
+# CCR7hi migratory cDC2: Insm1, CD200
+# CCR7hi migratory cDC1: Ccl22, Dynl12, Eps15, Il21r
+
+# Some genes not found: Dynl12
+feats <- list(
+  c("Insm1", "Cd200", "Poglut1", "Adora2a", "Nupr1", "Tes")
+)
+
+# Create final figure
+so_name <- "d14_DC"
+gmm_filt <- c(subtype = "CCR7hi Mig cDC2")
+
+plot_args <- list(
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
+)
+
+pwalk(plot_args, ~ {
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
+  
+  create_fig4(
+    sobj_in      = sobjs[[so_name]],
+    gmm_filt     = gmm_filt,
+    ova_cols     = ova_cols_4,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
+    ref_cols     = so_cols[[so_name]],
+    low_col      = "white",
+    sep_bar_labs = T
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
+
+```
+
+## Fig 4 - day 14 - CCR7hi Mig cDC1 {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
+
+# Features to plot
+# cDC2 tbet-: CD53, ywhab
+# cDC2 tbet+: siva1, rock2
+# CCR7hi migratory cDC2: Insm1, CD200
+# CCR7hi migratory cDC1: Ccl22, Dynl12, Eps15, Il21r
+
+# Some genes not found: Dynl12
+feats <- list(
+  c("Ccl22", "Eps15", "Il21r", "Ccser2", "Ccng2", "Snn")
+)
+
+# Create final figure
+so_name <- "d14_DC"
+gmm_filt <- c(subtype = "CCR7hi Mig cDC1")
+
+plot_args <- list(
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
+)
+
+pwalk(plot_args, ~ {
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
+  
+  create_fig4(
+    sobj_in      = sobjs[[so_name]],
+    gmm_filt     = gmm_filt,
+    ova_cols     = ova_cols_4,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
+    ref_cols     = so_cols[[so_name]],
+    low_col      = "white",
+    sep_bar_labs = T
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
+
+```
+
+## Fig 4 - day 14 - Nr4a1+SC {.tabset .tabset-pills}
 
 ```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
 
@@ -1085,6 +1382,7 @@ feats <- list(
 
 # Create final figure
 so_name <- "d14_FRC"
+gmm_filt <- c(subtype = "Nr4a1+SC")
 
 plot_args <- list(
   str_c("v", seq_along(feats)),  # Tab title
@@ -1097,7 +1395,8 @@ pwalk(plot_args, ~ {
   cat("\n### ", ..1, "\n", sep = "")
   
   create_fig4(
-    sobj_in      = sobjs[[so_name]], 
+    sobj_in      = sobjs[[so_name]],
+    gmm_filt     = gmm_filt,
     ova_cols     = ova_cols_2,
     feats        = names(umap_cols),
     feat_cols    = umap_cols,
@@ -1396,50 +1695,3 @@ vv_params %>%
   )
 
 ```
-
-```{r, eval = F, echo = F}
-
-so <- sobjs[["d14_LEC"]]
-
-gene_list <- VariableFeatures(so)
-
-x <- map(gene_list, ~ {
-  
-  res <- cor(so@assays$RNA@data["Cavin1", ], so@assays$RNA@data[.x, ])
-  
-  res <- tibble(gene = .x, corr = res)
-  
-  res
-  
-}) %>%
-  bind_rows()
-
-```
-
-```{r}
-
-so <- sobjs[["d14_LEC"]]
-
-Idents(so) <- so %>%
-  FetchData("GMM_grp")
-
-keep_cells <- so@meta.data %>%
-  # filter(GMM_grp != "ova low" | subtype != "Collecting") %>%
-  filter(subtype != "Collecting") %>%
-  rownames()
-
-x <- so %>%
-  subset(cells = keep_cells) %>%
-  FindConservedMarkers("ova high", grouping.var = "subtype")
-
-x %>%
-  filter(
-    fLEC_avg_logFC > 0,
-    cLEC_avg_logFC > 0
-    # fLEC_p_val_adj < 0.05,
-    # cLEC_avg_logFC < 0.05
-  )
-
-```
-
-
