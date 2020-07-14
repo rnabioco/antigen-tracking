@@ -318,7 +318,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
 
 # Create figure 4 panels
 create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001, pt_outline = 0.4, 
-                        low_col = c("white", "white"), sep_bar_labs = F, plot_boxes = F, median_pt = 1) {
+                        low_col = c("white", "white"), sep_bar_labs = F, plot_boxes = T, median_pt = 1) {
 
   # Theme elements
   legd_guide <- guide_legend(override.aes = list(
@@ -783,25 +783,173 @@ gg_list %>%
 
 <br>
 
+## Fig 3 - all LECs
+
+Figures for all LEC timepoints
+
+```{r, fig.width = 13, fig.height = 10}
+
+# Figure parameters
+LEC_names <- c("d2_LEC", "d14_LEC")
+LEC_sobjs <- sobjs[LEC_names]
+
+LEC_params <- list(
+  sobj_in      = LEC_sobjs,
+  plot_title   = so_titles[names(LEC_sobjs)],
+  cols_in      = so_cols[names(LEC_sobjs)],
+  pt_size      = c(0.5, 0.1),
+  pt_outline   = c(0.8, 0.4),
+  pt_size_2    = c(0.5, 0.3),
+  pt_outline_2 = c(0.8, 0.5)
+)
+
+# Create panel plots
+gg_list <- LEC_params %>%
+  pmap(
+    create_fig3,
+    box_counts  = c("Relative ova signal" = "ova_fc"), 
+    umap_counts = c("ova counts" = "adt_ovalbumin"),
+    data_slot   = "counts"
+  ) %>%
+  flatten()
+
+# Set violin scales equal
+violin_idx <- seq_along(gg_list) %% 3 == 2
+gg_list[violin_idx] <- gg_list[violin_idx] %>%
+  equalize_x(log_tran = T)
+
+# Create final figure
+gg_list %>%
+  wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
+  plot_annotation(tag_levels = "a") &
+  theme(
+    plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
+    plot.tag = element_text(size = 24, face = "plain"),
+    plot.tag.position = c(-0.08, 1)
+  )
+
+```
+
+---
+
+<br>
+
+<br>
+
+## Fig 3 - all FRCs
+
+Figures for all FRC timepoints
+
+```{r, fig.width = 13, fig.height = 10}
+
+# Figure parameters
+FRC_names <- c("d2_FRC", "d14_FRC")
+FRC_sobjs <- sobjs[FRC_names]
+
+FRC_params <- list(
+  sobj_in      = FRC_sobjs,
+  plot_title   = so_titles[names(FRC_sobjs)],
+  cols_in      = so_cols[names(FRC_sobjs)],
+  pt_size      = c(1.5, 0.1),
+  pt_outline   = c(2, 0.4),
+  pt_size_2    = c(1.5, 0.3),
+  pt_outline_2 = c(2, 0.5)
+)
+
+# Create panel plots
+gg_list <- FRC_params %>%
+  pmap(
+    create_fig3,
+    box_counts  = c("Relative ova signal" = "ova_fc"), 
+    umap_counts = c("ova counts" = "adt_ovalbumin"),
+    data_slot   = "counts"
+  ) %>%
+  flatten()
+
+# Set violin scales equal
+violin_idx <- seq_along(gg_list) %% 3 == 2
+gg_list[violin_idx] <- gg_list[violin_idx] %>%
+  equalize_x(log_tran = T)
+
+# Create final figure
+gg_list %>%
+  wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
+  plot_annotation(tag_levels = "a") &
+  theme(
+    plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
+    plot.tag = element_text(size = 24, face = "plain"),
+    plot.tag.position = c(-0.08, 1)
+  )
+
+```
+
+---
+
+<br>
+
+<br>
+
 ## Figure 4 {.tabset .tabset-pills}
+
+LEC markers associated with high antigen counts. (a) LECs containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. T cells, B cells, and epithelial cells are shown in white (Other). (b) The distribution of ova antigen counts is shown for ova-low and ova-high cells. Dotted lines indicate the mean counts for each population. (c) The fraction of cells belonging to each LEC subtype is shown for ova-low and ova-high populations. (d) Gene expression counts were plotted for select genes associated with ova-high LECs. (e) The expression of ova-high LEC markers is shown for each LEC subtype.  
 
 ```{r "Fig 4", fig.width = 10, fig.height = 11.5, results = "asis"}
 
+# Features to plot
 feats <- list(
-  c("Cavin1", "Fn1", "Prox1", "Tgfa", "Thbs1", "Apold1"),
-  c( "Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
+  c("Prox1",   "Cavin1", "Cavin2",  "Stab1", "Stab2",  "Csf1"),  # Beth's list, Csf1 is not diff expr in latest analysis
+  c("Mmrn1",   "Fn1",    "Prox1",   "Nudt4", "Cldn5",  "Nfat5"), # These other genes are top ova high markers
+  c("Tgfa",    "Prss23", "Thbs1",   "Sgk1",  "Sema3d", "Psap"),
+  c("Selenop", "Tnc",    "Ctsd",    "Nts",   "Cavin2", "Fxyd6"),
+  c("Cyr61",   "Klf4",   "Clca3a1", "Timp3", "Stab1",  "Egfl7")
 )
 
 # Create final figure
 so_name <- "d14_LEC"
 
-cols1 <- "white"
-cols2 <- list(c(cols1, cols1))
+plot_args <- list(
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
+)
+
+pwalk(plot_args, ~ {
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
+  
+  create_fig4(
+    sobj_in      = sobjs[[so_name]], 
+    ova_cols     = ova_cols_1,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
+    ref_cols     = so_cols[[so_name]]
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
+
+```
+
+## Fig 4 - day 2 LECs {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
+
+# Features to plot
+feats <- list(
+  c("Prox1", "Cavin1",  "Cavin2", "Stab1", "Stab2",  "Csf1"),    # Beth's list, Csf1 is not diff expr in latest analysis
+  c("Ccl2",  "Tnc",     "Nts",    "Fn1",   "S1pr1",  "Pdlim1"),  # These other genes are top ova high markers
+  c("Thbs1", "Marcks",  "Stab1",  "Mmrn1", "Fkbp1a", "Cd63"),
+  c("Degs1", "Ctsl",    "Grn",    "Ccnd1", "Procr",  "Emp1"),
+  c("Klf4",  "Selenop", "Ctla2a", "Psap",  "Fabp4",  "Pdpn")
+)
+
+# Create final figure
+so_name <- "d2_LEC"
 
 plot_args <- list(
-  str_c("v", 1:2),  # Tab title
-  feats,            # Features to plot
-  rep(T, 2)         # Plot boxes
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
 )
 
 pwalk(plot_args, ~ {
@@ -815,45 +963,8 @@ pwalk(plot_args, ~ {
     feats        = names(umap_cols),
     feat_cols    = umap_cols,
     ref_cols     = so_cols[[so_name]],
-    sep_bar_labs = F,
-    plot_boxes   = ..3
-  ) %>%
-    print()
-  
-  cat("\n\n---\n\n<br>\n\n<br>\n\n")
-})
-
-```
-
-## Fig 4 - day 2 LECs {.tabset .tabset-pills}
-
-```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
-
-# Feature colors
-feats <- c( "Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
-
-umap_cols <- set_names(
-  x  = feat_cols[seq_along(feats)],
-  nm = feats
-)
-
-# Create final figure
-so_name <- "d2_LEC"
-
-plot_args <- list(v1 = T)
-
-iwalk(plot_args, ~ {
-  cat("\n### ", .y, "\n", sep = "")
-  
-  create_fig4(
-    sobj_in    = sobjs[[so_name]],
-    ova_cols   = ova_cols_2,
-    feats      = names(umap_cols),
-    feat_cols  = umap_cols,
-    ref_cols   = so_cols[[so_name]],
-    plot_boxes = .x,
-    median_pt  = 1.5,
-    low_col    = c("white")
+    sep_bar_labs = T,
+    low_col      = "white"
   ) %>%
     print()
   
@@ -866,6 +977,7 @@ iwalk(plot_args, ~ {
 
 ```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
 
+# Features to plot
 # cDC2 tbet-: Ccl2, Cxcl12, Msr1, Pkm, Gal3, Aif1, Mif
 # CCR7hi migratory cDC2: cdc42ep3, EBI2, Malt1, Jak2
 # cDC1: Ddx3, Skil, Nrp2
@@ -873,22 +985,21 @@ iwalk(plot_args, ~ {
 
 # Some genes not found: Gal3, EBI2, Ddx3
 feats <- list(
-  c("Mif",  "Cd53",   "Malt1", "Pkm",    "Ddx6",     "Lgals3"),
-  c("Ccl2", "Cxcl12", "Msr1",  "Aif1",   "Cdc42ep3", "Jak2"),
-  c("Cd9",  "Skil",   "Nrp2",  "Sema7a", "Phip",     "Cd81")
+  c("Ccl2",   "Cxcl12",   "Msr1",    "Pkm",    "Lgals3",   "Aif1"),  # Beth's list, only genes diff expressed are Pkm
+  c("Mif",    "Cdc42ep3", "Malt1",   "Jak2",   "Skil",     "Nrp2"),
+  c("Sema7a", "Phip",     "Cd53",    "Cd81",   "Cd9",      "Ddx6"),
+  c("Il1rn",  "Zeb2",     "Ptgs2",   "Cebpb",  "Il1b",     "Fpr2"),  # These other genes are top ova high markers
+  c("Ctsb",   "Clec4a1",  "Ms4a6d",  "Sod2",   "Tgfbi",    "Grn"),
+  c("Nampt",  "Ly6i",     "Clec4a3", "Ms4a6c", "Ccl4",     "Lgmn"),
+  c("Cybb",   "Gbp2",     "Sirpa",   "Lst1",   "BC005537", "Grina")
 )
 
 # Create final figure
 so_name <- "d2_DC"
 
-cols1 <- "white"
-cols2 <- list(c(cols1, cols1))
-
 plot_args <- list(
-  str_c("v", 1:3),                    # Tab title
-  feats,                              # Features to plot
-  rep(T, 3),                          # Plot boxes
-  append(cols2, rep(list(cols1), 2))  # UMAP color scale
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
 )
 
 pwalk(plot_args, ~ {
@@ -902,9 +1013,8 @@ pwalk(plot_args, ~ {
     feats        = names(umap_cols),
     feat_cols    = umap_cols,
     ref_cols     = so_cols[[so_name]],
-    low_col      = ..4,
-    sep_bar_labs = T,
-    plot_boxes   = ..3,
+    low_col      = "white",
+    sep_bar_labs = T
   ) %>%
     print()
   
@@ -924,17 +1034,20 @@ pwalk(plot_args, ~ {
 
 # Some genes not found: Dynl12
 feats <- list(
-  c("Cd53", "Rock2", "Eps15", "Il21r", "Dynll2", "Siva1"),
-  c("Cd53", "Ywhab", "Rock2", "Insm1", "Cd200",  "Ccl22")
+  c("Cd53", "Ywhab", "Siva1", "Rock2", "Insm1", "Cd200"),  # Beth's list, none are diff expressed 
+  c("Cd53", "Ywhab", "Siva1", "Ccl22", "Eps15", "Il21r"),
+  c("Fcgr4", "Cd72", "Wfdc17", "Pou2f2", "Rgs1", "Acp5"),  # These other genes are top ova high markers
+  c("C1qb", "Clec4a1", "Tmem176a", "Clec4a3", "Pltp", "Prkcb"), 
+  c("Gngt2", "Basp1", "Tmem123", "Sirpa", "Lst1", "Cd300e"), 
+  c("Nfkbiz", "Tcf7l2", "Lnpep", "Itgam", "Ccnd2", "Clec4b1")
 )
 
 # Create final figure
 so_name <- "d14_DC"
 
 plot_args <- list(
-  str_c("v", 1:2),  # Title
-  feats,            # Features to plot
-  rep(T, 2)         # Plot boxes
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
 )
 
 pwalk(plot_args, ~ {
@@ -949,8 +1062,47 @@ pwalk(plot_args, ~ {
     feat_cols    = umap_cols,
     ref_cols     = so_cols[[so_name]],
     low_col      = "white",
-    sep_bar_labs = T,
-    plot_boxes   = ..3
+    sep_bar_labs = T
+  ) %>%
+    print()
+  
+  cat("\n\n---\n\n<br>\n\n<br>\n\n")
+})
+
+```
+
+## Fig 4 - day 14 FRCs {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
+
+# Some genes not found: Dynl12
+feats <- list(
+  c("Cfd",    "Car3", "Scd1",  "Retn",   "Adig",   "Chchd10"),  # These are top ova high markers
+  c("Wfdc21", "Hp",   "Apoc1", "Adipoq", "Pnpla2", "Plin4"),
+  c("Acsl1",  "Cdo1", "Trf",   "Cd36",   "Glul",   "Chpt1"),
+  c("Lgals3", "Scp2", "Ghr",   "Cidec",  "Lipe",   "Bnip3")
+)
+
+# Create final figure
+so_name <- "d14_FRC"
+
+plot_args <- list(
+  str_c("v", seq_along(feats)),  # Tab title
+  feats                          # Features to plot
+)
+
+pwalk(plot_args, ~ {
+  umap_cols <- feat_cols[seq_along(..2)]
+  umap_cols <- set_names(umap_cols, ..2)
+  cat("\n### ", ..1, "\n", sep = "")
+  
+  create_fig4(
+    sobj_in      = sobjs[[so_name]], 
+    ova_cols     = ova_cols_2,
+    feats        = names(umap_cols),
+    feat_cols    = umap_cols,
+    ref_cols     = so_cols[[so_name]],
+    low_col      = "white"
   ) %>%
     print()
   
@@ -1112,112 +1264,6 @@ plot_grid(
 
 <br>
 
-## Fig 3 - all LECs
-
-Figures for all LEC timepoints
-
-```{r, fig.width = 13, fig.height = 10}
-
-# Figure parameters
-LEC_names <- c("d2_LEC", "d14_LEC")
-LEC_sobjs <- sobjs[LEC_names]
-
-LEC_params <- list(
-  sobj_in      = LEC_sobjs,
-  plot_title   = so_titles[names(LEC_sobjs)],
-  cols_in      = so_cols[names(LEC_sobjs)],
-  pt_size      = c(0.5, 0.1),
-  pt_outline   = c(0.8, 0.4),
-  pt_size_2    = c(0.5, 0.3),
-  pt_outline_2 = c(0.8, 0.5)
-)
-
-# Create panel plots
-gg_list <- LEC_params %>%
-  pmap(
-    create_fig3,
-    box_counts  = c("Relative ova signal" = "ova_fc"), 
-    umap_counts = c("ova counts" = "adt_ovalbumin"),
-    data_slot   = "counts"
-  ) %>%
-  flatten()
-
-# Set violin scales equal
-violin_idx <- seq_along(gg_list) %% 3 == 2
-gg_list[violin_idx] <- gg_list[violin_idx] %>%
-  equalize_x(log_tran = T)
-
-# Create final figure
-gg_list %>%
-  wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
-  plot_annotation(tag_levels = "a") &
-  theme(
-    plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
-    plot.tag = element_text(size = 24, face = "plain"),
-    plot.tag.position = c(-0.08, 1)
-  )
-
-```
-
----
-
-<br>
-
-<br>
-
-## Fig 3 - all FRCs
-
-Figures for all FRC timepoints
-
-```{r, fig.width = 13, fig.height = 10}
-
-# Figure parameters
-FRC_names <- c("d2_FRC", "d14_FRC")
-FRC_sobjs <- sobjs[FRC_names]
-
-FRC_params <- list(
-  sobj_in      = FRC_sobjs,
-  plot_title   = so_titles[names(FRC_sobjs)],
-  cols_in      = so_cols[names(FRC_sobjs)],
-  pt_size      = c(1.5, 0.1),
-  pt_outline   = c(2, 0.4),
-  pt_size_2    = c(1.5, 0.3),
-  pt_outline_2 = c(2, 0.5)
-)
-
-# Create panel plots
-gg_list <- FRC_params %>%
-  pmap(
-    create_fig3,
-    box_counts  = c("Relative ova signal" = "ova_fc"), 
-    umap_counts = c("ova counts" = "adt_ovalbumin"),
-    data_slot   = "counts"
-  ) %>%
-  flatten()
-
-# Set violin scales equal
-violin_idx <- seq_along(gg_list) %% 3 == 2
-gg_list[violin_idx] <- gg_list[violin_idx] %>%
-  equalize_x(log_tran = T)
-
-# Create final figure
-gg_list %>%
-  wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
-  plot_annotation(tag_levels = "a") &
-  theme(
-    plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
-    plot.tag = element_text(size = 24, face = "plain"),
-    plot.tag.position = c(-0.08, 1)
-  )
-
-```
-
----
-
-<br>
-
-<br>
-
 ## Cell type ova correlation
 
 Correlation between RNA counts and ova counts grouped by cell type
@@ -1347,6 +1393,51 @@ vv_params %>%
     ncol     = 2,
     align    = "vh",
     axis     = "trbl"
+  )
+
+```
+
+```{r, eval = F, echo = F}
+
+so <- sobjs[["d14_LEC"]]
+
+gene_list <- VariableFeatures(so)
+
+x <- map(gene_list, ~ {
+  
+  res <- cor(so@assays$RNA@data["Cavin1", ], so@assays$RNA@data[.x, ])
+  
+  res <- tibble(gene = .x, corr = res)
+  
+  res
+  
+}) %>%
+  bind_rows()
+
+```
+
+```{r}
+
+so <- sobjs[["d14_LEC"]]
+
+Idents(so) <- so %>%
+  FetchData("GMM_grp")
+
+keep_cells <- so@meta.data %>%
+  # filter(GMM_grp != "ova low" | subtype != "Collecting") %>%
+  filter(subtype != "Collecting") %>%
+  rownames()
+
+x <- so %>%
+  subset(cells = keep_cells) %>%
+  FindConservedMarkers("ova high", grouping.var = "subtype")
+
+x %>%
+  filter(
+    fLEC_avg_logFC > 0,
+    cLEC_avg_logFC > 0
+    # fLEC_p_val_adj < 0.05,
+    # cLEC_avg_logFC < 0.05
   )
 
 ```

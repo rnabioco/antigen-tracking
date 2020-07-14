@@ -122,6 +122,7 @@ subset_sobj <- function(sobj_in, name, type_vec, include_list, type_column = "ce
   type_in <- type_vec[[name]]
   include_types <- include_list[[name]]
   
+  # Set cell type, subtype, and cluster columns in meta.data
   res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
     mutate(
@@ -1356,7 +1357,7 @@ sobjs <- unique(so_paths) %>%                           # Load objects
 sobjs <- sobjs[match(so_paths, names(sobjs))]
 names(sobjs) <- names(so_paths)
 
-inc_types <- so_types %>%
+inc_types <- so_types %>%                               # Additional cell types to include in objects
   map(~ if_else(
     .x == "LEC",
     list(c("B cell", "T cell", "epithelial")),
@@ -1388,7 +1389,7 @@ sobjs <- sobjs %>%
   imap(~ {
     classify_ova(
       sobj_in     = .x,
-      type_fil    = so_types[.y],
+      type_filt   = so_types[.y],
       data_column = "adt_ovalbumin",
       data_slot   = "counts",
       quiet       = T
