@@ -39,36 +39,47 @@ params:
   # title: Section title
   sobjs:
     value:
-      d2_DC:
-        sobj_in:   "d2_so.rds"
-        sobj_out:  "d2_DC_so_2.rds"
-        cell_type: "DC"
-        title:     "Myeloid Cells (Day 2)"
-      d14_DC:
-        sobj_in:   "d14_so.rds"
-        sobj_out:  "d14_DC_so_2.rds"
-        cell_type: "DC"
-        title:     "Myeloid Cells (Day 14)"
       d2_LEC:
-        sobj_in:   "d2_so.rds"
-        sobj_out:  "d2_LEC_so_2.rds"
+        mat_in:    "results/GEX_CD45neg_d2-ADT_CD45neg_d2/outs/filtered_feature_bc_matrix"
         cell_type: "LEC"
         title:     "Endothelial/Stromal Cells (Day 2)"
+        sobj_out:  "d2_LEC_so_2.rds"
       d14_LEC:
-        sobj_in:   "d14_so.rds"
-        sobj_out:  "d14_LEC_so_2.rds"
+        mat_in:    "results/GEX_CD45neg_d14-ADT_CD45neg_d14/outs/filtered_feature_bc_matrix"
         cell_type: "LEC"
         title:     "Endothelial/Stromal Cells (Day 14)"
-      d2_FRC:
-        sobj_in:   "d2_so.rds"
-        sobj_out:  "d2_FRC_so_2.rds"
-        cell_type: "fibroblast"
-        title:     "Fibroblast/Stromal Cells (Day 2)"
-      d14_FRC:
-        sobj_in:   "d14_so.rds"
-        sobj_out:  "d14_FRC_so_2.rds"
-        cell_type: "fibroblast"
-        title:     "Fibroblast/Stromal Cells (Day 14)"
+        sobj_out:  "d14_LEC_so_2.rds"
+      
+      # d2_DC:
+      #   sobj_in:   "d2_so.rds"
+      #   sobj_out:  "d2_DC_so_2.rds"
+      #   cell_type: "DC"
+      #   title:     "Myeloid Cells (Day 2)"
+      # d14_DC:
+      #   sobj_in:   "d14_so.rds"
+      #   sobj_out:  "d14_DC_so_2.rds"
+      #   cell_type: "DC"
+      #   title:     "Myeloid Cells (Day 14)"
+      # d2_LEC:
+      #   sobj_in:   "d2_so.rds"
+      #   sobj_out:  "d2_LEC_so_2.rds"
+      #   cell_type: "LEC"
+      #   title:     "Endothelial/Stromal Cells (Day 2)"
+      # d14_LEC:
+      #   sobj_in:   "d14_so.rds"
+      #   sobj_out:  "d14_LEC_so_2.rds"
+      #   cell_type: "LEC"
+      #   title:     "Endothelial/Stromal Cells (Day 14)"
+      # d2_FRC:
+      #   sobj_in:   "d2_so.rds"
+      #   sobj_out:  "d2_FRC_so_2.rds"
+      #   cell_type: "fibroblast"
+      #   title:     "Fibroblast/Stromal Cells (Day 2)"
+      # d14_FRC:
+      #   sobj_in:   "d14_so.rds"
+      #   sobj_out:  "d14_FRC_so_2.rds"
+      #   cell_type: "fibroblast"
+      #   title:     "Fibroblast/Stromal Cells (Day 14)"
         
   # These parameters specify paths to clustifyr references for each cell_type provided above
   sobj_refs:
