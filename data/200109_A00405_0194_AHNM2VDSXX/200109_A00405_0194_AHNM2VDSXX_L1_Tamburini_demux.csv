@@ -1,0 +1,15 @@
+Flowcell Summary: AHNM2VDSXX 2x151 L1-Tamburini custom,,,,,,,,,,,
+/beevol/illumina/runs/200109_A00405_0194_AHNM2VDSXX/Data/Intensities/BaseCalls/Unaligned_L123_duali,,,,,,,,,,,
+,,,,,,,,,,,
+Lane Summary,,,,,,,,,,,
+,,,,,,,,,,,
+Lane,Project,Sample,Barcode sequence,PF Clusters,% of the,% Perfect,% One mismatch,Yield (Mbases),% PF,% >= Q30,Mean Quality
+,,,,,lane,barcode,barcode,,Clusters,bases,Score
+1,Tamburini,JH_177_GEX_CD45neg_d14,TGTCCTAG+AGGAAACG,"27,294,461",1.03,96.03,3.97,"8,243",100,71.44,30.99
+1,Tamburini,JH_177_GEX_CD45neg_d2,TCGGTACT+AGGAAACG,"26,171,954",0.99,96.43,3.57,"7,904",100,71.63,31.06
+1,Tamburini,JH_177_GEX_CD45pos_d14,TCGGTACT+CGGTATCA,"34,908,216",1.32,96.01,3.99,"10,542",100,71.95,31.12
+1,Tamburini,JH_177_GEX_CD45pos_d2,AACGGACT+AGGAAACG,"41,711,302",1.58,96.59,3.41,"12,597",100,72.01,31.13
+1,Tamburini,JH_178_ADT_CD45neg_d14,CAGTCTTG+TGAACTCG,"26,633,943",1.01,94.96,5.04,"8,043",100,80.84,33.04
+1,Tamburini,JH_178_ADT_CD45neg_d2,GCGAGATT+TGAACTCG,"39,359,780",1.49,93.6,6.4,"11,887",100,71.8,30.92
+1,Tamburini,JH_178_ADT_CD45pos_d14,AAGGTGGA+ACCTATGC,"25,434,160",0.96,95.96,4.04,"7,681",100,66.18,29.56
+1,Tamburini,JH_178_ADT_CD45pos_d2,TATCGGTC+ACCTATGC,"29,182,049",1.1,96.95,3.05,"8,813",100,68.12,30.06

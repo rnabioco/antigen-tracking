@@ -1,0 +1,11 @@
+Flowcell Summary: AH2FHWDSXY 2x151 L4-Tamburini ,,,,,,,,,,,
+/beevol/illumina/runs/200129_A00405_0201_AH2FHWDSXY/Data/Intensities/BaseCalls/Unaligned_L24_duali,,,,,,,,,,,
+,,,,,,,,,,,
+Lane Summary,,,,,,,,,,,
+,,,,,,,,,,,
+Lane,Project,Sample,Barcode sequence,PF Clusters,% of the,% Perfect,% One mismatch,Yield (Mbases),% PF,% >= Q30,Mean Quality
+,,,,,lane,barcode,barcode,,Clusters,bases,Score
+4,Tamburini_01_22_2020,GEX_CD45neg_d14,TGTCCTAG+AGGAAACG,"23,514,828",0.86,96.68,3.32,"7,101",100,71.44,30.96
+4,Tamburini_01_22_2020,GEX_CD45neg_d2,TCGGTACT+AGGAAACG,"25,507,233",0.93,97.02,2.98,"7,703",100,71.93,31.09
+4,Tamburini_01_22_2020,GEX_CD45pos_d14,TCGGTACT+CGGTATCA,"27,094,353",0.99,96.23,3.77,"8,182",100,72.41,31.18
+4,Tamburini_01_22_2020,GEX_CD45pos_d2,AACGGACT+AGGAAACG,"33,901,331",1.23,97.17,2.83,"10,238",100,72.36,31.17
