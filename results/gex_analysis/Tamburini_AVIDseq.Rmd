@@ -49,7 +49,27 @@ params:
         cell_type: "LEC"
         title:     "Endothelial/Stromal Cells (Day 14)"
         sobj_out:  "d14_LEC_so_2.rds"
-      
+      d2_FRC:
+        mat_in:    "results/GEX_CD45neg_d2-ADT_CD45neg_d2/outs/filtered_feature_bc_matrix"
+        cell_type: "fibroblast"
+        title:     "Fibroblast/Stromal Cells (Day 2)"
+        sobj_out:  "d2_FRC_so_2.rds"
+      d14_FRC:
+        mat_in:    "results/GEX_CD45neg_d14-ADT_CD45neg_d14/outs/filtered_feature_bc_matrix"
+        cell_type: "fibroblast"
+        title:     "Fibroblast/Stromal Cells (Day 14)"
+        sobj_out:  "d14_FRC_so_2.rds"
+      d2_DC:
+        mat_in:    "results/GEX_CD45pos_d2-ADT_CD45pos_d2/outs/filtered_feature_bc_matrix"
+        cell_type: "DC"
+        title:     "Myeloid Cells (Day 2)"
+        sobj_out:  "d2_DC_so_2.rds"
+      d14_DC:
+        mat_in:    "results/GEX_CD45pos_d14-ADT_CD45pos_d14/outs/filtered_feature_bc_matrix"
+        cell_type: "DC"
+        title:     "Myeloid Cells (Day 14)"
+        sobj_out:  "d14_DC_so_2.rds"
+        
       # d2_DC:
       #   sobj_in:   "d2_so.rds"
       #   sobj_out:  "d2_DC_so_2.rds"
