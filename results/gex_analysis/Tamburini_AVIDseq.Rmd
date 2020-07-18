@@ -105,6 +105,8 @@ params:
   sobj_refs:
     value:
       LEC: "ref/ref_LEC_xiang.rda"
+      DC: "ref/ref_DC_walsh.rda"
+      fibroblast: "ref/ref_FRC_walsh.rda"
 ---
 
 <br>

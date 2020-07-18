@@ -1784,62 +1784,27 @@ subtype_refs <- cell_types %>%
       subset(subset = cell_type1 == .x) %>%
       seurat_ref(cluster_col = "cell_type2")
   })
-  
 
+# Add Xiang et al. LEC ref
+LEC_path <- params$sobj_refs$LEC
+LEC_ref <- basename(LEC_path) %>%
+  str_remove(".rda$")
 
+load(here(LEC_path))
 
-  
-  
-# Args for subtype refs
-# objs <- c(
-#   d2  = "d2_so.rds",
-#   d14 = "d14_so.rds"
-# )
-# 
-# types <- c(
-#   DC = "DC",
-#   FRC = "fibroblast"
-# )
-# Separate refs for each timepoint
-# arg_tbl <- expand_grid(objs, types)
-# 
-# names(arg_tbl$objs) <- str_c(names(arg_tbl$objs), "_", names(arg_tbl$types))
-# 
-# refs <- map2(arg_tbl$objs, arg_tbl$types, ~ {
-#   
-#   res <- here(params$rds_dir, .x) %>%
-#     read_rds() %>%
-#     subset(subset = cell_type1 == .y) %>%
-#     seurat_ref(cluster_col = "cell_type2")
-#   
-#   res
-# })
-# Combined ref for timepoints
-# refs <- imap(types, ~ {
-#   so_type <- .x
-# 
-#   res <- map(objs, ~ {
-#     here(params$rds_dir, .x) %>%
-#       read_rds() %>%
-#       subset(subset = cell_type1 == so_type)
-#   })
-#   
-#   res <- merge(
-#     x = res[[1]], 
-#     y = res[[2:length(res)]]
-#   )
-#   
-#   res <- res %>%
-#     seurat_ref(cluster_col = "cell_type2")
-#   
-#   res
-# })
+subtype_refs$LEC <- eval(parse(text = LEC_ref))
+
+# Save ref matrices
+params$sobj_refs[c("DC", "fibroblast")] %>%
+  iwalk(~ {
+    ref <- subtype_refs[[.y]]
+    
+    save(ref, file = here(.x))
+  })
+
+save(type_ref, file = here("ref/ref_celltype_walsh.rda"))
 
 ```
-
-
-
-
 
 ```{r "TEST processing"}
 
@@ -1863,41 +1828,22 @@ sobjs <- sobjs %>%
   })
 
 # Assign cell types
-immgen_types <- c(
-  "Endothelial cells" = "LEC",
-  "DC"                = "DC",
-  "Monocytes"         = "DC",
-  "Macrophages"       = "DC",
-  "Neutrophils"       = "DC",
-  "Fibroblasts"       = "fibroblast",
-  "Stromal cells"     = "fibroblast",
-  "Epithelial cells"  = "epithelial",
-  "NK cells"          = "NK",
-  "Tgd"               = "T cell",
-  "T cells"           = "T cell",
-  "B cells"           = "B cell"
-)
-
-x <- sobjs %>%
+sobjs <- sobjs %>%
   map(~ {
-    res <- .x %>%
-      clustify(
-        cluster_col   = "RNA_clusters",
-        ref_mat       = type_ref,
-        # ref_mat       = clustifyrdata::immgen_ref,
-        rename_prefix = "t1",
-        seurat_out    = T,
-        threshold     = 0.5
-      )
+    res <- clustify(
+      input         = .x,
+      cluster_col   = "RNA_clusters",
+      ref_mat       = type_ref,
+      rename_prefix = "t1",
+      seurat_out    = T,
+      threshold     = 0.5
+    )
     
-    # res@meta.data <- res@meta.data %>%
-    #   rownames_to_column("cell_id") %>%
-    #   mutate(
-    #     t1_type = str_remove(t1_type, " \\(.+\\)$"),
-    #     cell_type = if_else(t1_type == "unassigned", t1_type, immgen_types[t1_type])
-    #   ) %>%
-    #   select(-UMAP_1, -UMAP_2) %>%
-    #   column_to_rownames("cell_id")
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(cell_type = t1_type) %>%
+      select(-UMAP_1, -UMAP_2) %>%
+      column_to_rownames("cell_id")
     
     res
   })
@@ -1916,7 +1862,7 @@ inc_types <- so_types %>%
   )) %>%
   flatten()
 
-sobjs_type <- imap(sobjs_type, ~ {
+sobjs_type <- imap(sobjs, ~ {
   subset_sobj(
     sobj_in     = .x,
     cell_types  = c(so_types[[.y]], inc_types[[.y]]),
@@ -1924,72 +1870,16 @@ sobjs_type <- imap(sobjs_type, ~ {
   )
 })
 
-
-
-x <- sobjs_type[grepl("DC$|FRC$", names(sobjs_type))]
-
 # Run clustifyr
-sobjs_subtype <- imap(x, ~ {
+sobjs_subtype <- imap(sobjs_type, ~ {
   so_type <- so_types[[.y]]
   
   run_clustifyr(
     sobj_in = .x,
     type_in = so_type,
-    ref     = refs[[.y]]
-    # ref     = here(params$sobj_refs[so_type])
+    ref     = subtype_refs[[so_type]]
   )
 })
-
-
-
-
-
-
-
-
-# type_ref <- d14_res1_type %>%
-#   arrange(as.numeric(seurat_clusters)) %>%
-#   mutate(
-#     cell_type = d14.new.cluster.ids,
-#     type = str_remove(type, " \\(.+\\)$")
-#   ) %>%
-#   select(type, cell_type) %>%
-#   unique()
-# 
-# type_ref <- set_names(
-#   x  = type_ref$cell_type,
-#   nm = type_ref$type
-# )
-# 
-# type_ref["Neutrophils"] <- "DC"
-# d14_res1 <- clustify(
-#   input       = d14_so,
-#   cluster_col = "seurat_clusters",
-#   ref_mat     = clustifyrdata::immgen_ref,
-#   seurat_out  = T,
-#   threshold   = 0.5,
-#   verbose     = T
-# )
-# d14_res1_type <- FetchData(d14_res1, vars = c("seurat_clusters", "type", "r")) %>%
-#   rownames_to_column(var = "cell_id") %>%
-#   dplyr::select(-cell_id) %>%
-#   unique()
-# d14_res1_type
-# write_csv(d14_res1_type, paste(plots_folder, "d14/d14_corr_immgen.csv", sep = "")) 
-# d14_res2 <- clustify(
-#   input       = d14_so,
-#   cluster_col = "seurat_clusters",
-#   ref_mat     = clustifyrdata::ref_tabula_muris_drop,
-#   seurat_out  = T,
-#   threshold   = 0.5,
-#   verbose     = T
-# )
-# d14_res2_type <- FetchData(d14_res2, vars = c("seurat_clusters", "type", "r")) %>%
-#   rownames_to_column(var = "cell_id") %>%
-#   dplyr::select(-cell_id) %>%
-#   unique()
-# d14_res2_type
-# write_csv(d14_res2_type, paste(plots_folder, "d14/d14_corr_tabmuris.csv", sep = "")) 
 
 ```
 
