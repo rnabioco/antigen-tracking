@@ -313,113 +313,49 @@ cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6, dims = 1:40,
   res
 }
 
-# OLD Subset Seurat objects for plotting
-subset_sobj_OLD <- function(sobj_in, name, type_vec, include_list, type_column = "cell_type1", subtype_column = "cell_type2",
-                            clust_column = "cell_type3", data_column = "ova_fc", min_cells = 15, cap_names = T,
-                            orig_idents = c("_1" = "CD45_neg", "_2" = "CD45_pos"),
-                            type_filt = c("DC" = "CD45_pos", "LEC" = "CD45_neg", "fibroblast" = "CD45_neg"), ...) {
+# Calculate feature fold change with median control group signal
+calc_feat_fc <- function(sobj_in, feat = "adt_ovalbumin", data_slot = "counts", add_pseudo = F,
+                         fc_column = "ova_fc", grp_column = "cell_type", control_grps = c("B cell", "T cell")) {
   
-  res <- sobj_in
+  res <- sobj_in %>%
+    AddMetaData(FetchData(
+      object = ., 
+      vars   = feat,
+      slot   = data_slot
+    ))
   
-  # Pull info for cell_type from reference lists
-  type_in <- type_vec[[name]]
-  include_types <- include_list[[name]]
-  
-  # Set cell type, subtype, and cluster columns in meta.data
   res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
+    mutate(con_grp = if_else(!!sym(grp_column) %in% con_types, T, F)) %>%
+    group_by(con_grp) %>%
+    mutate(con_med = ifelse(con_grp, median(!!sym(feat)), NA)) %>%
+    ungroup() %>%
     mutate(
-      cell_type       = !!sym(type_column),
-      subtype         = !!sym(subtype_column),
-      subtype_cluster = !!sym(clust_column)
+      con_med = max(con_med, na.rm = T),
+      !!sym(fc_column) := adt_ovalbumin / con_med
     ) %>%
+    dplyr::select(-con_grp, -con_med) %>%
     column_to_rownames("cell_id")
   
-  # Set orig.ident based on cell_id suffix
-  if (!is.null(orig_idents)) {
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
-        orig.ident = str_extract(cell_id, "_[0-9]+$"),
-        orig.ident = orig_idents[orig.ident]
-      ) %>%
-      column_to_rownames("cell_id")
-  }
-  
-  # Filter cells based on orig.ident
-  if (!is.null(type_filt)) {
-    res <- res %>%
-      subset(subset = orig.ident == type_filt[type_in])
-  }
-  
-  # Filter cells based on input cell type
-  res <- res %>%
-    subset(subset = cell_type %in% c(type_in, include_types))
-  
-  if (!type_in %in% pull(res@meta.data, cell_type)) {
-    stop(str_c("ERROR: Cell type not present after filtering for ", type_filt[type_in]))
-  }
-  
-  # Filter cells based on number of cells per subtype
-  if (!is.null(min_cells)) {
-    keep_cells <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      group_by(subtype) %>%
-      filter(n_distinct(cell_id) > min_cells) %>%
-      pull(cell_id)
-    
-    res <- res %>%
-      subset(cells = keep_cells)
-  }
-  
-  # Score cell cycle genes
-  s.genes <- cc.genes$s.genes %>%
-    str_to_title()
-  
-  g2m.genes <- cc.genes$g2m.genes %>%
-    str_to_title()
-  
-  res <- res %>%
-    CellCycleScoring(
-      s.features   = s.genes, 
-      g2m.features = g2m.genes
-    )
-  
-  # Re-process object
-  res <- res %>%
-    FindVariableFeatures(selection.method = "vst") %>%
-    ScaleData(vars.to.regress = c("S.Score", "G2M.Score")) %>%
-    RunPCA() %>%
-    RunUMAP(dims = 1:40) %>%
-    AddMetaData(FetchData(., c("PC_1", "PC_2"))) %>%
-    AddMetaData(FetchData(., c("UMAP_1", "UMAP_2")))
   
   # Add pseudo count
-  if (0 %in% pull(res@meta.data, !!sym(data_column))) {
+  if (0 %in% pull(res@meta.data, fc_column)) {
     res@meta.data <- res@meta.data %>%
       rownames_to_column("cell_id") %>%
       mutate(
-        pseudo = ifelse(!!sym(data_column) > 0, !!sym(data_column), NA),
+        pseudo = ifelse(!!sym(fc_column) > 0, !!sym(fc_column), NA),
         pseudo = min(pseudo, na.rm = T) * 0.5,
-        !!sym(data_column) := !!sym(data_column) + pseudo
+        !!sym(fc_column) := !!sym(fc_column) + pseudo
       ) %>%
       column_to_rownames("cell_id")
   }
-
-  # Capitalize subtypes
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(
-      subtype = str_to_title_v2(subtype),
-      subtype_cluster = str_to_title_v2(subtype_cluster)
-    ) %>%
-    column_to_rownames("cell_id")
   
   res
 }
 
 # Subset Seurat objects for plotting
-subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type", ...) {
+subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type",
+                        regress_vars = NULL, ...) {
   
   res <- sobj_in
   
@@ -449,10 +385,9 @@ subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type", ..
   # Re-process object
   res <- res %>%
     FindVariableFeatures(selection.method = "vst") %>%
-    ScaleData(vars.to.regress = c("S.Score", "G2M.Score")) %>%
+    ScaleData(vars.to.regress = regress_vars) %>%
     RunPCA() %>%
-    RunUMAP(dims = 1:40) %>%
-    AddMetaData(FetchData(., c("UMAP_1", "UMAP_2")))
+    RunUMAP(dims = 1:40)
   
   res
 }
@@ -486,21 +421,17 @@ run_clustifyr <- function(sobj_in, type_in, ref, resolution = 1.8, type_column =
       verbose = F
     ) %>%
     clustify(
-      ref_mat = ref,
-      cluster_col = "seurat_clusters"
-      # ref_mat = eval(parse(text = ref)),
+      ref_mat       = ref,
+      cluster_col   = "seurat_clusters",
+      rename_prefix = "t2"
     )
   
   res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
     mutate(
-      !!subtype_column := if_else(!!type_column == type_in, type, !!type_column),
+      !!subtype_column := if_else(!!type_column == type_in, t2_type, !!type_column),
       !!subtype_column := str_to_title_v2(!!subtype_column),
       !!clust_column   := if_else(!!type_column == type_in, str_c(seurat_clusters, "-", !!subtype_column), !!subtype_column)
-    ) %>%
-    rename(
-      UMAP_1 = UMAP_1.x,
-      UMAP_2 = UMAP_2.x
     ) %>%
     column_to_rownames("cell_id")
   
@@ -614,6 +545,7 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
       GMM_grp = str_to_lower(GMM_grp),
       GMM_grp = str_c("ova ", GMM_grp),
     ) %>%
+    select(-!!sym(data_column)) %>%
     column_to_rownames("cell_id")
   
   # Add OVA groups to meta.data
@@ -1564,12 +1496,9 @@ purrr::walk(R_packages, library, character.only = T)
 knitr::opts_chunk$set(message = F, warning = F)
 
 # Set paths/names
-# so_paths <- params$sobjs %>%
-#   pull_nest_vec("sobj_in") %>%
-#   map_chr(~ here(params$rds_dir, .x))
-
 mat_paths <- params$sobjs %>%
-  pull_nest_vec("mat_in")
+  pull_nest_vec("mat_in") %>%
+  map_chr(here)
 
 so_out <- params$sobjs %>%
   pull_nest_vec("sobj_out") %>%
@@ -1581,23 +1510,152 @@ so_types <- params$sobjs %>%
 so_titles <- params$sobjs %>%
   pull_nest_vec("title")
 
+type_ref_path <- here(params$ref_dir, params$type_ref)
+
+subtype_ref_paths <- params$subtype_refs %>%
+  map_chr(~ here(params$ref_dir, .x))
+
+# Load clustifyr refs?
+load_refs <- all(file.exists(c(type_ref_path, subtype_ref_paths)))
+
 # Load Seurat objects?
 load_sobjs <- all(file.exists(so_out))
 
 ```
 
-```{r "Create sobjs", eval = !load_sobjs, echo = F}
+```{r "Create refs", eval = !load_refs, echo = F}
 
-# Load and subset objects
-# Avoid loading same objects twice
-sobjs <- unique(so_paths) %>%                           # Load objects
-  set_names(., .) %>%
+type_column <- "cell_type1"
+subtype_column <- "cell_type2"
+
+# Load Seurat objects for refs
+ref_sobjs <- params$ref_sobjs %>%
+  here(params$rds_dir, .) %>%
   map(read_rds)
 
-sobjs <- sobjs[match(so_paths, names(sobjs))]
-names(sobjs) <- names(so_paths)
+ref_sobj <- merge(ref_sobjs[[1]], ref_sobjs[2:length(ref_sobjs)])
 
-inc_types <- so_types %>%                               # Additional cell types to include in objects
+# Cell type refs
+type_ref <- ref_sobj %>%
+  seurat_ref(cluster_col = type_column)
+
+# Cell subtype refs
+# Create separate subtype ref for each cell type
+cell_types <- ref_sobj@meta.data %>%
+  pull(type_column) %>%
+  unique()
+
+subtype_refs <- cell_types %>%
+  set_names(., .) %>%
+  map(~ {
+    ref_sobj %>%
+      subset(subset = !!sym(type_column) == .x) %>%
+      seurat_ref(cluster_col = subtype_column)
+  })
+
+# Add Xiang et al. LEC ref
+LEC_ref <- str_remove(params$subtype_refs$LEC, "\\.rda$")
+
+load(here(params$ref_dir, params$subtype_refs$LEC))
+
+subtype_refs$LEC <- eval(parse(text = LEC_ref))
+
+# Save DC and FRC ref matrices
+params$subtype_refs[c("DC", "fibroblast")] %>%
+  iwalk(~ {
+    ref <- subtype_refs[[.y]]
+    name <- str_remove(.x, "\\.rda$")
+    
+    assign(name, ref)
+    
+    save(list = name, file = here(params$ref_dir, .x))
+  })
+
+save(type_ref, file = here(params$ref_dir, "ref_celltype_walsh.rda"))
+
+```
+
+```{r "Load refs", eval = load_refs, echo = F}
+
+# Load cell type ref
+type_ref <- str_remove(params$type_ref, "\\.rda$")
+
+load(here(params$ref_dir, params$type_ref))
+
+# Load cell subtype refs
+subtype_refs <- params$subtype_refs %>%
+  map(~ {
+    ref <- str_remove(.x, "\\.rda$")
+    
+    load(here(params$ref_dir, .x))
+    
+    eval(parse(text = ref))
+  })
+
+```
+
+```{r "Create sobjs", eval = !load_sobjs, echo = F}
+
+# Create sobj
+# Avoid loading same matrix twice
+sobjs <- unique(mat_paths) %>%
+  set_names(., .) %>%
+  map(create_sobj, adt_count_min = 0)
+
+# Normalize and cluster
+sobjs <- sobjs %>%
+  map(~ {
+    .x %>%
+      norm_sobj() %>%
+      cluster_RNA(
+        assay      = "RNA",
+        resolution = 1,
+        pca_meta   = F,
+        umap_meta  = F 
+      )
+  })
+
+# Assign cell types
+sobjs <- sobjs %>%
+  map(~ {
+    res <- clustify(
+      input         = .x,
+      cluster_col   = "RNA_clusters",
+      ref_mat       = type_ref,
+      rename_prefix = "t1",
+      seurat_out    = T,
+      threshold     = 0.5
+    )
+    
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(cell_type = t1_type) %>%
+      select(-UMAP_1, -UMAP_2) %>%
+      column_to_rownames("cell_id")
+    
+    res
+  })
+
+# Calculate OVA fold change
+sobjs <- sobjs %>%
+  map(~ {
+    calc_feat_fc(
+      sobj_in      = .x,
+      feat         = "adt_ovalbumin",
+      data_slot    = "counts",
+      grp_column   = "cell_type",
+      control_grps = c("B cell", "T cell"),
+      add_pseudo   = T
+    )
+  })
+
+# Expand Seurat object list for subsets
+sobjs <- sobjs[match(mat_paths, names(sobjs))]
+names(sobjs) <- names(mat_paths)
+
+# Subset based on cell type
+# Additional cell types to include in objects
+inc_types <- so_types %>%
   map(~ if_else(
     .x == "LEC",
     list(c("B cell", "T cell", "epithelial")),
@@ -1605,8 +1663,27 @@ inc_types <- so_types %>%                               # Additional cell types 
   )) %>%
   flatten()
 
-sobjs <- imap(sobjs, subset_sobj, so_types, inc_types)  # Subset objects
-sobjs <- imap(sobjs, run_clustifyr, so_types)           # Run clustifyr
+sobjs <- sobjs %>%
+  imap(~ {
+    subset_sobj(
+      sobj_in      = .x,
+      cell_types   = c(so_types[[.y]], inc_types[[.y]]),
+      type_column  = "cell_type",
+      regress_vars = c("S.Score", "G2M.Score")
+    )
+  })
+
+# Run clustifyr to assign subtypes
+sobjs <- sobjs %>%
+  imap(~ {
+    so_type <- so_types[[.y]]
+    
+    run_clustifyr(
+      sobj_in = .x,
+      type_in = so_type,
+      ref     = subtype_refs[[so_type]]
+    )
+  })
 
 # Combine CCR7hi XCR- Mig cDC2s and CCR7hi Mig cDC2s
 DC_idx <- so_types[names(sobjs)] == "DC"
@@ -1755,139 +1832,7 @@ so_cols <- so_types %>%
 
 
 
-```{r "TEST subtype refs"}
-
-# Load Seurat objects for refs
-ref_sobjs <- c(
-  d2  = "d2_so.rds",
-  d14 = "d14_so.rds"
-)
-
-ref_sobjs <- ref_sobjs %>%
-  map(~ here(params$rds_dir, .x)) %>%  # Use map to keep names
-  map(read_rds)
-
-ref_so <- merge(ref_sobjs[[1]], ref_sobjs[2:length(ref_sobjs)])
-
-# Cell type refs
-type_ref <- ref_so %>%
-  seurat_ref(cluster_col = "cell_type1")
-
-# Cell subtype refs
-# Create separate subtype ref for each cell type
-cell_types <- unique(ref_so$cell_type1)
-
-subtype_refs <- cell_types %>%
-  set_names(., .) %>%
-  map(~ {
-    ref_so %>%
-      subset(subset = cell_type1 == .x) %>%
-      seurat_ref(cluster_col = "cell_type2")
-  })
-
-# Add Xiang et al. LEC ref
-LEC_path <- params$sobj_refs$LEC
-LEC_ref <- basename(LEC_path) %>%
-  str_remove(".rda$")
-
-load(here(LEC_path))
-
-subtype_refs$LEC <- eval(parse(text = LEC_ref))
-
-# Save ref matrices
-params$sobj_refs[c("DC", "fibroblast")] %>%
-  iwalk(~ {
-    ref <- subtype_refs[[.y]]
-    
-    save(ref, file = here(.x))
-  })
-
-save(type_ref, file = here("ref/ref_celltype_walsh.rda"))
-
-```
-
-```{r "TEST processing"}
-
-# Create sobj
-# Avoid loading same matrix twice
-sobjs <- unique(mat_paths) %>%
-  set_names(., .) %>%
-  map(create_sobj, adt_count_min = 0)
-
-# Normalize and cluster
-sobjs <- sobjs %>%
-  map(~ {
-    .x %>%
-      norm_sobj(regress_vars = c("S.Score", "G2M.Score")) %>%
-      cluster_RNA(
-        assay      = "RNA",
-        resolution = 1,
-        pca_meta   = F,
-        umap_meta  = F 
-      )
-  })
-
-# Assign cell types
-sobjs <- sobjs %>%
-  map(~ {
-    res <- clustify(
-      input         = .x,
-      cluster_col   = "RNA_clusters",
-      ref_mat       = type_ref,
-      rename_prefix = "t1",
-      seurat_out    = T,
-      threshold     = 0.5
-    )
-    
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(cell_type = t1_type) %>%
-      select(-UMAP_1, -UMAP_2) %>%
-      column_to_rownames("cell_id")
-    
-    res
-  })
-
-# Expand Seurat object list for subsets
-sobjs <- sobjs[match(mat_paths, names(sobjs))]
-names(sobjs) <- names(mat_paths)
-
-# Subset based on cell type
-# Additional cell types to include in objects
-inc_types <- so_types %>%
-  map(~ if_else(
-    .x == "LEC",
-    list(c("B cell", "T cell", "epithelial")),
-    list(c("B cell", "T cell"))
-  )) %>%
-  flatten()
-
-sobjs_type <- imap(sobjs, ~ {
-  subset_sobj(
-    sobj_in     = .x,
-    cell_types  = c(so_types[[.y]], inc_types[[.y]]),
-    type_column = "cell_type"
-  )
-})
-
-# Run clustifyr
-sobjs_subtype <- imap(sobjs_type, ~ {
-  so_type <- so_types[[.y]]
-  
-  run_clustifyr(
-    sobj_in = .x,
-    type_in = so_type,
-    ref     = subtype_refs[[so_type]]
-  )
-})
-
-```
-
-
-
-
-
-```{r "TEST DC refs"}
+```{r "TEST DC refs", eval = F, echo = F}
 
 migDC_data <- read_csv("https://sharehost.hms.harvard.edu/immgen/GSE15907/GSE15907_Normalized_Data.csv")
 
@@ -1917,7 +1862,7 @@ ref_migDC <- migDC %>%
 
 ```
 
-```{r "Immgen refs"}
+```{r "Immgen refs", eval = F, echo = F}
 
 neg14_data <- Read10X("/home/rmsheridan/Projects/antigen-tracking/results/original_run/CD45neg_d14/filtered_feature_bc_matrix/")
 pos14_data <- Read10X("/home/rmsheridan/Projects/antigen-tracking/results/original_run/CD45pos_d14/filtered_feature_bc_matrix/")
@@ -1990,7 +1935,7 @@ d14_res1_type %>%
 
 ```
 
-```{r "DC refs"}
+```{r "DC refs", eval = F, echo = F}
 
 d14_DC_so <- subset(d14_so, subset = cell_type1 == "DC")
 d14_DC_all.genes <- rownames(d14_DC_so)
@@ -2079,7 +2024,7 @@ d14_DC_so@meta.data$cell_typeDC <- d14DC.new.cluster.ids[d14_DC_so$seurat_cluste
 
 ```
 
-```{r}
+```{r, eval = F, echo = F}
 
 #if scrunchy doesn't load properly use reticulate::py_install("igraph") and reticulate::py_install("leidenalg")
 load(here("ref/ref_mousespleenDC.rda"))
@@ -2144,6 +2089,65 @@ ref_lcDC <- lc_genes_DC %>%
 rownames(ref_lcDC) <- lc_genes_DC$mmusculus_homolog_associated_gene_name
 
 ```
+
+```{r "Create sobjs OLD", eval = F, echo = F}
+
+# Load and subset objects
+# Avoid loading same objects twice
+sobjs <- unique(so_paths) %>%                           # Load objects
+  set_names(., .) %>%
+  map(read_rds)
+
+sobjs <- sobjs[match(so_paths, names(sobjs))]
+names(sobjs) <- names(so_paths)
+
+inc_types <- so_types %>%                               # Additional cell types to include in objects
+  map(~ if_else(
+    .x == "LEC",
+    list(c("B cell", "T cell", "epithelial")),
+    list(c("B cell", "T cell"))
+  )) %>%
+  flatten()
+
+sobjs <- imap(sobjs, subset_sobj, so_types, inc_types)  # Subset objects
+sobjs <- imap(sobjs, run_clustifyr, so_types)           # Run clustifyr
+
+# Combine CCR7hi XCR- Mig cDC2s and CCR7hi Mig cDC2s
+DC_idx <- so_types[names(sobjs)] == "DC"
+
+sobjs[DC_idx] <- sobjs[DC_idx] %>%
+  map(~ {
+    .x@meta.data <- .x@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(
+        subtype = str_replace(subtype, "^CCR7hi XCR1- Mig cDC2$", "CCR7hi Mig cDC2"),
+        subtype_cluster = str_replace(subtype_cluster, "-CCR7hi XCR1- Mig cDC2$", "-CCR7hi Mig cDC2")
+      ) %>%
+      column_to_rownames("cell_id")
+    
+    .x
+  })
+
+# Classify cells based on OVA signal
+sobjs <- sobjs %>%
+  imap(~ {
+    classify_ova(
+      sobj_in     = .x,
+      filt_column = "cell_type",
+      filt        = so_types[.y],
+      data_column = "adt_ovalbumin",
+      data_slot   = "counts",
+      quiet       = T
+    )
+  })
+
+# Write new objects
+sobjs %>%
+  iwalk(~ write_rds(.x, path = so_out[.y]))
+
+```
+
+
 
 
 
