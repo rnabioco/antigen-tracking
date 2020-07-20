@@ -67,11 +67,12 @@ params:
         
   # These parameters specify paths to clustifyr references
   ref_sobjs: ["d2_so.rds", "d14_so.rds"]
-  type_ref: "ref_celltype_walsh.rda"
+  type_ref:  "ref_celltype_walsh.rda"
+  xiang_ref: "ref_LEC_xiang.rda"
   subtype_refs:
     value:
       DC:         "ref_DC_walsh.rda"
-      LEC:        "ref_LEC_xiang.rda"
+      LEC:        "ref_LEC_walsh.rda"
       fibroblast: "ref_FRC_walsh.rda"
 ---
 
@@ -744,8 +745,6 @@ corr_params <- list(
   plot_title = so_titles[names(sobjs)], 
   cols_in    = so_cols[names(sobjs)]
 )
-
-n_plot <- 0
 
 ```
 

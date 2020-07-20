@@ -1663,6 +1663,8 @@ type_ref <- ref_sobj %>%
 
 # Cell subtype refs
 # Create separate subtype ref for each cell type
+con_types <- c("T cell", "B cell", "epithelial")
+
 cell_types <- ref_sobj@meta.data %>%
   pull(type_column) %>%
   unique()
@@ -1671,19 +1673,36 @@ subtype_refs <- cell_types %>%
   set_names(., .) %>%
   map(~ {
     ref_sobj %>%
-      subset(subset = !!sym(type_column) == .x) %>%
+      subset(subset = !!sym(type_column) %in% c(con_types, .x)) %>%
       seurat_ref(cluster_col = subtype_column)
   })
 
-# Add Xiang et al. LEC ref
-LEC_ref <- str_remove(params$subtype_refs$LEC, "\\.rda$")
+con_ref <- ref_sobj %>%
+  subset(subset = !!sym(type_column) %in% con_types) %>%
+  seurat_ref(cluster_col = type_column)
 
-load(here(params$ref_dir, params$subtype_refs$LEC))
+# Load Xiang et al. LEC ref
+LEC_ref <- str_remove(params$xiang_ref, "\\.rda$")
 
-subtype_refs$LEC <- eval(parse(text = LEC_ref))
+load(here(params$ref_dir, params$xiang_ref))
 
-# Save DC and FRC ref matrices
-params$subtype_refs[c("DC", "fibroblast")] %>%
+LEC_ref <- eval(parse(text = LEC_ref))
+
+# Merge control ref with Xiang LEC ref
+LEC_ref <- LEC_ref[rownames(LEC_ref) %in% rownames(con_ref), ]
+con_ref <- con_ref[rownames(LEC_ref), ]
+
+if (!identical(rownames(con_ref), rownames(LEC_ref))) {
+  stop("Rownames do not match for control and LEC refs.")
+}
+
+LEC_ref <- cbind(con_ref, LEC_ref)
+
+# Add new LEC ref to list
+subtype_refs$LEC <- LEC_ref
+
+# Save subtype ref matrices
+params$subtype_refs %>%
   iwalk(~ {
     ref <- subtype_refs[[.y]]
     name <- str_remove(.x, "\\.rda$")
