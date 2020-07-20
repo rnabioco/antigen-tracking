@@ -1,7 +1,7 @@
 
 ```{r "Functions", echo = F}
 
-# Functions
+# Utility ----
 
 # Plot color palette
 plot_color_palette <- function(input_cols) {
@@ -109,6 +109,9 @@ set_type_cols <- function(type_in, sobjs_in, type_key, type_column = "subtype",
   
   res
 }
+
+
+# Processing ----
 
 # Import matrices and create Seurat object
 create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL, adt_count_min = 50,
@@ -326,7 +329,7 @@ calc_feat_fc <- function(sobj_in, feat = "adt_ovalbumin", data_slot = "counts", 
   
   res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
-    mutate(con_grp = if_else(!!sym(grp_column) %in% con_types, T, F)) %>%
+    mutate(con_grp = if_else(!!sym(grp_column) %in% control_grps, T, F)) %>%
     group_by(con_grp) %>%
     mutate(con_med = ifelse(con_grp, median(!!sym(feat)), NA)) %>%
     ungroup() %>%
@@ -393,23 +396,8 @@ subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type",
 }
 
 # Re-cluster and run clustify
-run_clustifyr <- function(sobj_in, type_in, ref, resolution = 1.8, type_column = "cell_type",
-                          subtype_column = "subtype", clust_column = "subtype_cluster") {
-  
-  res <- sobj_in
-  
-  # if (is_empty(ref)) {
-  #   return(res)
-  # }
-  # load(ref)
-  
-  type_column    <- sym(type_column)
-  subtype_column <- sym(subtype_column)
-  clust_column   <- sym(clust_column)
-  
-  # ref <- ref %>%
-  #   basename() %>% 
-  #   str_remove("\\.rda$")
+run_clustifyr <- function(sobj_in, type_in = NULL, ref, resolution = 1.8, type_column = "cell_type",
+                          subtype_column = "subtype", clust_column = "subtype_cluster", prefix = NULL, ...) {
   
   res <- sobj_in %>%
     FindNeighbors(
@@ -423,17 +411,31 @@ run_clustifyr <- function(sobj_in, type_in, ref, resolution = 1.8, type_column =
     clustify(
       ref_mat       = ref,
       cluster_col   = "seurat_clusters",
-      rename_prefix = "t2"
+      rename_prefix = prefix,
+      ...
     )
   
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(
-      !!subtype_column := if_else(!!type_column == type_in, t2_type, !!type_column),
-      !!subtype_column := str_to_title_v2(!!subtype_column),
-      !!clust_column   := if_else(!!type_column == type_in, str_c(seurat_clusters, "-", !!subtype_column), !!subtype_column)
-    ) %>%
-    column_to_rownames("cell_id")
+  if (!is.null(type_in)) {
+    new_col <- "type"
+    
+    if (!is.null(prefix)) {
+      new_col <- str_c(prefix, "_", new_col)
+    }
+    
+    type_col  <- sym(type_column)
+    sub_col   <- sym(subtype_column)
+    clust_col <- sym(clust_column)
+    new_col   <- sym(new_col)
+    
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(
+        !!sub_col   := if_else(!!type_col == type_in, !!new_col, !!type_col),
+        !!sub_col   := str_to_title_v2(!!sub_col),
+        !!clust_col := if_else(!!type_col == type_in, str_c(seurat_clusters, "-", !!sub_col), !!sub_col)
+      ) %>%
+      column_to_rownames("cell_id")
+  }
   
   res
 }
@@ -520,7 +522,8 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
 }
 
 # Classify cells based on OVA signal
-classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_column = "adt_ovalbumin", data_slot = "counts", ...) {
+classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_column = "adt_ovalbumin", 
+                         data_slot = "counts", ...) {
   
   # Filter Seurat object
   sobj_filt <- sobj_in
@@ -541,7 +544,7 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
   gmm_df <- gmm_res$res %>%
     rownames_to_column("cell_id") %>%
     mutate(
-      mu = gmm_res$mu[GMM_grp],
+      mu      = gmm_res$mu[GMM_grp],
       GMM_grp = str_to_lower(GMM_grp),
       GMM_grp = str_c("ova ", GMM_grp),
     ) %>%
@@ -560,25 +563,8 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
   res
 }
 
-# Add distribution of GMM component to plot
-add_stat_fun <- function(gmm_in, cols_in, key) {
-  # dnorm provides density for the normal distribution given the mean and
-  # standard deviation. Lambda is used to adjust for the mixture composition.
-  # mu: Mean of component
-  # sig: Standard deviation of component
-  # lam: Lambda of component (mixture weight)
-  plot_mix_comps <- function(x, mu, sigma, lam) {
-    lam * dnorm(x, mu, sigma)
-  }
 
-  stat_function(
-    geom  = "line",
-    fun   = plot_mix_comps,
-    args  = list(gmm_in$mu[key], gmm_in$sigma[key], gmm_in$lambda[key]),
-    color = cols_in[key],
-    lwd   = 1
-  )
-}
+# Plotting ----
 
 # Overlay feature data on UMAP or tSNE
 # Cannot change number of columns when using FeaturePlot with split.by
@@ -765,53 +751,6 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   res
 }
 
-# Run gprofiler
-run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL, p_max = params$p_max_GO, GO_size = params$term_size,
-                          intrsct_size = params$intrsct_size, order_query = params$order_query, dbases = c("GO:BP", "GO:MF", "KEGG"), ...) {
-  
-  # Check for empty gene list
-  if (is_empty(gene_list)) {
-    return(as_tibble(NULL))
-  }
-  
-  # Check arguments
-  if (is.null(genome) && is.null(gmt_id)) {
-    stop("ERROR: Must specifiy genome or gmt_id")
-  }
-  
-  # Use gmt id
-  if (!is.null(gmt_id)) {
-    genome <- gmt_id
-    dbases <- NULL
-  }
-  
-  # Run gProfileR
-  res <- gene_list %>%
-    gost(
-      organism       = genome,
-      sources        = dbases,
-      domain_scope   = "annotated",
-      significant    = T,
-      user_threshold = p_max,
-      ordered_query  = order_query,
-      ...
-    )
-  
-  # Format and sort output data.frame
-  res <- as_tibble(res$result)
-  
-  if (!is_empty(res)) {
-    res <- res %>%
-      filter(
-        term_size > GO_size,
-        intersection_size > intrsct_size
-      ) %>%
-      arrange(source, p_value)
-  }
-  
-  res
-}
-
 # Create GO bubble plot
 create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
                            n_terms = 15) {
@@ -885,11 +824,17 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
 
 # Plot percentage of cells in given groups
 plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NULL, fill_id, 
-                            plot_colors = theme_cols, x_lab = "Cell type", y_lab = "Fraction of cells",
+                            plot_cols = NULL, x_lab = "Cell type", y_lab = "Fraction of cells",
                             bar_pos = "fill", order_count = T, bar_line = 0, ...) {
   
-  res <- sobj_in@meta.data %>%
-    rownames_to_column("cell_ids") %>%
+  res <- sobj_in
+  
+  if ("Seurat" %in% class(sobj_in)) {
+    res <- sobj_in@meta.data %>%
+      rownames_to_column("cell_id")
+  }
+  
+  res <- res %>%
     mutate(
       group_id := !!sym(group_id),
       fill_id  := !!sym(fill_id)
@@ -907,16 +852,19 @@ plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NU
   
   if (order_count) {
     res <- res %>%
-      mutate(fill_id = fct_reorder(fill_id, cell_ids, n_distinct))
+      mutate(fill_id = fct_reorder(fill_id, cell_id, n_distinct))
   }
 
   res <- res %>%
     ggplot(aes(group_id, fill = fill_id)) +
     geom_bar(position = bar_pos, size = bar_line, color = "black") +
-    scale_fill_manual(values = plot_colors) +
-    labs(x = x_lab, y = y_lab) +
-    theme_info
-
+    labs(x = x_lab, y = y_lab)
+  
+  if (!is.null(plot_cols)) {
+    res <- res +
+      scale_fill_manual(values = plot_cols)
+  }
+  
   if (!is.null(split_id)) {
     res <- res +
       facet_wrap(~ split_id, ...)
@@ -925,13 +873,16 @@ plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NU
   res
 }
 
+
+# Differential expression ----
+
 # Find markers with presto
 find_markers <- function(input_sobj, group_column = NULL, uniq = params$uniq_markers, 
                          FC_min = params$FC_min, auc_min = params$auc_min, p_max = params$p_max_markers, 
                          pct_in_min = params$pct_in_min, pct_out_max = params$pct_out_max, ...) {
   
   res <- input_sobj %>%
-    wilcoxauc(group_by = group_column) %>%
+    wilcoxauc(group_by = group_column, ...) %>%
     as_tibble() %>%
     filter(
       padj    < p_max,
@@ -970,6 +921,169 @@ find_group_markers <- function(input_grp, input_sobj, grp_column, clust_column) 
     mutate(cell_type = input_grp)
 
   res
+}
+
+# Run gprofiler
+run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL, p_max = params$p_max_GO, GO_size = params$term_size,
+                          intrsct_size = params$intrsct_size, order_query = params$order_query, dbases = c("GO:BP", "GO:MF", "KEGG"), ...) {
+  
+  # Check for empty gene list
+  if (is_empty(gene_list)) {
+    return(as_tibble(NULL))
+  }
+  
+  # Check arguments
+  if (is.null(genome) && is.null(gmt_id)) {
+    stop("ERROR: Must specifiy genome or gmt_id")
+  }
+  
+  # Use gmt id
+  if (!is.null(gmt_id)) {
+    genome <- gmt_id
+    dbases <- NULL
+  }
+  
+  # Run gProfileR
+  res <- gene_list %>%
+    gost(
+      organism       = genome,
+      sources        = dbases,
+      domain_scope   = "annotated",
+      significant    = T,
+      user_threshold = p_max,
+      ordered_query  = order_query,
+      ...
+    )
+  
+  # Format and sort output data.frame
+  res <- as_tibble(res$result)
+  
+  if (!is_empty(res)) {
+    res <- res %>%
+      filter(
+        term_size > GO_size,
+        intersection_size > intrsct_size
+      ) %>%
+      arrange(source, p_value)
+  }
+  
+  res
+}
+
+
+# Figure panels ----
+
+# Create UMAPs testing different clustering resolutions with clustifyr
+create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", reslns, plot_cols, threshold = "auto",
+                               bar_cols = c(rep("white", 2), "#403164"), panel_heights = c(0.75, 0.75, 1), ...) {
+  
+  if (any(c("UMAP_1", "UMAP_2") %in% colnames(sobj_in@meta.data))) {
+    sobj_in@meta.data <- sobj_in@meta.data %>%
+      select(-UMAP_1, -UMAP_2)
+  }
+  
+  # Cluster and create data.frame for UMAPs
+  cluster_df <- map(reslns, ~ {
+    res <- sobj_in %>%
+      run_clustifyr(
+        ref        = ref_in,
+        resolution = .x,
+        threshold  = threshold
+      )
+    
+    res <- res@meta.data %>%
+      as_tibble(rownames = "cell_id") %>%
+      mutate(
+        n_clust   = n_distinct(seurat_clusters),
+        clust_lab = str_c(n_clust, " (", .x, ")"),
+        type      = str_to_title_v2(type)
+      ) %>%
+      arrange(n_clust) %>%
+      mutate(clust_lab = fct_inorder(clust_lab)) %>%
+      dplyr::select(
+        cell_id, orig.ident, seurat_clusters,
+        type, n_clust, clust_lab, r, all_of(c(x, y))
+      )
+    
+    res
+  }) %>%
+    bind_rows()
+  
+  # Create UMAPs
+  create_umaps <- function(df_in, x, y, feat, plot_cols = get_cols(70), guide = outline_guide, ...) {
+    
+    res <- df_in %>%
+      plot_features(
+        x          = x,
+        y          = y,
+        feature    = feat,
+        pt_size    = 0.05,
+        pt_outline = 0.06,
+        plot_cols  = plot_cols,
+        split_id   = "clust_lab",
+        nrow       = 1
+      ) +
+      guides(color = guide) +
+      blank_theme +
+      theme(
+        plot.margin     = unit(c(0.7, 0.2, 0.2, 0.2), "cm"),
+        legend.position = "bottom",
+        legend.title    = element_blank(),
+        legend.text     = element_text(size = 10)
+      ) +
+      theme(...)
+    
+    res
+  }
+  
+  # Cluster UMAPs
+  umap_guide <- outline_guide
+  umap_guide$nrow <- 4
+  
+  clust_gg <- cluster_df %>%
+    create_umaps(
+      x               = x,
+      y               = y,
+      feat            = "seurat_clusters",
+      guide           = umap_guide,
+      legend.position = "none",
+      ...
+    )
+  
+  # Correlation UMAPs
+  bar_guide <- guide_colorbar(frame.colour = "black", frame.linewidth = 0.2, barwidth = unit(0.2, "cm"))
+  
+  cor_gg <- cluster_df %>%
+    create_umaps(
+      x               = x,
+      y               = y,
+      feat            = "r",
+      guide           = bar_guide,
+      plot_cols       = bar_cols,
+      legend.position = "right",
+      legend.title    = element_text(),
+      ...
+    )
+    
+  # Cell type UMAPs
+  type_gg <- cluster_df %>%
+    create_umaps(
+      x         = x,
+      y         = y,
+      feat      = "type",
+      guide     = umap_guide,
+      plot_cols = plot_cols,
+      ...
+    )
+  
+  # Create final figure
+  plot_grid(
+    clust_gg, cor_gg, type_gg,
+    rel_heights = panel_heights,
+    ncol  = 1,
+    align = "v",
+    axis  = "rl"
+  )
 }
 
 # Create reference UMAP for comparisons
@@ -1535,6 +1649,14 @@ ref_sobjs <- params$ref_sobjs %>%
 
 ref_sobj <- merge(ref_sobjs[[1]], ref_sobjs[2:length(ref_sobjs)])
 
+# Combine CCR7hi XCR- Mig cDC2s and CCR7hi Mig cDC2s
+ref_sobj@meta.data <- ref_sobj@meta.data %>%
+  rownames_to_column("cell_id") %>%
+  mutate(
+    !!sym(subtype_column) := str_replace(!!sym(subtype_column), "^CCR7hi XCR1- mig cDC2$", "CCR7hi mig cDC2")
+  ) %>%
+  column_to_rownames("cell_id")
+
 # Cell type refs
 type_ref <- ref_sobj %>%
   seurat_ref(cluster_col = type_column)
@@ -1609,7 +1731,7 @@ sobjs <- sobjs %>%
       norm_sobj() %>%
       cluster_RNA(
         assay      = "RNA",
-        resolution = 1,
+        resolution = 0.6,
         pca_meta   = F,
         umap_meta  = F 
       )
@@ -1679,26 +1801,13 @@ sobjs <- sobjs %>%
     so_type <- so_types[[.y]]
     
     run_clustifyr(
-      sobj_in = .x,
-      type_in = so_type,
-      ref     = subtype_refs[[so_type]]
+      sobj_in    = .x,
+      type_in    = so_type,
+      ref        = subtype_refs[[so_type]],
+      threshold  = 0.6,
+      resolution = ifelse(.y == "d2_LEC", 1, 1.6),
+      prefix     = "t2"
     )
-  })
-
-# Combine CCR7hi XCR- Mig cDC2s and CCR7hi Mig cDC2s
-DC_idx <- so_types[names(sobjs)] == "DC"
-
-sobjs[DC_idx] <- sobjs[DC_idx] %>%
-  map(~ {
-    .x@meta.data <- .x@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
-        subtype = str_replace(subtype, "^CCR7hi XCR1- Mig cDC2$", "CCR7hi Mig cDC2"),
-        subtype_cluster = str_replace(subtype_cluster, "-CCR7hi XCR1- Mig cDC2$", "-CCR7hi Mig cDC2")
-      ) %>%
-      column_to_rownames("cell_id")
-    
-    .x
   })
 
 # Classify cells based on OVA signal
@@ -1775,28 +1884,10 @@ ito_cols <- ito_cols %>%
 get_cols <- create_col_fun(ito_cols)
 
 # OVA colors
-ova_cols_1 <- c(
+ova_cols <- c(
   "ova high" = "#475C81",
   "ova low"  = "#B8ECFF",
   "Other"    = "#ffffff"
-)
-
-ova_cols_2 <- c(
-  "ova low"  = "#B8ECFF",
-  "ova high" = "#475C81",
-  "Other"    = "#ffffff"
-)
-
-ova_cols_3 <- c(
-  "Other"    = "#ffffff",
-  "ova high" = "#475C81",
-  "ova low"  = "#B8ECFF"
-)
-
-ova_cols_4 <- c(
-  "Other"    = "#ffffff",
-  "ova low"  = "#B8ECFF",
-  "ova high" = "#475C81"
 )
 
 # Feature colors
