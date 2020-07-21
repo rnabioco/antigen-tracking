@@ -114,7 +114,7 @@ set_type_cols <- function(type_in, sobjs_in, type_key, type_column = "subtype",
 # Processing ----
 
 # Import matrices and create Seurat object
-create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL, adt_count_min = 50,
+create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL, adt_count_min = 0,
                         gene_min = 250, gene_max = 5000, mito_max = 15, mt_str = "^mt-", ...) {
   
   # Load matrices

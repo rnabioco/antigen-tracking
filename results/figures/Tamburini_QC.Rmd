@@ -1,0 +1,389 @@
+---
+title: "Antigen Tracking QC"
+author: "Ryan Sheridan"
+date: "`r Sys.Date()`"
+
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    df_print: "paged"
+    code_folding: "hide"
+    self_contained: true
+    highlight: "kate"
+    
+params:
+  template_dir: "src"
+  rds_dir: "sobjs/so"
+  ref_dir: "ref"
+  p_val_xlsx: "results/figures/figure_3_pvals.xlsx"
+  
+  # These parameters specify the input Seurat objects and cell types that should be used for analysis
+  # sobj_in: Seurat object from Shannon containing CD45- and CD45+ cells for the timepoint. This object is
+  # divided based on CD45+/- and the provided cell type.
+  # sobj_out: The output Seurat object that is saved after dividing based on CD45+/- and cell type.
+  # cell_type: Cell type used for dividing Seurat objects. These labels are matched with the "cell_type1" column.
+  # Subtypes from the "cell_type2" column are also removed if they contain <15 cells.
+  # title: Plot title
+  sobjs:
+    value:
+      d2_DC:
+        mat_in:    "results/GEX_CD45pos_d2-ADT_CD45pos_d2/outs/filtered_feature_bc_matrix"
+        cell_type: "DC"
+        title:     "Myeloid Cells (Day 2)"
+        sobj_out:  "d2_DC_so_2.rds"
+      d14_DC:
+        mat_in:    "results/GEX_CD45pos_d14-ADT_CD45pos_d14/outs/filtered_feature_bc_matrix"
+        cell_type: "DC"
+        title:     "Myeloid Cells (Day 14)"
+        sobj_out:  "d14_DC_so_2.rds"
+      d2_LEC:
+        mat_in:    "results/GEX_CD45neg_d2-ADT_CD45neg_d2/outs/filtered_feature_bc_matrix"
+        cell_type: "LEC"
+        title:     "Endothelial/Stromal Cells (Day 2)"
+        sobj_out:  "d2_LEC_so_2.rds"
+      d14_LEC:
+        mat_in:    "results/GEX_CD45neg_d14-ADT_CD45neg_d14/outs/filtered_feature_bc_matrix"
+        cell_type: "LEC"
+        title:     "Endothelial/Stromal Cells (Day 14)"
+        sobj_out:  "d14_LEC_so_2.rds"
+      d2_FRC:
+        mat_in:    "results/GEX_CD45neg_d2-ADT_CD45neg_d2/outs/filtered_feature_bc_matrix"
+        cell_type: "fibroblast"
+        title:     "Fibroblast/Stromal Cells (Day 2)"
+        sobj_out:  "d2_FRC_so_2.rds"
+      d14_FRC:
+        mat_in:    "results/GEX_CD45neg_d14-ADT_CD45neg_d14/outs/filtered_feature_bc_matrix"
+        cell_type: "fibroblast"
+        title:     "Fibroblast/Stromal Cells (Day 14)"
+        sobj_out:  "d14_FRC_so_2.rds"
+        
+  # These parameters specify paths to clustifyr references
+  ref_sobjs: ["d2_so.rds", "d14_so.rds"]
+  type_ref: "ref_celltype_walsh.rda"
+  subtype_refs:
+    value:
+      DC:         "ref_DC_walsh.rda"
+      LEC:        "ref_LEC_xiang.rda"
+      fibroblast: "ref_FRC_walsh.rda"
+      
+  # Cell Ranger metrics
+  cellranger: "results/count_metrics.csv"
+---
+
+---
+
+`r knitr::knit_child(here::here(params$template_dir, "setup.Rmd"))`
+
+```{r "Unfiltered objects"}
+
+# Generate sample names from matrix path
+shorten_names <- function(str_in, extra_path = "/outs/(filtered|raw)_feature_bc_matrix$") {
+  res <- str_in %>%
+    str_remove(extra_path) %>%
+    basename() %>%
+    str_extract("^[a-zA-Z0-9_]+") %>%
+    str_remove("^GEX_")
+  
+  res
+}
+
+# Create unfiltered sobj
+sobjs_raw <- unique(mat_paths) %>%
+  set_names(., shorten_names(.)) %>%
+  imap(create_sobj, adt_count_min = 0)
+
+so_raw <- merge(
+  x = sobjs_raw[[1]],
+  y = sobjs_raw[2:length(sobjs_raw)]
+)
+
+# Set colors
+orig_cols <- names(sobjs_raw)
+orig_cols <- get_cols()[seq_along(orig_cols)] %>%
+  set_names(., orig_cols)
+
+# QC theme
+qc_theme <- theme_info +
+  theme(
+    legend.text = element_text(size = 10),
+    axis.title = element_text(size = 10),
+    axis.text  = element_text(size = 10)
+  )
+
+```
+
+## Basic Stats {.tabset .tabset-pills}
+
+### Summary
+
+```{r "Violins", fig.width = 8, fig.height = 5}
+
+violins <- so_raw@meta.data %>%
+  rownames_to_column("cell_id") %>%
+  mutate(
+    orig.ident = fct_relevel(orig.ident, names(orig_cols)),
+    `log10 nCount_RNA` = log10(nCount_RNA + 1),
+    `log10 nCount_ADT` = log10(nCount_ADT + 1),
+    `log10 nFeature_RNA` = log10(nFeature_RNA + 1)
+  ) %>%
+  select(-nCount_RNA, -nCount_ADT, -nFeature_RNA, -nFeature_ADT) %>%
+  pivot_longer(cols = c(-orig.ident, -cell_id, -qc_class)) %>%
+  ggplot(aes(orig.ident, value, fill = orig.ident)) +
+  geom_violin() +
+  stat_summary(geom = "point", shape = 22, fun = median, fill = "white", size = 1) +
+  facet_wrap(~ name, scales = "free_y") +
+  scale_fill_manual(values = orig_cols) +
+  qc_theme +
+  theme(
+    legend.position = "none",
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+violins
+
+```
+
+```{r "Bars", fig.width = 8, fig.height = 2.5}
+
+bars <- so_raw %>%
+  plot_cell_count(
+    group_id    = "orig.ident",
+    fill_id     = "qc_class",
+    plot_cols   = get_cols(40),
+    group_order = names(orig_cols),
+    bar_line    = 0.3
+  ) +
+  coord_flip() +
+  qc_theme +
+  theme(
+    legend.title = element_blank(),
+    axis.title.y = element_blank()
+  )
+
+bars
+
+```
+
+---
+
+<br>
+
+<br>
+
+### Cell Ranger
+
+```{r "Cell Ranger", fig.width = 10, fig.height = 15}
+
+# Format metrics data.frame
+cellranger_metrics <- read_csv(here(params$cellranger)) %>%
+  mutate_all(as.character) %>%
+  pivot_longer(-sample, names_to = "key", values_to = "value") %>%
+  pivot_wider(names_from = "sample", values_from = "value") %>%
+  pivot_longer(-key, names_to = "sample", values_to = "value") %>%
+  mutate(
+    key = str_remove(key, "\\(.+\\)"),
+    sample = shorten_names(sample)
+  ) %>%
+  mutate(
+    sample = fct_relevel(sample, names(orig_cols)),
+    key    = str_trim(key),
+    key    = ifelse(grepl("%", value), str_c(key, " (%)"), key),
+    key    = str_wrap(key, width = 35),
+    value  = str_remove(value, "%"),
+    value  = as.double(value)
+  )
+
+# Create bar graphs
+cellranger_metrics %>%
+  ggplot(aes(sample, value, fill = sample)) + 
+  geom_bar(stat = "identity", size = 0.3, color = "black") + 
+  scale_fill_manual(values = orig_cols) +
+  facet_wrap(~ key, scales = "free_y", ncol = 4) + 
+  qc_theme + 
+  theme(
+    strip.text      = element_text(size = 8),
+    legend.position = "top",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 10), 
+    axis.title      = element_blank(), 
+    axis.text       = element_text(size = 7), 
+    axis.text.x     = element_blank(), 
+    axis.ticks.x    = element_blank()
+  ) +
+  guides(fill = guide_legend(nrow = 4))
+
+```
+
+---
+
+<br>
+
+<br>
+
+### Scatter plots
+
+```{r "Scatter plots", fig.width = 8, fig.height = 6}
+
+# Create QC scatter plots
+create_scatters <- function(sobj_in, plot_cols, gene_min = 250, gene_max = 5000, mito_max = 15) {
+  
+  # Create legend
+  scat_legend <- sobj_in@meta.data %>%
+    ggplot(aes(nCount_RNA, nFeature_RNA, color = orig.ident)) +
+    geom_point(size = 3.5) +
+    scale_color_manual(values = plot_cols) +
+    qc_theme +
+    theme(legend.title = element_blank())
+  
+  scat_legend <- get_legend(scat_legend)
+
+  # Create scatter plots
+  vars_to_plot <- list(
+    c("nCount_RNA",  "nFeature_RNA"),
+    c("nCount_RNA",  "Percent_mito"),
+    c("nFeature_RNA", "Percent_mito")
+  )
+  
+  scat_plots <- vars_to_plot %>%
+    map(~ {
+      p <- sobj_in@meta.data %>%
+        ggplot(aes(!!sym(.x[1]), !!sym(.x[2]), color = orig.ident)) +
+        geom_point(size = 0.25) +
+        scale_color_manual(values = plot_cols) +
+        qc_theme +
+        theme(legend.position = "none")
+      
+      if (identical(.x, c("nFeature_RNA", "Percent_mito"))) {
+        p <- p +
+          geom_segment(
+            x = gene_min, xend = gene_min, 
+            y = 0,        yend = mito_max, 
+            color = "black",
+            linetype = 2
+          ) +
+          geom_segment(
+            x = gene_max, xend = gene_max, 
+            y = 0,        yend = mito_max, 
+            color = "black", 
+            linetype = 2
+          ) +
+          geom_segment(
+            x = gene_min, xend = gene_max,
+            y = mito_max, yend = mito_max,
+            color = "black", 
+            linetype = 2
+          ) +
+          geom_segment(
+            x = gene_min, xend = gene_max,
+            y = 0,        yend = 0,
+            color = "black",
+            linetype = 2
+          )
+      }
+      
+      p
+    })
+  
+  scat_plots <- append(scat_plots, list(scat_legend))
+  
+  # Create final figure with key
+  plot_grid(
+    plotlist = scat_plots,
+    nrow = 2
+  )
+}
+
+so_raw %>%
+  create_scatters(plot_cols = orig_cols)
+
+```
+
+---
+
+<br>
+
+<br>
+
+### UMAPs
+
+```{r "UMAPs", fig.width = 8, fig.height = 8}
+
+
+
+
+```
+
+
+
+
+## clustifyr {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 10}
+
+reslns <- c(1, 1.2, 1.4, 1.6, 1.8, 2)
+reslns <- c(0.3, 0.6, 0.8, 1.6)
+reslns <- c(0.5, 1, 1.5, 2)
+
+so_names <- names(sobjs_type)
+
+umap_args <- list(
+  sobj_in = sobjs_type[so_names],
+  ref_in  = subtype_refs[so_types[so_names]],
+  plot_cols = so_cols[so_names]
+)
+
+umaps <- umap_args %>%
+  pmap(
+    create_clust_umaps, 
+    reslns        = reslns,
+    threshold     = 0.6,
+    bar_cols      = c(rep("white", 2), "grey85", "#403164"),
+    panel_heights = c(0.75, 0.75, 1),
+    panel.border  = element_rect(color = "grey85", size = 0.2)
+  )
+
+umaps
+
+```
+
+```{r, fig.width = 10, fig.height = 10}
+
+reslns <- c(1, 1.2, 1.4, 1.6, 1.8, 2)
+reslns <- c(0.4, 0.8, 1.2)
+
+so_names <- names(sobjs)
+
+umap_args <- list(
+  sobj_in = sobjs,
+  ref_in  = list(type_ref, type_ref, type_ref, type_ref),
+  plot_cols = list(NULL, NULL, NULL, NULL)
+  # sobj_in = sobjs[so_names],
+  # ref_in  = subtype_refs[so_types[so_names]],
+  # plot_cols = so_cols[so_names]
+)
+
+umaps <- umap_args %>%
+  pmap(
+    create_clust_umaps, 
+    reslns        = reslns,
+    threshold     = 0.5,
+    # threshold     = "auto",
+    # threshold     = 0.6,
+    bar_cols      = c(rep("white", 2), "grey85", "#403164"),
+    panel_heights = c(0.75, 0.75, 1),
+    panel.border  = element_rect(color = "grey85", size = 0.2)
+  )
+
+umaps
+
+```
+
+## Cell Type Annotations {.tabset .tabset-pills}
+
+## OVA Correlations {.tabset .tabset-pills}
+
+
+
