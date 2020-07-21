@@ -17,26 +17,25 @@ params:
   genome:        "mmusculus"                        # Genome to use for GO analysis
   template_dir:  "src"                              # Directory containing template Rmarkdowns
   rds_dir:       "sobjs/so"                         # Direcotry to use for loading/saving Seurat objects
-  # xlsx_dir:      "results/gex_analysis/gene_lists"  # Directory to use for writing gene lists (comment out to skip)
+  ref_dir:       "ref"                              # Directory to use for loading/saving clustifyr references
+  xlsx_dir:      "results/gex_analysis/gene_lists"  # Directory to use for writing gene lists (comment out to skip)
   p_max_markers: 0.05                               # Max p-value for marker genes
   FC_min:        0                                  # Min fold change for marker genes
-  auc_min:       0.6                                # Min AUC for marker genes
-  pct_in_min:    45                                 # Min percentage cells expressing marker in group 
-  pct_out_max:   55                                 # Max percentage cells expressing marker outside group
-  uniq_markers:  TRUE                               # Remove markers that are present in more than one group
+  auc_min:       0.5                                # Min AUC for marker genes
+  pct_in_min:    50                                 # Min percentage cells expressing marker in group 
+  pct_out_max:   100                                # Max percentage cells expressing marker outside group
+  uniq_markers:  FALSE                              # Remove markers that are present in more than one group
   p_max_GO:      0.05                               # Max p-value for GO terms
   term_size:     15                                 # Min size of GO term
   intrsct_size:  3                                  # Min intersection with GO term
   order_query:   TRUE                               # Markers are ordered by fold change and submitted as an ordered query
   uniq_GO:       TRUE                               # Remove GO terms that are present in more than one group
   
-  # These parameters specify the input Seurat objects and cell types that should be used for analysis
-  # sobj_in: Seurat object from Shannon containing CD45- and CD45+ cells for the timepoint. This object is
-  # divided based on CD45+/- and the provided cell type.
-  # sobj_out: The output Seurat object that is saved after dividing based on CD45+/- and cell type.
-  # cell_type: Cell type used for dividing Seurat objects. These labels are matched with the "cell_type1" column.
-  # Subtypes from the "cell_type2" column are also removed if they contain <15 cells.
-  # title: Section title
+  # These parameters specify the input matrices and cell types that should be used for analysis
+  # mat_in: Cellranger output folder.
+  # cell_type: Cell type used for subsetting Seurat objects.
+  # title: Section title.
+  # sobj_out: The output Seurat object that is saved after processing and subsetting based on cell type.
   sobjs:
     value:
       d2_DC:
@@ -69,13 +68,15 @@ params:
         cell_type: "fibroblast"
         title:     "Fibroblast/Stromal Cells (Day 14)"
         sobj_out:  "d14_FRC_so_2.rds"
-        
-  # These parameters specify paths to clustifyr references for each cell_type provided above
-  sobj_refs:
+  
+  # These parameters specify paths to clustifyr references
+  ref_sobjs: ["d2_so.rds", "d14_so.rds"]
+  type_ref:  "ref_celltype_walsh.rda"
+  subtype_refs:
     value:
-      DC:         "ref/ref_DC_walsh.rda"
-      LEC:        "ref/ref_LEC_xiang.rda"
-      fibroblast: "ref/ref_FRC_walsh.rda"
+      DC:         "ref_DC_walsh.rda"
+      LEC:        "ref_LEC_xiang.rda"
+      fibroblast: "ref_FRC_walsh.rda"
 ---
 
 <br>

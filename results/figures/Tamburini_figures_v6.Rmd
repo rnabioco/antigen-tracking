@@ -21,17 +21,15 @@ params:
   p_max_markers: 0.05                               # Max p-value for marker genes
   FC_min:        0                                  # Min fold change for marker genes
   auc_min:       0.5                                # Min AUC for marker genes
-  pct_in_min:    60                                 # Min percentage cells expressing marker in group
+  pct_in_min:    50                                 # Min percentage cells expressing marker in group
   pct_out_max:   100                                # Max percentage cells expressing marker outside group
   uniq_markers:  FALSE                              # Remove markers that are present in more than one group
   
-  # These parameters specify the input Seurat objects and cell types that should be used for analysis
-  # sobj_in: Seurat object from Shannon containing CD45- and CD45+ cells for the timepoint. This object is
-  # divided based on CD45+/- and the provided cell type.
-  # sobj_out: The output Seurat object that is saved after dividing based on CD45+/- and cell type.
-  # cell_type: Cell type used for dividing Seurat objects. These labels are matched with the "cell_type1" column.
-  # Subtypes from the "cell_type2" column are also removed if they contain <15 cells.
-  # title: Plot title
+  # These parameters specify the input matrices and cell types that should be used for analysis
+  # mat_in: Cellranger output folder.
+  # cell_type: Cell type used for subsetting Seurat objects.
+  # title: Section title.
+  # sobj_out: The output Seurat object that is saved after processing and subsetting based on cell type.
   sobjs:
     value:
       d2_DC:
@@ -68,11 +66,10 @@ params:
   # These parameters specify paths to clustifyr references
   ref_sobjs: ["d2_so.rds", "d14_so.rds"]
   type_ref:  "ref_celltype_walsh.rda"
-  xiang_ref: "ref_LEC_xiang.rda"
   subtype_refs:
     value:
       DC:         "ref_DC_walsh.rda"
-      LEC:        "ref_LEC_walsh.rda"
+      LEC:        "ref_LEC_xiang.rda"
       fibroblast: "ref_FRC_walsh.rda"
 ---
 
@@ -732,7 +729,7 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
 
 # Parameter lists
 fig3_names <- c("d2_DC", "d14_DC", "d14_LEC", "d14_FRC")
-fig3_sobjs <- sobjs[fig3_names]
+fig3_sobjs <- sobjs_type[fig3_names]
 
 fig3_params <- list(
   sobj_in    = fig3_sobjs, 
@@ -752,6 +749,8 @@ corr_params <- list(
 ```
 
 ## Figure 3
+
+Cell subsets associated with high antigen counts. (a, d, g, j) UMAP projections are shown for cell subsets identified for myeloid cells, endothelial cells, and fibroblasts. (b, e, h, k) Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for all T and B cells. (c, f, i, l) Antigen counts are displayed on UMAP projections for each cell type.
 
 ```{r "Fig 3", fig.width = 13, fig.height = 18}
 
@@ -811,9 +810,11 @@ Figures for all LEC timepoints
 
 ```{r, fig.width = 13, fig.height = 10}
 
+# LEC_sobjs <- test_out[[4]][LEC_names]
+
 # Figure parameters
 LEC_names <- c("d2_LEC", "d14_LEC")
-LEC_sobjs <- sobjs[LEC_names]
+LEC_sobjs <- sobjs_type[LEC_names]
 
 LEC_params <- list(
   sobj_in      = LEC_sobjs,
