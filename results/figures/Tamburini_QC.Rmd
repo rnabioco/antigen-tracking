@@ -61,13 +61,14 @@ params:
         
   # These parameters specify paths to clustifyr references
   ref_sobjs: ["d2_so.rds", "d14_so.rds"]
-  type_ref: "ref_celltype_walsh.rda"
+  type_ref:  "ref_celltype_walsh.rda"
+  xiang_ref: "ref_LEC_xiang.rda"
   subtype_refs:
     value:
       DC:         "ref_DC_walsh.rda"
-      LEC:        "ref_LEC_xiang.rda"
+      LEC:        "ref_LEC_walsh.rda"
       fibroblast: "ref_FRC_walsh.rda"
-      
+
   # Cell Ranger metrics
   cellranger: "results/count_metrics.csv"
 ---
@@ -97,6 +98,24 @@ sobjs_raw <- unique(mat_paths) %>%
 so_raw <- merge(
   x = sobjs_raw[[1]],
   y = sobjs_raw[2:length(sobjs_raw)]
+)
+
+# Normalize and cluster
+sobjs_clust <- sobjs_raw %>%
+  map(~ {
+    .x %>%
+      norm_sobj() %>%
+      cluster_RNA(
+        assay      = "RNA",
+        resolution = type_res,
+        pca_meta   = F,
+        umap_meta  = T 
+      )
+  })
+
+so_clust <- merge(
+  x = sobjs_clust[[1]],
+  y = sobjs_clust[2:length(sobjs_clust)]
 )
 
 # Set colors
@@ -152,7 +171,7 @@ bars <- so_raw %>%
   plot_cell_count(
     group_id    = "orig.ident",
     fill_id     = "qc_class",
-    plot_cols   = get_cols(40),
+    plot_cols   = get_cols(18),
     group_order = names(orig_cols),
     bar_line    = 0.3
   ) +
@@ -163,7 +182,7 @@ bars <- so_raw %>%
     axis.title.y = element_blank()
   )
 
-bars
+plot_grid(bars, NA, rel_widths = c(1, 0.25))
 
 ```
 
@@ -309,29 +328,115 @@ so_raw %>%
 
 ### UMAPs
 
-```{r "UMAPs", fig.width = 8, fig.height = 8}
+```{r "UMAPs", fig.width = 9, fig.height = 8}
 
+# Set colors for stats
+stat_cols <- c(
+  "nCount_RNA", "nFeature_RNA",
+  "nCount_ADT", "Percent_mito"
+)
 
+stat_cols <- get_cols(17)[1:length(stat_cols)] %>%
+  set_names(., stat_cols)
 
+# Helper function to create UMAPs
+create_stat_umaps <- function(so_in, plot_cols, plot_title, ...) {
+  res <- so_in %>%
+    plot_features(
+      feature      = "value",
+      split_id     = "orig.ident",
+      pt_size      = 0.01,
+      pt_outline   = 0.1,
+      plot_cols    = plot_cols,
+      ...
+    ) +
+    ggtitle(plot_title) +
+    guides(color = guide_colorbar(barwidth = unit(0.2, "cm"))) +
+    blank_theme +
+    theme(
+      plot.title = element_text(size = 12),
+      panel.border = element_rect(color = "grey85"),
+      strip.text = element_text(size = 10),
+      legend.title = element_blank(),
+      legend.text  = element_text(size = 10)
+    )
+  
+  res
+}
 
+# Create stat UMAPs
+so_clust %>%
+  FetchData(c(
+    "orig.ident", names(stat_cols),
+    "UMAP_1", "UMAP_2"
+  )) %>%
+  rownames_to_column("cell_id") %>%
+  pivot_longer(cols = names(stat_cols)) %>%
+  nest(data = -name) %>%
+  mutate(gg = map2(data, name, ~ {
+    create_stat_umaps(
+      so_in        = .x,
+      split_levels = names(orig_cols),
+      plot_cols    = c("white", stat_cols[.y]),
+      plot_title   = .y
+    )    
+  })) %>%
+  pull(gg) %>%
+  plot_grid(
+    plotlist = .,
+    align    = "vh",
+    axis     = "trbl"
+  )
+  
 ```
 
+---
 
+<br>
 
+<br>
 
 ## clustifyr {.tabset .tabset-pills}
 
+### Cell types
+
 ```{r, fig.width = 10, fig.height = 10}
 
-reslns <- c(1, 1.2, 1.4, 1.6, 1.8, 2)
-reslns <- c(0.3, 0.6, 0.8, 1.6)
-reslns <- c(0.5, 1, 1.5, 2)
+reslns <- c(0.4, 0.8, 1.2)
 
-so_names <- names(sobjs_type)
+umaps <- sobjs_raw %>%
+  map(
+    create_clust_umaps, 
+    reslns        = reslns,
+    threshold     = 0.5,
+    ref_in        = type_ref,
+    plot_cols     = get_cols(),
+    bar_cols      = c(rep("white", 2), "grey85", "#403164"),
+    panel_heights = c(0.75, 0.75, 1),
+    panel.border  = element_rect(color = "grey85", size = 0.2)
+  )
+
+umaps
+
+```
+
+---
+
+<br>
+
+<br>
+
+### Cell subsets
+
+```{r, fig.width = 10, fig.height = 8}
+
+reslns <- c(0.6, 1, 1.6, 2.4, 3.2)
+
+so_names <- names(sobjs_sub)
 
 umap_args <- list(
-  sobj_in = sobjs_type[so_names],
-  ref_in  = subtype_refs[so_types[so_names]],
+  sobj_in   = sobjs_sub[so_names],
+  ref_in    = subtype_refs[so_types[so_names]],
   plot_cols = so_cols[so_names]
 )
 
@@ -349,41 +454,122 @@ umaps
 
 ```
 
-```{r, fig.width = 10, fig.height = 10}
+---
 
-reslns <- c(1, 1.2, 1.4, 1.6, 1.8, 2)
-reslns <- c(0.4, 0.8, 1.2)
+<br>
 
-so_names <- names(sobjs)
+<br>
 
-umap_args <- list(
-  sobj_in = sobjs,
-  ref_in  = list(type_ref, type_ref, type_ref, type_ref),
-  plot_cols = list(NULL, NULL, NULL, NULL)
-  # sobj_in = sobjs[so_names],
-  # ref_in  = subtype_refs[so_types[so_names]],
-  # plot_cols = so_cols[so_names]
-)
+## Cell Type Annotations {.tabset .tabset-pills}
 
-umaps <- umap_args %>%
-  pmap(
-    create_clust_umaps, 
-    reslns        = reslns,
-    threshold     = 0.5,
-    # threshold     = "auto",
-    # threshold     = 0.6,
-    bar_cols      = c(rep("white", 2), "grey85", "#403164"),
-    panel_heights = c(0.75, 0.75, 1),
-    panel.border  = element_rect(color = "grey85", size = 0.2)
-  )
+```{r}
 
-umaps
+
 
 ```
 
-## Cell Type Annotations {.tabset .tabset-pills}
+
 
 ## OVA Correlations {.tabset .tabset-pills}
 
 
 
+```{r, eval = F, echo = F}
+
+# FRC TEST
+sobjs_raw <- unique(mat_paths) %>%
+  set_names(., .) %>%
+  map(create_sobj, adt_count_min = 0)
+
+# Normalize and cluster
+sobjs_raw <- sobjs_raw %>%
+  map(~ {
+    .x %>%
+      norm_sobj(regress_vars = c("Percent_mito", "nCount_RNA"))
+  })
+
+so_clust <- sobjs_raw %>%
+  map(~ {
+    .x %>%
+      cluster_RNA(
+        assay      = "RNA",
+        resolution = 4,
+        pca_meta   = F,
+        umap_meta  = F 
+      )
+  })
+
+# Assign cell types
+so_clust <- so_clust %>%
+  map(~ {
+    res <- clustify(
+      input         = .x,
+      cluster_col   = "RNA_clusters",
+      ref_mat       = type_ref,
+      rename_prefix = "t1",
+      seurat_out    = T,
+      threshold     = type_thresh
+    )
+    
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(cell_type = t1_type) %>%
+      select(-UMAP_1, -UMAP_2) %>%
+      column_to_rownames("cell_id")
+    
+    res
+  })
+
+# Expand Seurat object list for subsets
+sobjs <- so_clust[match(mat_paths, names(so_clust))]
+names(sobjs) <- names(mat_paths)
+
+# Subset based on cell type
+# Additional cell types to include in objects
+inc_types <- so_types %>%
+  map(~ if_else(
+    .x == "LEC",
+    list(c("B cell", "T cell", "epithelial")),
+    list(c("B cell", "T cell", "NK"))
+  )) %>%
+  flatten()
+
+x <- sobjs["d14_FRC"] %>%
+  imap(~ {
+    subset_sobj(
+      sobj_in      = .x,
+      cell_types   = c(so_types[[.y]], inc_types[[.y]]),
+      type_column  = "cell_type",
+      regress_vars = c("Percent_mito", "nCount_RNA", "S.Score", "G2M.Score")
+    )
+  })
+
+# TEST SUBTYPE ASSIGNMENTS
+so_type <- "fibroblast"
+
+x <- x$d14_FRC
+
+reslns <- c(0.2, 0.4, 0.6, 0.8, 1, 1.4, 1.8, 2.2)
+
+gg <- reslns %>% 
+  map(~ {
+    run_clustifyr(
+      sobj_in    = x,
+      type_in    = so_type,
+      ref        = subtype_refs[[so_type]],
+      threshold  = subtype_thresh,
+      resolution = .x,
+      prefix     = "t2"
+    ) %>%
+      plot_features(
+        feature = "subtype",
+        pt_size = 0.6
+      ) +
+      guides(color = col_guide) +
+      blank_theme
+  }) %>%
+  plot_grid(plotlist = .)
+
+gg
+
+```
