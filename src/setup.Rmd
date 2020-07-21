@@ -43,14 +43,14 @@ pull_nest_vec <- function(list_in, idx) {
 }
 
 # Capitalize first character without modifying other characters
-str_to_title_v2 <- function(string) {
+str_to_title_v2 <- function(string, exclude = "cell") {
   
-  cap_first_chr <- function(string) {
+  cap_first_chr <- function(string, exclude) {
     chrs <- string %>%
       str_split(pattern = "") %>%
       unlist()
     
-    if (any(chrs %in% LETTERS)) {
+    if (any(chrs %in% LETTERS) || string == exclude) {
       return(string)
     }
     
@@ -67,7 +67,7 @@ str_to_title_v2 <- function(string) {
       .x %>%
         str_split(pattern = " ") %>%
         unlist() %>%
-        map_chr(cap_first_chr) %>%
+        map_chr(cap_first_chr, exclude = exclude) %>%
         reduce(str_c, sep = " ")
     })
   
@@ -1658,7 +1658,8 @@ R_packages <- c(
   "boot",       "scales",
   "patchwork",  "ComplexHeatmap",
   "devtools",   "broom",
-  "presto",     "here"
+  "presto",     "here",
+  "clustifyrdata"
 )
 
 purrr::walk(R_packages, library, character.only = T)
@@ -1695,6 +1696,21 @@ load_refs <- all(file.exists(c(type_ref_path, subtype_ref_paths)))
 
 # Load Seurat objects?
 load_sobjs <- all(file.exists(so_out))
+
+# Clustering parameters
+type_res       <- 0.8
+type_thresh    <- 0.5
+
+subtype_res <- c(
+  d2_DC   = 1.6,
+  d14_DC  = 1.6,
+  d2_LEC  = 0.6,
+  d14_LEC = 0.6,
+  d2_FRC  = 1.6,
+  d14_FRC = 1.6
+)
+
+subtype_thresh <- 0.6
 
 ```
 
@@ -1737,17 +1753,29 @@ subtype_refs <- cell_types %>%
       seurat_ref(cluster_col = subtype_column)
   })
 
-# Add Xiang et al. LEC ref
-LEC_ref <- str_remove(params$subtype_refs$LEC, "\\.rda$")
+# Load Xiang et al. LEC ref
+LEC_ref <- str_remove(params$xiang_ref, "\\.rda$")
 
-load(here(params$ref_dir, params$subtype_refs$LEC))
+load(here(params$ref_dir, params$xiang_ref))
 
 LEC_ref <- eval(parse(text = LEC_ref))
 
-subtype_refs$LEC <- LEC_ref
+# Add Immgen endothelial refs
+immgen_LEC <- immgen_ref[, grepl("Endothelial", colnames(immgen_ref))]
+immgen_LEC <- immgen_LEC[rownames(immgen_LEC) %in% rownames(LEC_ref), ]
+colnames(immgen_LEC) <- colnames(immgen_LEC) %>%
+  str_replace("Endothelial cells \\(BEC\\)", "BEC")
+
+LEC_ref <- LEC_ref[rownames(immgen_LEC), ]
+
+if (!identical(rownames(immgen_LEC), rownames(LEC_ref))) {
+  stop("LEC reference rownames do not match.")
+}
+
+subtype_refs$LEC <- cbind(LEC_ref, immgen_LEC)
 
 # Save DC and FRC ref matrices
-params$subtype_refs[c("DC", "fibroblast")] %>%
+params$subtype_refs %>%
   iwalk(~ {
     ref <- subtype_refs[[.y]]
     name <- str_remove(.x, "\\.rda$")
@@ -1781,20 +1809,6 @@ subtype_refs <- params$subtype_refs %>%
 ```
 
 ```{r "Create sobjs", eval = !load_sobjs, echo = F}
-
-# Parameters
-type_res       <- 0.8
-type_thresh    <- 0.5
-subtype_thresh <- 0.6
-
-subtype_res <- c(
-  d2_DC   = 1.6,
-  d14_DC  = 1.6,
-  d2_LEC  = 1,
-  d14_LEC = 1,
-  d2_FRC  = 1.6,
-  d14_FRC = 1.6
-)
 
 # Create sobj
 # Avoid loading same matrix twice
@@ -1853,39 +1867,63 @@ sobjs_raw <- sobjs_raw %>%
 sobjs <- sobjs_raw[match(mat_paths, names(sobjs_raw))]
 names(sobjs) <- names(mat_paths)
 
-# Subset based on cell type
+# Split into DCs, LECs, FRCs and annotate subtypes
+sobjs_sub <- sobjs %>%
+  imap(~ {
+    so_type <- so_types[[.y]]
+    
+    res <- .x %>%
+      subset_sobj(
+        cell_type   = so_type,
+        type_column = "cell_type"
+      ) %>%
+      run_clustifyr(
+        type_in    = so_type,
+        ref        = subtype_refs[[so_type]],
+        threshold  = subtype_thresh,
+        resolution = subtype_res[[.y]],
+        prefix     = "t2"
+      )
+    
+    res
+  })
+
 # Additional cell types to include in objects
 inc_types <- so_types %>%
   map(~ if_else(
     .x == "LEC",
     list(c("B cell", "T cell", "epithelial")),
-    list(c("B cell", "T cell"))
+    list(c("B cell", "T cell", "NK"))
   )) %>%
   flatten()
 
+# Add subtype assignments back to main objects and split again to now include
+# additional cell types for plotting
 sobjs <- sobjs %>%
   imap(~ {
-    subset_sobj(
-      sobj_in      = .x,
-      cell_types   = c(so_types[[.y]], inc_types[[.y]]),
-      type_column  = "cell_type",
-      regress_vars = c("S.Score", "G2M.Score")
-    )
-  })
-
-# Run clustifyr to assign subtypes
-sobjs <- sobjs %>%
-  imap(~ {
-    so_type <- so_types[[.y]]
+    type_res <- sobjs_sub[[.y]] %>%
+      FetchData(c(
+        "t2_type", "t2_r",
+        "subtype", "subtype_cluster"
+      ))
     
-    run_clustifyr(
-      sobj_in    = .x,
-      type_in    = so_type,
-      ref        = subtype_refs[[so_type]],
-      threshold  = subtype_thresh,
-      resolution = subtype_res[[.y]],
-      prefix     = "t2"
-    )
+    res <- .x %>%
+      AddMetaData(type_res) %>%
+      subset_sobj(
+        cell_types   = c(so_types[[.y]], inc_types[[.y]]),
+        type_column  = "cell_type",
+        regress_vars = c("Percent_mito", "nCount_RNA", "S.Score", "G2M.Score")
+      )
+    
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(
+        subtype = ifelse(is.na(subtype), cell_type, subtype),
+        subtype = str_to_title_v2(subtype)
+      ) %>%
+      column_to_rownames("cell_id")
+    
+    res
   })
 
 # Classify cells based on OVA signal
@@ -1950,11 +1988,11 @@ outline_guide <- guide_legend(override.aes = list(
 # Okabe Ito color palettes
 ito_cols <- c(
   palette_OkabeIto[1:4], "#d7301f", 
-  palette_OkabeIto[5:6], "#6a51a3", 
-  palette_OkabeIto[7:8]
+  palette_OkabeIto[5:6], "#6A51A3", 
+  palette_OkabeIto[7:8], "#875C04"
 )
 
-ito_cols <- ito_cols %>%
+ito_cols <- ito_cols[3:length(ito_cols)] %>%
   darken(0.4) %>%
   c(ito_cols, ., "#686868", "#000000")
 
@@ -1977,9 +2015,10 @@ feat_cols <- c(
 
 # Cell subtype palettes
 common_cols <- c(
-  "Epithelial" = "#6a51a3",
-  "B Cell"     = "#E69F00",
-  "T Cell"     = "#009E73",
+  "Epithelial" = "#6A51A3",
+  "B cell"     = "#E69F00",
+  "T cell"     = "#009E73",
+  "NK"         = "#6A51A3",
   "Unassigned" = "#999999"
 )
 
@@ -1999,6 +2038,47 @@ so_cols <- so_types %>%
 
 
 
+
+
+```{r "OLD WORKFLOW", eval = F, echo = F}
+
+# Subset based on cell type
+# Additional cell types to include in objects
+# inc_types <- so_types %>%
+#   map(~ if_else(
+#     .x == "LEC",
+#     list(c("B cell", "T cell", "epithelial")),
+#     list(c("B cell", "T cell", "NK"))
+#   )) %>%
+#   flatten()
+# 
+# sobjs <- sobjs %>%
+#   imap(~ {
+#     subset_sobj(
+#       sobj_in      = .x,
+#       cell_types   = c(so_types[[.y]], inc_types[[.y]]),
+#       type_column  = "cell_type",
+#       regress_vars = c("Percent_mito", "nCount_RNA", "S.Score", "G2M.Score")
+#     )
+#   })
+
+# Run clustifyr to assign subtypes
+# sobjs <- sobjs %>%
+#   imap(~ {
+#     so_type <- so_types[[.y]]
+#     
+#     run_clustifyr(
+#       sobj_in    = .x,
+#       type_in    = so_type,
+#       ref        = subtype_refs[[so_type]],
+#       threshold  = subtype_thresh,
+#       resolution = subtype_res[[.y]],
+#       prefix     = "t2"
+#     )
+#   })
+
+
+```
 
 ```{r "TEST CELL TYPES", eval = F, echo = F}
 

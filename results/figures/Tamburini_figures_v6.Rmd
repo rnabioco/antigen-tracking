@@ -66,10 +66,11 @@ params:
   # These parameters specify paths to clustifyr references
   ref_sobjs: ["d2_so.rds", "d14_so.rds"]
   type_ref:  "ref_celltype_walsh.rda"
+  xiang_ref: "ref_LEC_xiang.rda"
   subtype_refs:
     value:
       DC:         "ref_DC_walsh.rda"
-      LEC:        "ref_LEC_xiang.rda"
+      LEC:        "ref_LEC_walsh.rda"
       fibroblast: "ref_FRC_walsh.rda"
 ---
 
@@ -121,8 +122,8 @@ equalize_x <- function(gg_list_in, log_tran = T, ...) {
 # Create figure 3 panels
 create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot = "counts", ova_cols = c("#fafafa", "#d7301f"),
                         box_counts = c("Relative ova signal" = "ova_fc"), umap_counts = c("ova counts" = "adt_ovalbumin"), 
-                        plot_title = NULL, arrow_axis = F, pt_size = 0.1, pt_outline = 0.4, pt_size_2 = 0.3, pt_outline_2 = 0.5,
-                        umap_cell_count = F, box_cell_count = T, control_types = c("B Cell", "T Cell"), ...) {
+                        plot_title = NULL, pt_size = 0.1, pt_outline = 0.4, pt_size_2 = 0.3, pt_outline_2 = 0.5, box_cell_count = T,
+                        control_types = c("B cell", "T cell"), on_top = NULL, ...) {
   
   box_column <- umap_column <- "cell_type"
   box_cols <- umap_cols <- cols_in
@@ -186,9 +187,11 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
     mutate(color = cols_in[cell_type])
   
   # Subtype UMAP
-  if (umap_cell_count) {
-    umap_column <- "cell_count"
-    umap_cols <- setNames(cols_df$color, cols_df$cell_count)
+  if (!is.null(on_top)) {
+    on_top <- umap_cols[on_top]
+    
+    umap_cols <- umap_cols[!names(umap_cols) %in% names(on_top)]
+    umap_cols <- c(umap_cols, on_top)
   }
   
   umap <- data_df %>%
@@ -197,7 +200,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
       pt_size     = pt_size,
       pt_outline  = pt_outline,
       plot_cols   = umap_cols,
-      feat_levels = rev(names(umap_cols))
+      feat_levels = names(umap_cols)
     ) +
     guides(color = guide_legend(override.aes = list(size = 3.5))) +
     ggtitle(plot_title) +
@@ -207,10 +210,6 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
       legend.position = "none"
     ) +
     theme(...)
-  
-  if (arrow_axis) {
-    umap <- add_arrow_axis(umap)
-  }
   
   # OVA UMAP
   if (!is.null(umap_counts)) {
@@ -223,6 +222,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
         min_pct    = 0.01,
         max_pct    = 0.99
       ) +
+      guides(color = guide_colorbar(frame.colour = "black", frame.linewidth = 0.2)) +
       blank_theme +
       theme(
         plot.title        = element_text(size = 10, hjust = 0.5),
@@ -230,18 +230,17 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
         legend.key.width  = unit(0.15, "cm"),
         legend.key.height = unit(0.30, "cm"),
         legend.title      = element_text(size = 10),
-        legend.text       = element_text(size = 10)
+        legend.text       = element_text(size = 8)
       )
-    
-    if (arrow_axis) {
-      ova_umap <- add_arrow_axis(ova_umap)
-    }
   }
   
   # OVA boxes
   if (box_cell_count) {
     box_column <- "cell_count"
-    box_cols <- setNames(cols_df$color, cols_df$cell_count)
+    box_cols <- set_names(
+      x  = cols_df$color,
+      nm = cols_df$cell_count
+    )
   }
   
   boxes <- data_df %>%
@@ -255,7 +254,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
       legend.position    = "none",
       axis.title.y       = element_blank(),
       axis.title         = element_text(size = 10),
-      axis.text          = element_text(size = 10),
+      axis.text          = element_text(size = 8),
       axis.ticks.x       = element_line(size = 0.1),
       panel.grid.major.x = element_line(size = 0.1)
     )
@@ -729,12 +728,18 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
 
 # Parameter lists
 fig3_names <- c("d2_DC", "d14_DC", "d14_LEC", "d14_FRC")
-fig3_sobjs <- sobjs_type[fig3_names]
+fig3_sobjs <- sobjs[fig3_names]
 
 fig3_params <- list(
   sobj_in    = fig3_sobjs, 
   plot_title = so_titles[names(fig3_sobjs)],
-  cols_in    = so_cols[names(fig3_sobjs)]
+  cols_in    = so_cols[names(fig3_sobjs)],
+  on_top     = list(
+    c("CCR7hi Mig cDC2", "CCR7hi Mig cDC1", "B cell", "T cell"),
+    c("CCR7hi Mig cDC2", "CCR7hi Mig cDC1", "cDC2 Tbet-", "cDC2 Tbet+", "B cell", "T cell", "NK"),
+    c("Ptx3_LEC", "fLEC", "cLEC", "Collecting", "BEC", "B cell", "T cell"), 
+    NULL
+  )
 )
 
 corr_params <- list(
@@ -810,16 +815,22 @@ Figures for all LEC timepoints
 
 ```{r, fig.width = 13, fig.height = 10}
 
-# LEC_sobjs <- test_out[[4]][LEC_names]
-
 # Figure parameters
 LEC_names <- c("d2_LEC", "d14_LEC")
-LEC_sobjs <- sobjs_type[LEC_names]
+LEC_sobjs <- sobjs[LEC_names]
+
+LEC_order <- c(
+  "Ptx3_LEC", "fLEC",
+  "cLEC",     "Collecting",
+  "BEC",      "B cell",
+  "T cell"
+)
 
 LEC_params <- list(
   sobj_in      = LEC_sobjs,
   plot_title   = so_titles[names(LEC_sobjs)],
   cols_in      = so_cols[names(LEC_sobjs)],
+  on_top       = list(LEC_order, LEC_order),
   pt_size      = c(0.5, 0.1),
   pt_outline   = c(0.8, 0.4),
   pt_size_2    = c(0.5, 0.3),
