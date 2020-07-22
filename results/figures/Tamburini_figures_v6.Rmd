@@ -288,6 +288,7 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     axis.text   = element_text(size = 8)
   )
   
+  
   # Run GMM
   if (!is.null(gmm_filt)) {
     sobj_in <- sobj_in %>%
@@ -355,7 +356,7 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
   ova_hist <- sobj_in@meta.data %>%
     filter(GMM_grp != "Other") %>%
     mutate(GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high"))) %>%
-    ggplot(aes(adt_ovalbumin, after_stat(density), fill = GMM_grp)) +
+    ggplot(aes(adt_ovalbumin + 1, after_stat(density), fill = GMM_grp)) +
     
     stat_density(geom = "point", position = "identity", size = 0, color = "white") +
     geom_density(fill = "white", color = "white", size = 0.3, alpha = 0.9) +
@@ -626,6 +627,7 @@ create_fig4_panels <- function(sobj_in, gmm_filt = NULL, genes_in, ref_cols, ova
       feat_cols    = umap_cols,
       ref_cols     = ref_cols,
       low_col      = low_col,
+      gmm_filt     = gmm_filt,
       sep_bar_labs = sep_bar_labs
     ) %>%
       print()
@@ -1076,7 +1078,7 @@ create_fig4_panels(
   sobj_in      = sobjs[[so_name]],
   genes_in     = genes,
   ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova high", "ova low")],
+  ova_cols     = ova_cols[c("Other", "ova low", "ova high")],
   feat_cols    = feat_cols,
   gmm_filt     = c(subtype = type),
   low_col      = "white",

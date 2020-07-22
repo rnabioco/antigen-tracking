@@ -1915,11 +1915,15 @@ sobjs <- sobjs %>%
         regress_vars = c("Percent_mito", "nCount_RNA", "S.Score", "G2M.Score")
       )
     
+    res <- res %>%
+      AddMetaData(FetchData(., c("UMAP_1", "UMAP_2")))
+    
     res@meta.data <- res@meta.data %>%
       rownames_to_column("cell_id") %>%
       mutate(
-        subtype = ifelse(is.na(subtype), cell_type, subtype),
-        subtype = str_to_title_v2(subtype)
+        subtype         = ifelse(is.na(subtype), cell_type, subtype),
+        subtype         = str_to_title_v2(subtype),
+        subtype_cluster = ifelse(is.na(subtype_cluster), cell_type, subtype_cluster)
       ) %>%
       column_to_rownames("cell_id")
     
