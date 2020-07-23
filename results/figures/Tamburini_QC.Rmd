@@ -79,6 +79,8 @@ params:
 
 ```{r "Unfiltered objects"}
 
+# sobjs_raw <- read_rds(here(params$rds_dir, "sobjs_raw.rds"))
+
 # Generate sample names from matrix path
 shorten_names <- function(str_in, extra_path = "/outs/(filtered|raw)_feature_bc_matrix$") {
   res <- str_in %>%
@@ -404,9 +406,8 @@ so_clust %>%
 
 reslns <- c(0.4, 0.8, 1.2)
 
-umaps <- sobjs_raw %>%
-  map(
-    create_clust_umaps, 
+umaps <- sobjs_clust %>%
+  map(create_clust_umaps,
     reslns        = reslns,
     threshold     = 0.5,
     ref_in        = type_ref,
@@ -428,25 +429,28 @@ umaps
 
 ### Cell subsets
 
-```{r, fig.width = 10, fig.height = 8}
+```{r, fig.width = 11, fig.height = 8}
 
-reslns <- c(0.6, 1, 1.6, 2.4, 3.2)
+sobjs_sub <- read_rds(here(params$rds_dir, "sobjs_sub.rds"))
+
+reslns <- c(0.3, 0.6, 1, 1.6, 3.2)
 
 so_names <- names(sobjs_sub)
 
 umap_args <- list(
-  sobj_in   = sobjs_sub[so_names],
-  ref_in    = subtype_refs[so_types[so_names]],
-  plot_cols = so_cols[so_names]
+  sobj_in    = sobjs_sub[so_names],
+  ref_in     = subtype_refs[so_types[so_names]],
+  pt_size    = c(0.05, 0.05, 1, 0.05, 1, 0.05),
+  pt_outline = c(0.06, 0.06, 1.1, 0.06, 1.1, 0.06),
+  plot_cols  = so_cols[so_names]
 )
 
 umaps <- umap_args %>%
-  pmap(
-    create_clust_umaps, 
+  pmap(create_clust_umaps,
     reslns        = reslns,
-    threshold     = 0.6,
+    threshold     = 0.5,
     bar_cols      = c(rep("white", 2), "grey85", "#403164"),
-    panel_heights = c(0.75, 0.75, 1),
+    panel_heights = c(0.7, 0.7, 1),
     panel.border  = element_rect(color = "grey85", size = 0.2)
   )
 
@@ -459,20 +463,6 @@ umaps
 <br>
 
 <br>
-
-## Cell Type Annotations {.tabset .tabset-pills}
-
-```{r}
-
-
-
-```
-
-
-
-## OVA Correlations {.tabset .tabset-pills}
-
-
 
 ```{r, eval = F, echo = F}
 

@@ -113,9 +113,221 @@ set_type_cols <- function(type_in, sobjs_in, type_key, type_column = "subtype",
 
 # Processing ----
 
+# Create Seurat object, normalize data, run UMAP, and cluster
+create_sobjs_01 <- function(path_in, resolution, cc_scoring = F, regress_vars = NULL) {
+  
+  # Create Seurat object
+  res <- path_in %>%
+    create_sobj(adt_count_min = 0)
+  
+  # Normalize and cluster
+  res <- res %>%
+    norm_sobj(
+      rna_assay    = "RNA",
+      adt_assay    = "ADT",
+      cc_scoring   = F, 
+      regress_vars = NULL
+    ) %>%
+    cluster_RNA(
+      assay      = "RNA",
+      resolution = resolution,
+      pca_meta   = F,
+      umap_meta  = F 
+    )
+  
+  res
+}
+
+# Annotate cell types and calculate OVA fold change for each object
+assign_cell_types_02 <- function(sobj_in, ref_mat, threshold) {
+  
+  # Assign cell types
+  # By default variable features are used for annotation
+  res <- sobj_in %>%
+    clustify(
+      cluster_col   = "RNA_clusters",
+      ref_mat       = ref_mat,
+      rename_prefix = "t1",
+      seurat_out    = T,
+      threshold     = threshold
+    )
+  
+  res@meta.data <- res@meta.data %>%
+    rownames_to_column("cell_id") %>%
+    mutate(cell_type = t1_type) %>%
+    select(-UMAP_1, -UMAP_2) %>%
+    column_to_rownames("cell_id")
+
+  # Calculate OVA fold change
+  res <- res %>%
+    calc_feat_fc(
+      feat         = "adt_ovalbumin",
+      data_slot    = "counts",
+      grp_column   = "cell_type",
+      control_grps = c("B cell", "T cell"),
+      add_pseudo   = T
+    )
+  
+  res
+}
+
+# Split objects based on cell type, re-cluster and run clustify to annotate subtypes
+clustify_subsets_03 <- function(sobj_in, type_in = NULL, ref, assay = "RNA", resolution = 1.8, dims = 1:40,
+                                type_column = "cell_type", subtype_column = "subtype", prefix = NULL, 
+                                cc_scoring = F, regress_vars = NULL, ...) {
+  
+  # Subset object, scale data, run PCA, and run UMAP
+  if (!is.null(type_in)) {
+    sobj_in <- sobj_in %>%
+      subset_sobj(
+        cell_type    = type_in,
+        type_column  = type_column,
+        cc_scoring   = cc_scoring,
+        regress_vars = regress_vars
+      )
+  }
+  
+  # Re-cluster data
+  res <- sobj_in %>%
+    FindNeighbors(
+      assay     = assay,
+      reduction = "pca",
+      dims      = dims
+    ) %>%
+    FindClusters(
+      resolution = resolution,
+      verbose = F
+    ) %>%
+    AddMetaData(
+      metadata = Idents(.),
+      col.name = "type_clusters"
+    ) %>%
+    clustify(
+      ref_mat       = ref,
+      cluster_col   = "type_clusters",
+      rename_prefix = prefix,
+      ...
+    )
+  
+  # Set subtype and subtype_cluster columns
+  if (!is.null(subtype_column)) {
+    new_col <- "type"
+    
+    if (!is.null(prefix)) {
+      new_col <- str_c(prefix, "_", new_col)
+    }
+    
+    type_col  <- sym(type_column)
+    sub_col   <- sym(subtype_column)
+    clust_col <- sym(str_c(subtype_column, "_clusters"))
+    new_col   <- sym(new_col)
+    
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(
+        !!sub_col   := str_to_title_v2(!!new_col),
+        !!clust_col := str_c(type_clusters, "-", !!sub_col)
+      ) %>%
+      column_to_rownames("cell_id")
+  }
+  
+  res
+}
+
+# Add subtype assignments back to main objects and split again to now include
+# additional cell types (B cells, T cells, etc.) for plotting
+resplit_objects_04 <- function(sobj_in, subtype_so, type_in, inc_types, cc_scoring = F,
+                               regress_vars = NULL) {
+  
+  # Retrieve subtype labels from subtype_so
+  type_res <- subtype_so %>%
+    FetchData(c(
+      "t2_type", "t2_r",
+      "subtype", "subtype_clusters"
+    ))
+  
+  # Add subtype labels and subset to add back additional
+  # cell types (B cells, T cells, etc)
+  res <- sobj_in %>%
+    AddMetaData(type_res) %>%
+    subset_sobj(
+      cell_types   = c(type_in, inc_types),
+      type_column  = "cell_type",
+      cc_scoring   = cc_scoring,
+      regress_vars = regress_vars
+    )
+  
+  # Format meta.data
+  res <- res %>%
+    AddMetaData(FetchData(., c("UMAP_1", "UMAP_2")))
+  
+  res@meta.data <- res@meta.data %>%
+    rownames_to_column("cell_id") %>%
+    mutate(
+      subtype          = ifelse(is.na(subtype), cell_type, subtype),
+      subtype          = str_to_title_v2(subtype),
+      subtype_clusters = ifelse(is.na(subtype_clusters), cell_type, subtype_clusters)
+    ) %>%
+    column_to_rownames("cell_id")
+  
+  res
+  
+}
+
+# Classify classify cells based on OVA counts, do this for each cell type
+# and each subtype
+classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype_column = "subtype",
+                            data_column = "adt_ovalbumin", data_slot = "counts") {
+  
+  # Classify cells for cell type based on OVA signal
+  res <- sobj_in %>%
+    classify_ova(
+      filt_column = type_column,
+      filt        = type_in,
+      data_column = data_column,
+      data_slot   = data_slot,
+      quiet       = T,
+      return_sobj = T
+    )
+  
+  # Split by subtype before classifying based on OVA
+  subtypes <- unique(res$subtype)
+  
+  GMM_res <- subtypes %>%
+    map(~ {
+      classify_ova(
+        sobj_in     = res,
+        filt_column = subtype_column,
+        filt        = .x,
+        data_column = data_column,
+        data_slot   = data_slot,
+        quiet       = T,
+        return_sobj = F
+      )
+    }) %>%
+    bind_rows() %>%
+    mutate(type_GMM_grp_2 = str_c(!!sym(subtype_column), "-", GMM_grp)) %>%
+    select(
+      cell_id,
+      type_GMM_grp = GMM_grp,
+      type_GMM_grp_2,
+      type_mu = mu
+    ) %>%
+    column_to_rownames("cell_id")
+  
+  res <- res %>%
+    AddMetaData(GMM_res)
+  
+  res
+}
+
+
+# Processing helpers ----
+
 # Import matrices and create Seurat object
 create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL, adt_count_min = 0,
-                        gene_min = 250, gene_max = 5000, mito_max = 15, mt_str = "^mt-", ...) {
+                        gene_min = 250, gene_max = 5000, mito_max = 15, mt_str = "^mt-",
+                        rna_assay = "Gene Expression", adt_assay = "Antibody Capture", ...) {
   
   # Load matrices
   mat_list <- Read10X(matrix_dir)
@@ -123,7 +335,7 @@ create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL
   
   # Create Seurat object using gene expression data
   if (is_list(mat_list)) {
-    rna_mat <- mat_list[["Gene Expression"]]
+    rna_mat <- mat_list[[rna_assay]]
   }
   
   res <- rna_mat %>%
@@ -134,59 +346,41 @@ create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL
   
   # Add antibody capture data to Seurat object
   if (is_list(mat_list)) {
-    adt_mat <- res %>%
-      colnames() %>%
-      mat_list[["Antibody Capture"]][, .]
+    adt_mat <- mat_list[[adt_assay]]
     
-    adt_mat <- adt_mat[rowSums(as.matrix(adt_mat)) >= adt_count_min, ]
+    # Double check that cells match for both assays
+    if (!identical(colnames(res), colnames(adt_mat))) {
+      adt_mat <- adt_mat[, colnames(res)]
+      
+      warning("Not all cells are shared between RNA and ADT assays.")
+    }
+    
+    # Remove ADT features that have low total counts and likely failed or
+    # were omitted
+    n_feats <- nrow(adt_mat)
+    count_sums <- rowSums(as.matrix(adt_mat))
+    
+    adt_mat <- adt_mat[count_sums >= adt_count_min, ]
+    
+    if (n_feats != nrow(adt_mat)) {
+      warning("Some ADT features were removed due to low counts (<", adt_count_min, ").")
+    }
     
     res[["ADT"]] <- CreateAssayObject(adt_mat)
-  }
-  
-  # If hash.ids are given divide into ADT and HTO assays
-  if (!is_null(hash_ids[[1]])) {
-    res <- res %>%
-      add_HTO_assay(
-        ADT_mat  = adt_mat,
-        HTO_list = hash_ids
-      ) %>%
-      NormalizeData(
-        assay = "HTO",
-        normalization.method = "CLR"
-      ) %>%
-      HTODemux(...)
-    
-  } else {
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_ids") %>%
-      mutate(hash.ID = names(hash_ids)) %>%
-      column_to_rownames("cell_ids")
   }
   
   # Calculate percentage of mitochondrial reads
   res <- res %>%
     PercentageFeatureSet(
-      pattern  = mt_str, 
+      pattern = mt_str, 
       col.name = "Percent_mito"
     )
   
   # Add QC classifications to meta.data
   res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_ids") %>%
-    mutate(qc_class = "Pass filters") %>%
-    column_to_rownames("cell_ids")
-  
-  if (!is.null(hash_ids[[1]])) {
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_ids") %>%
-      mutate(qc_class = HTO_classification.global) %>%
-      column_to_rownames("cell_ids")
-  }
-  
-  res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
     mutate(
-      qc_class = str_replace(qc_class, "Singlet", "Pass filters"),
+      qc_class = "Pass filters",
       qc_class = ifelse(nFeature_RNA < gene_min, "Low gene count", qc_class),
       qc_class = ifelse(nFeature_RNA > gene_max, "High gene count", qc_class),
       qc_class = ifelse(Percent_mito > mito_max, "High mito reads", qc_class)
@@ -197,27 +391,34 @@ create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL
 }
 
 # Filter and normalize matrices, find variable features
-norm_sobj <- function(sobj_in, adt_assay = "ADT", regress_vars = NULL) {
+norm_sobj <- function(sobj_in, rna_assay = "RNA", adt_assay = "ADT", cc_scoring = F,
+                      regress_vars = NULL) {
   
   # Normalize counts
   res <- sobj_in %>%
     subset(qc_class == "Pass filters") %>%
-    NormalizeData(normalization.method = "LogNormalize")
-  
-  # Score cell cycle genes
-  s.genes <- cc.genes$s.genes %>%
-    str_to_title()
-
-  g2m.genes <- cc.genes$g2m.genes %>%
-    str_to_title()
-
-  res <- res %>%
-    CellCycleScoring(
-      s.features   = s.genes,
-      g2m.features = g2m.genes
+    NormalizeData(
+      assay = rna_assay,
+      normalization.method = "LogNormalize"
     )
   
+  # Score cell cycle genes
+  if (cc_scoring) {
+    s.genes <- cc.genes$s.genes %>%
+      str_to_title()
+    
+    g2m.genes <- cc.genes$g2m.genes %>%
+      str_to_title()
+    
+    res <- res %>%
+      CellCycleScoring(
+        s.features = s.genes,
+        g2m.features = g2m.genes
+      )
+  }
+  
   # Scale data
+  # By default variable features will be used
   res <- res %>%
     FindVariableFeatures(
       selection.method = "vst",
@@ -289,7 +490,8 @@ cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6, dims = 1:40,
   # Use FindClusters to apply modularity optimization techniques such as the Louvain algorithm 
   # (default) or SLM, to iteratively group cells together
   
-  # Scale data, run PCA, run UMAP
+  # Run PCA and UMAP
+  # Data must be scaled
   res <- sobj_in %>%
     run_UMAP_RNA(
       assay     = assay,
@@ -361,24 +563,26 @@ calc_feat_fc <- function(sobj_in, feat = "adt_ovalbumin", data_slot = "counts", 
 
 # Subset Seurat objects for plotting
 subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type", dims = 1:40,
-                        regress_vars = NULL, ...) {
+                        cc_scoring = F, regress_vars = NULL, ...) {
   
   # Filter cells based on input cell type
   res <- sobj_in %>%
     subset(subset = !!sym(type_column) %in% cell_types)
   
   # Score cell cycle genes
-  s.genes <- cc.genes$s.genes %>%
-    str_to_title()
-  
-  g2m.genes <- cc.genes$g2m.genes %>%
-    str_to_title()
-  
-  res <- res %>%
-    CellCycleScoring(
-      s.features   = s.genes,
-      g2m.features = g2m.genes
-    )
+  if (cc_scoring) {
+    s.genes <- cc.genes$s.genes %>%
+      str_to_title()
+    
+    g2m.genes <- cc.genes$g2m.genes %>%
+      str_to_title()
+    
+    res <- res %>%
+      CellCycleScoring(
+        s.features   = s.genes,
+        g2m.features = g2m.genes
+      )
+  }
   
   # Re-process object
   res <- res %>%
@@ -389,57 +593,6 @@ subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type", di
     ScaleData(vars.to.regress = regress_vars) %>%
     RunPCA() %>%
     RunUMAP(dims = dims)
-  
-  res
-}
-
-# Re-cluster and run clustify
-run_clustifyr <- function(sobj_in, type_in = NULL, ref, assay = "RNA", resolution = 1.8, dims = 1:40, type_column = "cell_type",
-                          subtype_column = "subtype", clust_column = "subtype_cluster", prefix = NULL, ...) {
-  
-  res <- sobj_in %>%
-    FindNeighbors(
-      assay     = assay,
-      reduction = "pca",
-      dims      = dims
-    ) %>%
-    FindClusters(
-      resolution = resolution,
-      verbose = F
-    ) %>%
-    AddMetaData(
-      metadata = Idents(.),
-      col.name = "type_clusters"
-    ) %>%
-    clustify(
-      ref_mat       = ref,
-      cluster_col   = "type_clusters",
-      rename_prefix = prefix,
-      ...
-    )
-  
-  # Set cell subtypes for cells that match type_in
-  if (!is.null(type_in)) {
-    new_col <- "type"
-    
-    if (!is.null(prefix)) {
-      new_col <- str_c(prefix, "_", new_col)
-    }
-    
-    type_col  <- sym(type_column)
-    sub_col   <- sym(subtype_column)
-    clust_col <- sym(clust_column)
-    new_col   <- sym(new_col)
-    
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
-        !!sub_col   := if_else(!!type_col == type_in, !!new_col, !!type_col),
-        !!sub_col   := str_to_title_v2(!!sub_col),
-        !!clust_col := if_else(!!type_col == type_in, str_c(type_clusters, "-", !!sub_col), !!sub_col)
-      ) %>%
-      column_to_rownames("cell_id")
-  }
   
   res
 }
@@ -892,12 +1045,22 @@ plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NU
 # Differential expression ----
 
 # Find markers with presto
-find_markers <- function(input_sobj, group_column = NULL, uniq = params$uniq_markers, 
-                         FC_min = params$FC_min, auc_min = params$auc_min, p_max = params$p_max_markers, 
-                         pct_in_min = params$pct_in_min, pct_out_max = params$pct_out_max, ...) {
+find_markers <- function(sobj_in, group_column = NULL, exclude_clust = NULL, groups_use = NULL, 
+                         uniq = params$uniq_markers, FC_min = params$FC_min, auc_min = params$auc_min, 
+                         p_max = params$p_max_markers, pct_in_min = params$pct_in_min, 
+                         pct_out_max = params$pct_out_max, ...) {
   
-  res <- input_sobj %>%
-    wilcoxauc(group_by = group_column, ...) %>%
+  if (!is.null(exclude_clust) && is.null(groups_use)) {
+    sobj_in <- sobj_in %>%
+      subset(subset = !!sym(group_column) != exclude_clust)
+  }
+  
+  res <- sobj_in %>%
+    wilcoxauc(
+      group_by = group_column,
+      groups_use = groups_use,
+      ...
+    ) %>%
     as_tibble() %>%
     filter(
       padj    < p_max,
@@ -990,9 +1153,10 @@ run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL, p_max = param
 # Figure panels ----
 
 # Create UMAPs testing different clustering resolutions with clustifyr
-create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", reslns, plot_cols, threshold = "auto",
-                               bar_cols = c(rep("white", 2), "#403164"), panel_heights = c(0.75, 0.75, 1), ...) {
+create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", reslns, plot_cols, pt_size = 0.05, pt_outline = 0.06, 
+                               threshold = "auto", bar_cols = c(rep("white", 2), "#403164"), panel_heights = c(0.75, 0.75, 1), ...) {
   
+  # Remove UMAP columns from meta.data since clustifyr automatically adds these
   if (any(c("UMAP_1", "UMAP_2") %in% colnames(sobj_in@meta.data))) {
     sobj_in@meta.data <- sobj_in@meta.data %>%
       select(-UMAP_1, -UMAP_2)
@@ -1001,7 +1165,7 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
   # Cluster and create data.frame for UMAPs
   cluster_df <- map(reslns, ~ {
     res <- sobj_in %>%
-      run_clustifyr(
+      clustify_subsets(
         ref        = ref_in,
         resolution = .x,
         threshold  = threshold
@@ -1025,16 +1189,16 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
   }) %>%
     bind_rows()
   
-  # Create UMAPs
-  create_umaps <- function(df_in, x, y, feat, plot_cols = get_cols(70), guide = outline_guide, ...) {
-    
+  # Helper function to create UMAPs
+  create_umaps <- function(df_in, x, y, feat, plot_cols = get_cols(70), pt_size = 0.05,
+                           pt_outline = 0.06, guide = outline_guide, ...) {
     res <- df_in %>%
       plot_features(
         x          = x,
         y          = y,
         feature    = feat,
-        pt_size    = 0.05,
-        pt_outline = 0.06,
+        pt_size    = pt_size,
+        pt_outline = pt_outline,
         plot_cols  = plot_cols,
         split_id   = "clust_lab",
         nrow       = 1
@@ -1060,6 +1224,8 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
     create_umaps(
       x               = x,
       y               = y,
+      pt_size         = pt_size,
+      pt_outline      = pt_outline,
       feat            = "seurat_clusters",
       guide           = umap_guide,
       legend.position = "none",
@@ -1073,6 +1239,8 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
     create_umaps(
       x               = x,
       y               = y,
+      pt_size         = pt_size,
+      pt_outline      = pt_outline,
       feat            = "r",
       guide           = bar_guide,
       plot_cols       = bar_cols,
@@ -1084,11 +1252,13 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
   # Cell type UMAPs
   type_gg <- cluster_df %>%
     create_umaps(
-      x         = x,
-      y         = y,
-      feat      = "type",
-      guide     = umap_guide,
-      plot_cols = plot_cols,
+      x          = x,
+      y          = y,
+      pt_size    = pt_size,
+      pt_outline = pt_outline,
+      feat       = "type",
+      guide      = umap_guide,
+      plot_cols  = plot_cols,
       ...
     )
   
@@ -1451,8 +1621,8 @@ set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
 # Create v1 panel for marker genes
 create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, order_boxes = T,
                                    color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)),
-                                   uniq = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, exclude_clust = NULL, 
-                                   ...) {
+                                   uniq = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, exclude_clust = NULL,
+                                   groups_use = NULL, ...) {
   
   # Set point size
   # ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
@@ -1461,7 +1631,11 @@ create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, cl
   
   # Find marker genes
   markers <- input_sobj %>%
-    find_markers(group_column = clust_column)
+    find_markers(
+      group_column  = clust_column,
+      groups_use    = groups_use,
+      exclude_clust = exclude_clust
+    )
   
   # Find GO terms
   GO_df <- markers
@@ -1698,19 +1872,19 @@ load_refs <- all(file.exists(c(type_ref_path, subtype_ref_paths)))
 load_sobjs <- all(file.exists(so_out))
 
 # Clustering parameters
-type_res       <- 0.8
-type_thresh    <- 0.5
+type_res    <- 0.8
+type_thresh <- 0.5
 
 subtype_res <- c(
   d2_DC   = 1.6,
   d14_DC  = 1.6,
-  d2_LEC  = 0.6,
-  d14_LEC = 0.6,
+  d2_LEC  = 1,
+  d14_LEC = 1,
   d2_FRC  = 1.6,
   d14_FRC = 1.6
 )
 
-subtype_thresh <- 0.6
+subtype_thresh <- 0.5
 
 ```
 
@@ -1810,85 +1984,56 @@ subtype_refs <- params$subtype_refs %>%
 
 ```{r "Create sobjs", eval = !load_sobjs, echo = F}
 
-# Create sobj
-# Avoid loading same matrix twice
+# Create Seurat objects, normalize data, run UMAP, and cluster
 sobjs_raw <- unique(mat_paths) %>%
   set_names(., .) %>%
-  map(create_sobj, adt_count_min = 0)
+  map(create_sobjs_01,
+    cc_scoring   = F,
+    regress_vars = NULL,
+    resolution   = type_res
+  )
 
-# Normalize and cluster
-sobjs_raw <- sobjs_raw %>%
-  map(~ {
-    .x %>%
-      norm_sobj() %>%
-      cluster_RNA(
-        assay      = "RNA",
-        resolution = type_res,
-        pca_meta   = F,
-        umap_meta  = F 
-      )
-  })
 
-# Assign cell types
-sobjs_raw <- sobjs_raw %>%
-  map(~ {
-    res <- clustify(
-      input         = .x,
-      cluster_col   = "RNA_clusters",
-      ref_mat       = type_ref,
-      rename_prefix = "t1",
-      seurat_out    = T,
-      threshold     = type_thresh
-    )
-    
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(cell_type = t1_type) %>%
-      select(-UMAP_1, -UMAP_2) %>%
-      column_to_rownames("cell_id")
-    
-    res
-  })
 
-# Calculate OVA fold change
+# Annotate cell types and calculate OVA fold change for each object
 sobjs_raw <- sobjs_raw %>%
-  map(~ {
-    calc_feat_fc(
-      sobj_in      = .x,
-      feat         = "adt_ovalbumin",
-      data_slot    = "counts",
-      grp_column   = "cell_type",
-      control_grps = c("B cell", "T cell"),
-      add_pseudo   = T
-    )
-  })
+  map(assign_cell_types_02,
+    ref_mat   = type_ref,
+    threshold = type_thresh
+  )
+
+
 
 # Expand Seurat object list for subsets
 sobjs <- sobjs_raw[match(mat_paths, names(sobjs_raw))]
 names(sobjs) <- names(mat_paths)
 
-# Split into DCs, LECs, FRCs and annotate subtypes
+# Split objects based on cell type, re-cluster and run clustify to annotate
+# cell subtypes
 sobjs_sub <- sobjs %>%
   imap(~ {
     so_type <- so_types[[.y]]
     
     res <- .x %>%
-      subset_sobj(
-        cell_type   = so_type,
-        type_column = "cell_type"
-      ) %>%
-      run_clustifyr(
-        type_in    = so_type,
-        ref        = subtype_refs[[so_type]],
-        threshold  = subtype_thresh,
-        resolution = subtype_res[[.y]],
-        prefix     = "t2"
+      clustify_subsets_03(
+        type_in        = so_type,
+        ref            = subtype_refs[[so_type]],
+        threshold      = subtype_thresh,
+        resolution     = subtype_res[[.y]],
+        prefix         = "t2",
+        type_column    = "cell_type",
+        subtype_column = "subtype",
+        cc_scoring     = F,
+        regress_vars   = NULL
       )
     
     res
   })
 
-# Additional cell types to include in objects
+
+
+# Add subtype assignments back to main objects and split again to now include
+# additional cell types (B cells, T cells, etc.) for plotting
 inc_types <- so_types %>%
   map(~ if_else(
     .x == "LEC",
@@ -1897,51 +2042,41 @@ inc_types <- so_types %>%
   )) %>%
   flatten()
 
-# Add subtype assignments back to main objects and split again to now include
-# additional cell types for plotting
-sobjs <- sobjs %>%
-  imap(~ {
-    type_res <- sobjs_sub[[.y]] %>%
-      FetchData(c(
-        "t2_type", "t2_r",
-        "subtype", "subtype_cluster"
-      ))
-    
-    res <- .x %>%
-      AddMetaData(type_res) %>%
-      subset_sobj(
-        cell_types   = c(so_types[[.y]], inc_types[[.y]]),
-        type_column  = "cell_type",
-        regress_vars = c("Percent_mito", "nCount_RNA", "S.Score", "G2M.Score")
-      )
-    
-    res <- res %>%
-      AddMetaData(FetchData(., c("UMAP_1", "UMAP_2")))
-    
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
-        subtype         = ifelse(is.na(subtype), cell_type, subtype),
-        subtype         = str_to_title_v2(subtype),
-        subtype_cluster = ifelse(is.na(subtype_cluster), cell_type, subtype_cluster)
-      ) %>%
-      column_to_rownames("cell_id")
-    
-    res
-  })
+so_names <- names(sobjs)
 
-# Classify cells based on OVA signal
+args_in <- list(
+  sobj_in    <- sobjs[so_names],
+  subtype_so <- sobjs_sub[so_names],
+  type_in    <- so_types[so_names],
+  inc_types  <- inc_types[so_names]
+)
+
+sobjs <- args_in %>%
+  pmap(resplit_objects_04,
+    cc_scoring   = T,
+    regress_vars = c(
+      "Percent_mito", "nCount_RNA",
+      "S.Score",      "G2M.Score"
+    )
+  )
+
+
+
+# Classify classify cells based on OVA counts, do this for each cell type
+# and each subtype
 sobjs <- sobjs %>%
   imap(~ {
-    classify_ova(
-      sobj_in     = .x,
-      filt_column = "cell_type",
-      filt        = so_types[.y],
-      data_column = "adt_ovalbumin",
-      data_slot   = "counts",
-      quiet       = T
+    classify_ova_05(
+      sobj_in        = .x, 
+      type_in        = so_types[[.y]],
+      type_column    = "cell_type",
+      subtype_column = "subtype",
+      data_column    = "adt_ovalbumin",
+      data_slot      = "counts"
     )
   })
+
+
 
 # Write new objects
 sobjs %>%
@@ -2035,6 +2170,15 @@ so_cols <- so_types %>%
     other_cols = common_cols
   )
 
+so_cols$d2_LEC["Marco_LEC"]  <- so_cols$d14_LEC["Marco_LEC"]  <- "#CC79A7"
+so_cols$d2_LEC["Collecting"] <- so_cols$d14_LEC["Collecting"] <- "#D7301F"
+  
+so_cols$d2_LEC <- c(
+  so_cols$d2_LEC,
+  Valve  = "#8C4651",
+  Bridge = "#D55E00"
+)
+
 ```
 
 ```{r, ref.label = c("Functions", "Packages", "Params", "Create refs", "Create sobjs", "Themes"), eval = F}
@@ -2044,7 +2188,31 @@ so_cols <- so_types %>%
 
 
 
+
+
 ```{r "OLD WORKFLOW", eval = F, echo = F}
+
+# TO TEST FOR DIFFERNCES IN METADATA
+walk2(sobjs, old_sobjs, ~ {
+
+  so1 <- .x
+  so2 <- .y
+
+  ident_columns <- colnames(so1@meta.data)
+
+  walk(ident_columns, ~ {
+
+    .x_2 <- ifelse(.x == "subtype_clusters", "subtype_cluster", .x)
+
+    iden <- identical(so1@meta.data[, .x], so2@meta.data[, .x_2])
+
+    msg <- if_else(iden, str_c("IDENTICAL ", .x), str_c("NOT IDENTICAL NOT IDENTICAL NOT IDENTICAL", .x))
+
+    print(msg)
+  })
+})
+
+
 
 # Subset based on cell type
 # Additional cell types to include in objects

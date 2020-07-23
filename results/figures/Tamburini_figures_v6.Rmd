@@ -24,6 +24,7 @@ params:
   pct_in_min:    50                                 # Min percentage cells expressing marker in group
   pct_out_max:   100                                # Max percentage cells expressing marker outside group
   uniq_markers:  FALSE                              # Remove markers that are present in more than one group
+  use_all_grps:  FALSE                              # Compare all groups when finding marker genes
   
   # These parameters specify the input matrices and cell types that should be used for analysis
   # mat_in: Cellranger output folder.
@@ -112,7 +113,8 @@ equalize_x <- function(gg_list_in, log_tran = T, ...) {
       min_x    = min_val, 
       max_x    = max_val, 
       log_tran = log_tran,
-      breaks   = c(0.01, 1, 100, 10000),
+      breaks   = 10^(-4:4),
+      # breaks   = c(0.01, 1, 100, 10000),
       ...
     )
   
@@ -271,8 +273,8 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
 }
 
 # Create figure 4 panels
-create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001, pt_outline = 0.4, gmm_filt = NULL,
-                        low_col = c("white", "white"), sep_bar_labs = F, plot_boxes = T, median_pt = 1) {
+create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001, pt_outline = 0.4,
+                        show_bars = T, low_col = c("white", "white"), sep_bar_labs = F, plot_boxes = T, median_pt = 1, on_top = NULL) {
 
   # Theme elements
   legd_guide <- guide_legend(override.aes = list(
@@ -288,29 +290,18 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     axis.text   = element_text(size = 8)
   )
   
-  
-  # Run GMM
-  if (!is.null(gmm_filt)) {
-    sobj_in <- sobj_in %>%
-      classify_ova(
-        filt_column = names(gmm_filt), 
-        filt        = gmm_filt,
-        quiet       = T
-      )
-  }
-
   # Data for OVA group UMAP
   ova_order <- names(ova_cols)
   
   data_df <- sobj_in@meta.data %>%
     as_tibble(rownames = "cell_id") %>%
-    group_by(GMM_grp) %>%
+    group_by(!!sym(gmm_column)) %>%
     mutate(cell_count = n_distinct(cell_id)) %>%
     ungroup() %>%
-    mutate(GMM_grp = fct_relevel(GMM_grp, ova_order)) %>%
-    arrange(GMM_grp) %>%
+    mutate(!!sym(gmm_column) := fct_relevel(!!sym(gmm_column), ova_order)) %>%
+    arrange(!!sym(gmm_column)) %>%
     mutate(
-      cell_count = str_c(GMM_grp, "\n(n = ", cell_count, ")"),
+      cell_count = str_c(!!sym(gmm_column), "\n(n = ", cell_count, ")"),
       cell_count = fct_inorder(cell_count)
     )
   
@@ -353,10 +344,18 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     )
   
   # OVA hist
+  ova_hist_order <- names(ova_cols) %>%
+    grep("ova (low|high)", ., value = T)
+
   ova_hist <- sobj_in@meta.data %>%
-    filter(GMM_grp != "Other") %>%
-    mutate(GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high"))) %>%
-    ggplot(aes(adt_ovalbumin + 1, after_stat(density), fill = GMM_grp)) +
+    filter(!!sym(gmm_column) != "Other") %>%
+    
+    group_by(!!sym(gmm_column)) %>%
+    mutate(mu = mean(adt_ovalbumin)) %>%
+    ungroup() %>%
+    
+    mutate(!!sym(gmm_column) := fct_relevel(!!sym(gmm_column), ova_hist_order)) %>%
+    ggplot(aes(adt_ovalbumin + 1, after_stat(density), fill = !!sym(gmm_column))) +
     
     stat_density(geom = "point", position = "identity", size = 0, color = "white") +
     geom_density(fill = "white", color = "white", size = 0.3, alpha = 0.9) +
@@ -383,11 +382,12 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
   # OVA subtype bar graphs
   type_bar <- sobj_in@meta.data %>%
     as_tibble(rownames = "cell_id") %>%
+    filter(!!sym(gmm_column) != "Other") %>%
     mutate(
       subtype = fct_reorder(subtype, cell_id, n_distinct),
-      GMM_grp = fct_relevel(GMM_grp, c("ova low", "ova high", "Other"))
+      !!sym(gmm_column) := fct_relevel(!!sym(gmm_column), c("ova low", "ova high"))
     ) %>%
-    ggplot(aes(GMM_grp, fill = subtype)) +
+    ggplot(aes(!!sym(gmm_column), fill = subtype)) +
     
     stat_count(position = "fill", geom = "point", size = 0, color = "white") +
     geom_bar(position = "fill", size = 0.25, color = "black", show.legend = F) +
@@ -404,22 +404,31 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
       axis.title.x       = element_blank(),
       axis.line.y        = element_line(size = 0.5, color = "grey85"),
       axis.ticks.y       = element_line(size = 0.1),
+      axis.text.x        = element_text(hjust = c(0.6, 0.4)),
       panel.grid.major.y = element_blank()
     )
   
   if (sep_bar_labs) {
     type_bar <- type_bar +
-      theme(axis.text.x = element_text(hjust = c(0.9, 0.5, 0.1)))
+      theme(axis.text.x = element_text(hjust = c(0.8, 0.2)))
   }
   
   # Reference UMAP
+  if (!is.null(on_top)) {
+    on_top <- ref_cols[on_top]
+    
+    ref_cols <- ref_cols[!names(ref_cols) %in% names(on_top)]
+    ref_cols <- c(ref_cols, on_top)
+  }
+  
   ref_umap <- sobj_in %>%
     create_ref_umap(
       feature     = "subtype",
       color_guide = legd_guide,
       plot_cols   = ref_cols,
       pt_mtplyr   = pt_size / 0.1,
-      pt_outline  = pt_outline
+      pt_outline  = pt_outline,
+      feat_levels = names(ref_cols)
     ) +
     theme(
       plot.margin     = unit(c(0.2, 1.5, 0.2, 0.2), "cm"),
@@ -470,18 +479,23 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
   
   # Feature boxplots
   box_data <- sobj_in %>%
-    FetchData(c(feats, "subtype", "GMM_grp")) %>%
+    FetchData(c(feats, "subtype", gmm_column)) %>%
     as_tibble(rownames = "cell_id") %>%
-    pivot_longer(cols = c(-cell_id, -subtype, -GMM_grp)) %>%
+    pivot_longer(cols = c(-cell_id, -subtype, -!!sym(gmm_column))) %>%
     mutate(type_name = str_c(subtype, "_", name)) %>%
     group_by(type_name) %>%
     mutate(up_qt = boxplot.stats(value)$stats[4]) %>%
     ungroup() %>%
-    mutate(type_name = fct_reorder(type_name, up_qt, median, .desc = T)) %>%
-    group_by(subtype, name) %>%
-    mutate(med = median(value)) %>%
-    ungroup() %>%
-    mutate(name = fct_reorder(name, med, max, .desc = T))
+    mutate(
+      name = fct_relevel(name, feats),
+      type_name = fct_reorder(type_name, up_qt, median, .desc = T)
+    )
+    
+    # TO ORDER GENES BY HIGHEST MEDIAN
+    # group_by(subtype, name) %>%
+    # mutate(med = median(value)) %>%
+    # ungroup() %>%
+    # mutate(name = fct_reorder(name, med, max, .desc = T))
     
   feat_boxes <- box_data %>%
     ggplot(aes(type_name, value, fill = subtype)) +
@@ -541,20 +555,22 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
     guides(fill = guide_legend(override.aes = list(size = 3.5, stroke = 0.25)))
   
   # Final top panel
-  top_lets <- letters
+  blank_gg <- ggplot() +
+    theme_void()
+  
+  top_lets <- c(letters[1:3], "")
   bot_lets <- c("", "d", "e")
   
-  if (!is.null(gmm_filt)) {
-    type_bar <- ggplot() +
-      theme_void()
+  if (!show_bars) {
+    type_bar <- blank_gg
     
-    top_lets <- c(letters[1:2], "")
+    top_lets <- c(letters[1:2], "", "")
     bot_lets <- c("", "c", "d")
   }
   
   top <- plot_grid(
-    ova_grp_umap, ova_hist, type_bar,
-    rel_widths     = c(0.86, 1, 0.9),
+    ova_grp_umap, ova_hist, type_bar, blank_gg,
+    rel_widths     = c(0.86, 1, 0.7, 0.2),
     labels         = top_lets,
     label_fontface = "plain",
     label_size     = 18,
@@ -586,33 +602,49 @@ create_fig4 <- function(sobj_in, ova_cols, feats, feat_cols, ref_cols, pt_size =
 }
 
 # Create figure 4 panels
-create_fig4_panels <- function(sobj_in, gmm_filt = NULL, genes_in, ref_cols, ova_cols, feat_cols, 
-                               low_col = c("white", "white"), sep_bar_labs = F) {
+create_fig4_panels <- function(sobj_in, genes_in = NULL, ref_cols, ova_cols, feat_cols, pt_size = 0.00001, pt_outline = 0.4, 
+                               low_col = c("white", "white"), sep_bar_labs = F, n_panels = 3, on_top = NULL, show_bars = F,
+                               gmm_column = "GMM_grp", ova_umap_grps = c("ova low", "ova high"), ova_gmm_grps = ova_umap_grps,
+                               gmm_filt = grep("ova high", ova_umap_grps, value = T)) {
   
-  if (!is.null(gmm_filt)) {
-    sobj_in <- sobj_in %>%
-      classify_ova(
-        filt_column = names(gmm_filt),
-        filt        = gmm_filt,
-        quiet       = T
-      )
-  }
+  # gmm_column    <- "GMM_grp"
+  # ova_umap_grps <- c("ova low", "ova high")
+  # ova_gmm_grps  <- c("ova low", "ova high")
+  
+  # gmm_column    <- "type_GMM_grp_2"
+  # ova_umap_grps <- c("cDC2 Tbet--ova low", "cDC2 Tbet--ova high")
+  # ova_gmm_grps  <- c("cDC2 Tbet--ova low", "cDC2 Tbet--ova high")
+  # ova_gmm_grps  <- NULL
   
   # Differentially expressed genes for figure
+  n_genes    <- 6
+  tot_genes  <- n_panels * n_genes
+  
   diff_genes <- sobj_in %>%
-    subset(subset = GMM_grp != "Other") %>%
-    find_markers(group_column = "GMM_grp") %>%
-    filter(group == "ova high") %>%
+    find_markers(
+      group_column = gmm_column,
+      groups_use   = ova_gmm_grps
+    ) %>%
+    filter(group == gmm_filt) %>%
     arrange(desc(logFC)) %>%
     pull(feature) %>%
-    head(24)
-  
-  n_genes <- 6
+    head(tot_genes)
+
+  sobj_in@meta.data <- sobj_in@meta.data %>%
+    rownames_to_column("cell_id") %>%
+    mutate(!!sym(gmm_column) := ifelse(
+      !(!!sym(gmm_column)) %in% ova_umap_grps,
+      "Other",
+      !!sym(gmm_column)
+    )) %>%
+    column_to_rownames("cell_id")
   
   feats <- 1:(length(diff_genes) / n_genes) %>%
     map(~ diff_genes[1:n_genes + ((.x - 1) * n_genes)])
   
-  feats <- append(list(genes_in), feats)
+  if (!is.null(genes_in)) {
+    feats <- append(list(genes_in), feats)
+  }
   
   # Create final figure
   iwalk(feats, ~ {
@@ -621,14 +653,18 @@ create_fig4_panels <- function(sobj_in, gmm_filt = NULL, genes_in, ref_cols, ova
     cat("\n### v", .y, "\n", sep = "")
     
     create_fig4(
-      sobj_in      = sobj_in, 
+      sobj_in      = sobj_in,
+      gmm_column   = gmm_column,
       ova_cols     = ova_cols,
       feats        = names(umap_cols),
       feat_cols    = umap_cols,
       ref_cols     = ref_cols,
       low_col      = low_col,
-      gmm_filt     = gmm_filt,
-      sep_bar_labs = sep_bar_labs
+      pt_size      = pt_size,
+      pt_outline   = pt_outline,
+      show_bars    = show_bars,
+      sep_bar_labs = sep_bar_labs,
+      on_top       = on_top
     ) %>%
       print()
     
@@ -728,6 +764,15 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
 
 ```{r "Setup", echo = F}
 
+subtype_order <- list(
+  d2_DC   = c("CCR7hi Mig cDC2", "CCR7hi Mig cDC1", "B cell", "T cell"),
+  d14_DC  = c("CCR7hi Mig cDC2", "CCR7hi Mig cDC1", "cDC2 Tbet-", "cDC2 Tbet+", "B cell", "T cell", "NK"),
+  d2_LEC  = NULL,
+  d14_LEC = c("Ptx3_LEC", "fLEC", "cLEC", "Collecting", "BEC", "B cell", "T cell"),
+  d2_FRC  = NULL,
+  d14_FRC = NULL
+)
+
 # Parameter lists
 fig3_names <- c("d2_DC", "d14_DC", "d14_LEC", "d14_FRC")
 fig3_sobjs <- sobjs[fig3_names]
@@ -736,12 +781,7 @@ fig3_params <- list(
   sobj_in    = fig3_sobjs, 
   plot_title = so_titles[names(fig3_sobjs)],
   cols_in    = so_cols[names(fig3_sobjs)],
-  on_top     = list(
-    c("CCR7hi Mig cDC2", "CCR7hi Mig cDC1", "B cell", "T cell"),
-    c("CCR7hi Mig cDC2", "CCR7hi Mig cDC1", "cDC2 Tbet-", "cDC2 Tbet+", "B cell", "T cell", "NK"),
-    c("Ptx3_LEC", "fLEC", "cLEC", "Collecting", "BEC", "B cell", "T cell"), 
-    NULL
-  )
+  on_top     = subtype_order[names(fig3_sobjs)]
 )
 
 corr_params <- list(
@@ -757,7 +797,7 @@ corr_params <- list(
 
 ## Figure 3
 
-Cell subsets associated with high antigen counts. (a, d, g, j) UMAP projections are shown for cell subsets identified for myeloid cells, endothelial cells, and fibroblasts. (b, e, h, k) Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for all T and B cells. (c, f, i, l) Antigen counts are displayed on UMAP projections for each cell type.
+Cell populations associated with high antigen counts. (a, d, g, j) UMAP projections are shown for cell subsets identified for myeloid cells, endothelial cells, and fibroblasts. (b, e, h, k) Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for all T and B cells. (c, f, i, l) Antigen counts are displayed on UMAP projections for each cell type.
 
 ```{r "Fig 3", fig.width = 13, fig.height = 18}
 
@@ -794,7 +834,7 @@ if (!is.null(params$p_val_xlsx)) {
 }
 
 # Create final figure
-gg_list %>%
+fig3 <- gg_list %>%
   wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
   plot_annotation(tag_levels = "a") &
   theme(
@@ -802,6 +842,8 @@ gg_list %>%
     plot.tag = element_text(size = 24, face = "plain"),
     plot.tag.position = c(-0.08, 1)
   )
+
+fig3
 
 ```
 
@@ -855,7 +897,7 @@ gg_list[violin_idx] <- gg_list[violin_idx] %>%
   equalize_x(log_tran = T)
 
 # Create final figure
-gg_list %>%
+fig3 <- gg_list %>%
   wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
   plot_annotation(tag_levels = "a") &
   theme(
@@ -863,6 +905,8 @@ gg_list %>%
     plot.tag = element_text(size = 24, face = "plain"),
     plot.tag.position = c(-0.08, 1)
   )
+
+fig3
 
 ```
 
@@ -908,7 +952,7 @@ gg_list[violin_idx] <- gg_list[violin_idx] %>%
   equalize_x(log_tran = T)
 
 # Create final figure
-gg_list %>%
+fig3 <- gg_list %>%
   wrap_plots(ncol = 3, widths = c(1, 0.75, 1)) +
   plot_annotation(tag_levels = "a") &
   theme(
@@ -916,6 +960,8 @@ gg_list %>%
     plot.tag = element_text(size = 24, face = "plain"),
     plot.tag.position = c(-0.08, 1)
   )
+
+fig3
 
 ```
 
@@ -938,11 +984,15 @@ genes <- c("Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
 so_name <- "d14_LEC"
 
 create_fig4_panels(
-  sobj_in   = sobjs[[so_name]],
-  genes_in  = genes,
-  ref_cols  = so_cols[[so_name]],
-  ova_cols  = ova_cols,
-  feat_cols = feat_cols
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = genes,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = ova_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  gmm_column    = "GMM_grp",
+  ova_umap_grps = c("ova low", "ova high"),
+  show_bars     = T
 )
 
 ```
@@ -958,11 +1008,16 @@ genes <- c("Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Csf1")
 so_name <- "d2_LEC"
 
 create_fig4_panels(
-  sobj_in   = sobjs[[so_name]],
-  genes_in  = genes,
-  ref_cols  = so_cols[[so_name]],
-  ova_cols  = ova_cols,
-  feat_cols = feat_cols
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = genes,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = ova_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = "white",
+  gmm_column    = "GMM_grp",
+  ova_umap_grps = c("ova low", "ova high"),
+  show_bars     = T
 )
 
 ```
@@ -978,15 +1033,25 @@ genes <- c("Ccl2", "Mif", "Msr1", "Pkm", "Lgals3", "Aif1")
 so_name <- "d2_DC"
 type <- "cDC2 Tbet-"
 
+fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
+names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
+  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
+
+gmm_grps <- ova_grps <- names(fig_cols) %>%
+  grep("ova low$|ova high$", ., value = T)
+
 create_fig4_panels(
-  sobj_in      = sobjs[[so_name]],
-  genes_in     = genes,
-  ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova low", "ova high")],
-  feat_cols    = feat_cols,
-  gmm_filt     = c(subtype = type),
-  low_col      = c("white", "#fafafa"),
-  sep_bar_labs = T
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = NULL,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = fig_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = c("white", "#fafafa"),
+  gmm_column    = "type_GMM_grp_2",
+  ova_umap_grps = ova_grps,
+  ova_gmm_grps  = gmm_grps,
+  n_panels      = 10
 )
 
 ```
@@ -1002,15 +1067,24 @@ genes <- c("Cdc42ep3", "Malt1", "Jak2", "Gpr183", "Tpm1", "Aplp2")
 so_name <- "d2_DC"
 type <- "CCR7hi Mig cDC2"
 
+fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
+names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
+  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
+
+gmm_grps <- ova_grps <- names(fig_cols) %>%
+  grep("ova low$|ova high$", ., value = T)
+
 create_fig4_panels(
-  sobj_in      = sobjs[[so_name]],
-  genes_in     = genes,
-  ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova low", "ova high")],
-  feat_cols    = feat_cols,
-  gmm_filt     = c(subtype = type),
-  low_col      = c("white", "#fafafa"),
-  sep_bar_labs = T
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = NULL,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = fig_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = c("white", "#fafafa"),
+  gmm_column    = "type_GMM_grp_2",
+  ova_umap_grps = ova_grps,
+  ova_gmm_grps  = gmm_grps
 )
 
 ```
@@ -1026,15 +1100,28 @@ genes <- c("Skil", "Ddx3x", "Nrp2", "Fscn1", "Tmem123", "Serpinb9")
 so_name <- "d2_DC"
 type <- "cDC1"
 
+fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
+names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
+  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
+
+gmm_grps <- ova_grps <- names(fig_cols) %>%
+  grep("ova low$|ova high$", ., value = T)
+
+if (params$use_all_grps) {
+  gmm_grps <- NULL
+}
+
 create_fig4_panels(
-  sobj_in      = sobjs[[so_name]],
-  genes_in     = genes,
-  ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova low", "ova high")],
-  feat_cols    = feat_cols,
-  gmm_filt     = c(subtype = type),
-  low_col      = c("white", "#fafafa"),
-  sep_bar_labs = T
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = genes,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = fig_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = "white",
+  gmm_column    = "type_GMM_grp_2",
+  ova_umap_grps = ova_grps,
+  ova_gmm_grps  = gmm_grps
 )
 
 ```
@@ -1050,15 +1137,28 @@ genes <- c("Sema7a", "Phip", "Cd81", "Cd9", "Ddx6", "Ndrg1")
 so_name <- "d2_DC"
 type <- "CCR7hi Mig cDC1"
 
+fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
+names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
+  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
+
+gmm_grps <- ova_grps <- names(fig_cols) %>%
+  grep("ova low$|ova high$", ., value = T)
+
+if (params$use_all_grps) {
+  gmm_grps <- NULL
+}
+
 create_fig4_panels(
-  sobj_in      = sobjs[[so_name]],
-  genes_in     = genes,
-  ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova high", "ova low")],
-  feat_cols    = feat_cols,
-  gmm_filt     = c(subtype = type),
-  low_col      = c("white", "#fafafa"),
-  sep_bar_labs = T
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = genes,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = fig_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = "white",
+  gmm_column    = "type_GMM_grp_2",
+  ova_umap_grps = ova_grps,
+  ova_gmm_grps  = gmm_grps
 )
 
 ```
@@ -1074,15 +1174,28 @@ genes <- c("Cd53", "Ywhab", "Cdk2ap2", "Sh3bgrl", "Serp1", "Pycard")
 so_name <- "d14_DC"
 type <- "cDC2 Tbet-"
 
+fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
+names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
+  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
+
+gmm_grps <- ova_grps <- names(fig_cols) %>%
+  grep("ova low$|ova high$", ., value = T)
+
+if (params$use_all_grps) {
+  gmm_grps <- NULL
+}
+
 create_fig4_panels(
-  sobj_in      = sobjs[[so_name]],
-  genes_in     = genes,
-  ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova low", "ova high")],
-  feat_cols    = feat_cols,
-  gmm_filt     = c(subtype = type),
-  low_col      = "white",
-  sep_bar_labs = T
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = genes,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = fig_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = "white",
+  gmm_column    = "type_GMM_grp_2",
+  ova_umap_grps = ova_grps,
+  ova_gmm_grps  = gmm_grps
 )
 
 ```
@@ -1098,15 +1211,28 @@ genes <- c("Siva1", "Rock2", "Dram1", "Dck", "Mat2a", "Larp4b")
 so_name <- "d14_DC"
 type <- "cDC2 Tbet+"
 
+fig_cols <- ova_cols[c("Other", "ova high", "ova low")]
+names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
+  str_replace("^[a-zA-Z\\-\\+ 0-9]+\\-Other", "Other")
+
+gmm_grps <- ova_grps <- names(fig_cols) %>%
+  grep("ova low$|ova high$", ., value = T)
+
+if (params$use_all_grps) {
+  gmm_grps <- NULL
+}
+
 create_fig4_panels(
-  sobj_in      = sobjs[[so_name]],
-  genes_in     = genes,
-  ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova high", "ova low")],
-  feat_cols    = feat_cols,
-  gmm_filt     = c(subtype = type),
-  low_col      = "white",
-  sep_bar_labs = T
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = genes,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = fig_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = "white",
+  gmm_column    = "type_GMM_grp_2",
+  ova_umap_grps = ova_grps,
+  ova_gmm_grps  = gmm_grps
 )
 
 ```
@@ -1122,15 +1248,28 @@ genes <- c("Insm1", "Cd200", "Poglut1", "Adora2a", "Nupr1", "Tes")
 so_name <- "d14_DC"
 type <- "CCR7hi Mig cDC2"
 
+fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
+names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
+  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
+
+gmm_grps <- ova_grps <- names(fig_cols) %>%
+  grep("ova low$|ova high$", ., value = T)
+
+if (params$use_all_grps) {
+  gmm_grps <- NULL
+}
+
 create_fig4_panels(
-  sobj_in      = sobjs[[so_name]],
-  genes_in     = genes,
-  ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova high", "ova low")],
-  feat_cols    = feat_cols,
-  gmm_filt     = c(subtype = type),
-  low_col      = "white",
-  sep_bar_labs = T
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = genes,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = fig_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = "white",
+  gmm_column    = "type_GMM_grp_2",
+  ova_umap_grps = ova_grps,
+  ova_gmm_grps  = gmm_grps
 )
 
 ```
@@ -1146,15 +1285,28 @@ genes <- c("Ccl22", "Eps15", "Il21r", "Dynll2", "Ccser2", "Ccng2")
 so_name <- "d14_DC"
 type <- "CCR7hi Mig cDC1"
 
+fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
+names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
+  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
+
+gmm_grps <- ova_grps <- names(fig_cols) %>%
+  grep("ova low$|ova high$", ., value = T)
+
+if (params$use_all_grps) {
+  gmm_grps <- NULL
+}
+
 create_fig4_panels(
-  sobj_in      = sobjs[[so_name]],
-  genes_in     = genes,
-  ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova high", "ova low")],
-  feat_cols    = feat_cols,
-  gmm_filt     = c(subtype = type),
-  low_col      = "white",
-  sep_bar_labs = T
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = genes,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = fig_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = "white",
+  gmm_column    = "type_GMM_grp_2",
+  ova_umap_grps = ova_grps,
+  ova_gmm_grps  = gmm_grps
 )
 
 ```
@@ -1163,21 +1315,32 @@ create_fig4_panels(
 
 ```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
 
-# Genes of interest
-genes <- c("Ccl22", "Eps15", "Il21r", "Dynll2", "Ccser2", "Ccng2")
-
 # Seurat object for figure
 so_name <- "d14_FRC"
 type <- "Nr4a1+SC"
 
+fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
+names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
+  str_replace("^[a-zA-Z\\-\\+ 0-9]+\\-Other", "Other")
+
+gmm_grps <- ova_grps <- names(fig_cols) %>%
+  grep("ova low$|ova high$", ., value = T)
+
+if (params$use_all_grps) {
+  gmm_grps <- NULL
+}
+
 create_fig4_panels(
-  sobj_in      = sobjs[[so_name]],
-  genes_in     = genes,
-  ref_cols     = so_cols[[so_name]],
-  ova_cols     = ova_cols[c("Other", "ova high", "ova low")],
-  feat_cols    = feat_cols,
-  gmm_filt     = c(subtype = type),
-  low_col      = "white"
+  sobj_in       = sobjs[[so_name]],
+  genes_in      = NULL,
+  ref_cols      = so_cols[[so_name]],
+  ova_cols      = fig_cols,
+  feat_cols     = feat_cols,
+  on_top        = subtype_order[[so_name]],
+  low_col       = "white",
+  gmm_column    = "type_GMM_grp_2",
+  ova_umap_grps = ova_grps,
+  ova_gmm_grps  = gmm_grps
 )
 
 ```
@@ -1314,3 +1477,131 @@ vv_params %>%
   )
 
 ```
+
+```{r "OLD FUNCTIONS", eval = F, echo = F}
+
+OLD_create_fig4_panels_OLD <- function(sobj_in, type_filt = NULL, gmm_filt = c("GMM_grp" = "ova high"), genes_in = NULL, ref_cols, ova_cols, feat_cols,
+                               pt_size = 0.00001, pt_outline = 0.4, low_col = c("white", "white"), sep_bar_labs = F,
+                               n_panels = 1, filt_gex = F, on_top = NULL) {
+
+  n_genes    <- 6
+  tot_genes  <- n_panels * n_genes
+  show_bars  <- T
+  diff_sobj  <- sobj_in
+  gmm_column <- names(gmm_filt)
+  gmm_filt   <- unname(gmm_filt)
+  
+  # Differentially expressed genes for figure
+  if (!is.null(type_filt)) {
+    show_bars <- F
+    
+    type_column = names(type_filt)
+    type_filt = unname(type_filt)
+    
+    diff_sobj <- diff_sobj %>%
+      subset(subset = !!sym(type_column) == type_filt)
+
+    sobj_in@meta.data <- sobj_in@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(!!sym(gmm_column) := ifelse(
+        !!sym(type_column) != type_filt,
+        "Other",
+        !!sym(gmm_column)
+      )) %>%
+      column_to_rownames("cell_id")
+  }
+    
+  diff_genes <- diff_sobj %>%
+    find_markers(
+      group_column  = gmm_column,
+      exclude_clust = "Other"
+    ) %>%
+    filter(group == gmm_filt) %>%
+    arrange(desc(logFC)) %>%
+    pull(feature) %>%
+    head(tot_genes)
+  
+  feats <- 1:(length(diff_genes) / n_genes) %>%
+    map(~ diff_genes[1:n_genes + ((.x - 1) * n_genes)])
+  
+  if (!is.null(genes_in)) {
+    feats <- append(list(genes_in), feats)
+  }
+  
+  # Create final figure
+  iwalk(feats, ~ {
+    umap_cols <- feat_cols[seq_along(.x)]
+    umap_cols <- set_names(umap_cols, .x)
+    cat("\n### v", .y, "\n", sep = "")
+    
+    create_fig4(
+      sobj_in      = sobj_in,
+      gmm_column   = gmm_column,
+      ova_cols     = ova_cols,
+      feats        = names(umap_cols),
+      feat_cols    = umap_cols,
+      ref_cols     = ref_cols,
+      low_col      = low_col,
+      pt_size      = pt_size,
+      pt_outline   = pt_outline,
+      show_bars    = show_bars,
+      sep_bar_labs = sep_bar_labs,
+      on_top       = on_top
+    ) %>%
+      print()
+    
+    cat("\n\n---\n\n<br>\n\n<br>\n\n")
+  })
+}
+
+```
+
+```{r "MARKER TEST", eval = F, echo = F}
+
+sobj_in <- sobjs[["d14_LEC"]]
+
+subtypes <- unique(sobj_in$subtype)
+
+# GMM classes for each subtype
+GMM_res <- subtypes %>%
+  map(~ {
+    classify_ova(
+      sobj_in     = sobj_in,
+      filt_column = "subtype",
+      filt        = .x,
+      data_column = "adt_ovalbumin",
+      data_slot   = "counts",
+      quiet       = T,
+      return_sobj = F
+    )
+  }) %>%
+  bind_rows() %>%
+  mutate(type_GMM_grp_2 = str_c(subtype, "-", GMM_grp)) %>%
+  select(
+    cell_id,
+    type_GMM_grp = GMM_grp,
+    type_GMM_grp_2,
+    type_mu = mu
+  ) %>%
+  column_to_rownames("cell_id")
+
+sobj_in <- sobj_in %>%
+  AddMetaData(GMM_res)
+
+# OVA high/low for type
+diff_genes <- sobj_in %>%
+  find_markers(
+    group_column  = "GMM_grp",
+    exclude_clust = "Other"
+  ) %>%
+  filter(group == "ova high")
+
+# OVA high/low for subtype
+diff_genes <- sobj_in %>%
+  find_markers(
+    group_column = "type_GMM_grp_2",
+    groups_use = c("cLEC-ova high", "cLEC-ova low")
+  )
+
+```
+

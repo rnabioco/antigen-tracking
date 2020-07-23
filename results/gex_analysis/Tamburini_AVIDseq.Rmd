@@ -21,8 +21,8 @@ params:
   xlsx_dir:      "results/gex_analysis/gene_lists"  # Directory to use for writing gene lists (comment out to skip)
   p_max_markers: 0.05                               # Max p-value for marker genes
   FC_min:        0                                  # Min fold change for marker genes
-  auc_min:       0.4                                # Min AUC for marker genes
-  pct_in_min:    10                                 # Min percentage cells expressing marker in group 
+  auc_min:       0.5                                # Min AUC for marker genes
+  pct_in_min:    30                                 # Min percentage cells expressing marker in group 
   pct_out_max:   100                                # Max percentage cells expressing marker outside group
   uniq_markers:  FALSE                              # Remove markers that are present in more than one group
   p_max_GO:      0.05                               # Max p-value for GO terms
