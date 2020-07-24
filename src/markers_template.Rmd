@@ -16,14 +16,14 @@ mtplyr_3 <- if_else(ncol(sobj) < 750, mtplyr_2 * 2.5, 1)
 
 # Format meta.data and add pseudo count
 subtype_column <- "subtype"
-clust_column   <- "subtype_cluster"
+clust_column   <- "subtype_clusters"
 data_column    <- c("Relative ova signal" = "ova_fc")
 
 sobj@meta.data <- sobj@meta.data %>%
   rownames_to_column("cell_id") %>%
   rename(
     subtype = !!sym(subtype_column),
-    subtype_cluster = !!sym(clust_column)
+    subtype_clusters = !!sym(clust_column)
   ) %>%
   column_to_rownames("cell_id")
 
@@ -417,32 +417,6 @@ ova_fig
 
 ### {.tabset .tabset-pills}
 
-Marker genes were identified by comparing all ovalbumin groups together. `r marker_desc` `r GO_desc`
-```{r "{{.x}} Subtype OVA markers 1", fig.width = 8.5, fig.height = 14, results = "asis", eval = eval_subtype_ova}
-
-# Create figures
-if (!is_empty(xlsx_name)) {
-  xlsx_path <- xlsx_name %>%
-    str_c("/", so_name, "_subtype_ova_1")
-}
-
-create_marker_panel_v1(
-  input_sobj      = sobj,
-  input_cols      = type_ova_cols,
-  clust_column    = "type_GMM_grp_2",
-  xlsx_name       = xlsx_path,
-  n_boxes         = 16,
-  all_boxes       = T,
-  median_pt       = 0.5,
-  color_guide     = outline_guide,
-  panel.spacing.y = unit(0, "cm"),
-  strip.text      = element_text(size = 10, angle = 90, hjust = 0)
-)
-
-```
-
-### {.tabset .tabset-pills}
-
 Marker genes were identified by splitting cells based on subtype and comparing the ovalbumin groups within the subtype. `r marker_desc` `r GO_desc`
 ```{r "{{.x}} Subtype OVA markers 2", fig.width = 8.5, fig.height = 14, results = "asis", eval = eval_subtype_ova}
 
@@ -462,7 +436,7 @@ fig_markers <- subtypes %>%
 # Create figures
 if (!is_empty(xlsx_name)) {
   xlsx_path <- xlsx_name %>%
-    str_c("/", so_name, "_subtype_ova_2")
+    str_c("/", so_name, "_subtype_ova")
 }
 
 create_marker_panel_v2(

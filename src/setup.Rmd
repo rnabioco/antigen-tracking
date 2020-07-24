@@ -139,7 +139,7 @@ create_sobjs_01 <- function(path_in, resolution, cc_scoring = F, regress_vars = 
 }
 
 # Annotate cell types and calculate OVA fold change for each object
-assign_cell_types_02 <- function(sobj_in, ref_mat, threshold) {
+clustify_cell_types_02 <- function(sobj_in, ref_mat, threshold) {
   
   # Assign cell types
   # By default variable features are used for annotation
@@ -625,10 +625,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
   
   # Fit GMM for OVA signal
   data_df <- sobj_in %>%
-    FetchData(data_column, slot = data_slot) %>%
-    rownames_to_column("cell_id") %>%
-    mutate(!!sym(data_column) := !!sym(data_column) + 1) %>%
-    column_to_rownames("cell_id")
+    FetchData(data_column, slot = data_slot)
   
   quiet_EM <- quietly(~ normalmixEM(.))
   
@@ -668,6 +665,14 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
     mutate(GMM_grp = if_else(High >= prob, "High", "Low")) %>%
     column_to_rownames("cell_id")
   
+  # Check that GMM results match input data
+  data_chk <- identical(res[, data_column], sobj_in@meta.data[, data_column])
+  cell_chk <- identical(rownames(res), rownames(sobj_in@meta.data))
+  
+  if (!data_chk && cell_chk) {
+    stop("Input cells do not match cell in GMM output.")
+  }
+  
   res <- list(
     res    = res,
     mu     = mixmdl$mu,
@@ -698,6 +703,7 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
       ...
     )
   
+  # Add results to data.frame
   gmm_df <- gmm_res$res %>%
     rownames_to_column("cell_id") %>%
     mutate(
@@ -707,6 +713,7 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
     ) %>%
     select(-!!sym(data_column))
   
+  # Return data.frame
   if (!return_sobj) {
     if (!is.null(filt)) {
       gmm_df <- gmm_df %>%
@@ -716,13 +723,14 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
     return(gmm_df)
   }
   
-  # Add OVA groups to meta.data
+  # Add OVA groups to meta.data for input object
   gmm_df <- gmm_df %>%
     column_to_rownames("cell_id")
   
   res <- sobj_in %>%
     AddMetaData(gmm_df)
   
+  # Add "Other" label for cells not included in the comparison
   res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
     mutate(GMM_grp = if_else(is.na(GMM_grp), "Other", GMM_grp)) %>%
@@ -1987,29 +1995,29 @@ subtype_refs <- params$subtype_refs %>%
 # Create Seurat objects, normalize data, run UMAP, and cluster
 sobjs_raw <- unique(mat_paths) %>%
   set_names(., .) %>%
-  map(create_sobjs_01,
+  map(
+    create_sobjs_01,
     cc_scoring   = F,
     regress_vars = NULL,
     resolution   = type_res
   )
 
 
-
 # Annotate cell types and calculate OVA fold change for each object
 sobjs_raw <- sobjs_raw %>%
-  map(assign_cell_types_02,
+  map(
+    clustify_cell_types_02,
     ref_mat   = type_ref,
     threshold = type_thresh
   )
 
 
-
+# Split objects based on cell type, re-cluster and run clustify to annotate
+# cell subtypes
 # Expand Seurat object list for subsets
 sobjs <- sobjs_raw[match(mat_paths, names(sobjs_raw))]
 names(sobjs) <- names(mat_paths)
 
-# Split objects based on cell type, re-cluster and run clustify to annotate
-# cell subtypes
 sobjs_sub <- sobjs %>%
   imap(~ {
     so_type <- so_types[[.y]]
@@ -2029,7 +2037,6 @@ sobjs_sub <- sobjs %>%
     
     res
   })
-
 
 
 # Add subtype assignments back to main objects and split again to now include
@@ -2052,14 +2059,14 @@ args_in <- list(
 )
 
 sobjs <- args_in %>%
-  pmap(resplit_objects_04,
+  pmap(
+    resplit_objects_04,
     cc_scoring   = T,
     regress_vars = c(
       "Percent_mito", "nCount_RNA",
       "S.Score",      "G2M.Score"
     )
   )
-
 
 
 # Classify classify cells based on OVA counts, do this for each cell type
@@ -2075,7 +2082,6 @@ sobjs <- sobjs %>%
       data_slot      = "counts"
     )
   })
-
 
 
 # Write new objects
