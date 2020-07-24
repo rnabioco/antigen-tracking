@@ -1509,6 +1509,7 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column,
                               umap_outline = NULL, umap_mtplyr = 1, xlsx_name = NULL, 
                               sheet_name = NULL, ...) {
   
+  # Set blank plots
   marks_umap <- marks_boxes <- GO_bubbles <- ggplot() +
     geom_blank() +
     theme_void()
@@ -1575,6 +1576,8 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column,
       
       # Write GO terms to excel file 
       if (!is.null(xlsx_name)) {
+        ex_out <- str_c(xlsx_name, "_GO.xlsx")
+        
         input_GO %>%
           dplyr::select(
             term_name,  term_id,
@@ -1584,21 +1587,33 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column,
           ) %>%
           arrange(source, p_value) %>%
           write.xlsx(
-            file      = str_c(xlsx_name, "_GO.xlsx"),
+            file      = ex_out,
             sheetName = sheet_name,
             append    = T
           )
+        
+        FILES_OUT <<- md5sum(ex_out) %>%
+          c(FILES_OUT)
       }
     }
     
     # Write markers to excel file
     if (!is.null(xlsx_name)) {
+      ex_out <- str_c(xlsx_name, "_markers.xlsx")
+      
       input_markers %>%
         write.xlsx(
-          file      = str_c(xlsx_name, "_markers.xlsx"),
+          file      = ex_out,
           sheetName = sheet_name,
           append    = T
         )
+      
+      FILES_OUT <<- md5sum(ex_out) %>%
+        c(FILES_OUT)
+      
+      # x <- eval(parse(text = my_file))
+      # FILES_OUT <<- c(x, FILES_OUT)
+      # assign()
     }
   }
   
@@ -1841,7 +1856,7 @@ R_packages <- c(
   "patchwork",  "ComplexHeatmap",
   "devtools",   "broom",
   "presto",     "here",
-  "clustifyrdata"
+  "tools",      "clustifyrdata"
 )
 
 purrr::walk(R_packages, library, character.only = T)
@@ -1893,6 +1908,12 @@ subtype_res <- c(
 )
 
 subtype_thresh <- 0.5
+
+# Vector to store excel file metadata
+# The file name and checksum for each excel is appended to a vector and printed
+# as a table
+FILES_IN  <- c()
+FILES_OUT <- c()
 
 ```
 
@@ -1978,12 +1999,18 @@ type_ref <- str_remove(params$type_ref, "\\.rda$")
 
 load(here(params$ref_dir, params$type_ref))
 
+FILES_IN <<- md5sum(here(params$ref_dir, params$type_ref)) %>%
+  c(FILES_IN)
+
 # Load cell subtype refs
 subtype_refs <- params$subtype_refs %>%
   map(~ {
     ref <- str_remove(.x, "\\.rda$")
     
     load(here(params$ref_dir, .x))
+    
+    FILES_IN <<- md5sum(here(params$ref_dir, .x)) %>%
+      c(FILES_IN)
     
     eval(parse(text = ref))
   })
@@ -2087,6 +2114,9 @@ sobjs <- sobjs %>%
 # Write new objects
 sobjs %>%
   iwalk(~ write_rds(.x, path = so_out[.y]))
+
+FILES_OUT <<- md5sum(so_out[.y]) %>%
+  c(FILES_OUT)
 
 ```
 
@@ -2390,7 +2420,7 @@ ref_migDC <- migDC %>%
 
 ```
 
-```{r "Immgen refs", eval = F, echo = F}
+```{r "Immgen refs Shannon", eval = F, echo = F}
 
 neg14_data <- Read10X("/home/rmsheridan/Projects/antigen-tracking/results/original_run/CD45neg_d14/filtered_feature_bc_matrix/")
 pos14_data <- Read10X("/home/rmsheridan/Projects/antigen-tracking/results/original_run/CD45pos_d14/filtered_feature_bc_matrix/")
@@ -2463,7 +2493,7 @@ d14_res1_type %>%
 
 ```
 
-```{r "DC refs", eval = F, echo = F}
+```{r "DC refs Shannon", eval = F, echo = F}
 
 d14_DC_so <- subset(d14_so, subset = cell_type1 == "DC")
 d14_DC_all.genes <- rownames(d14_DC_so)
@@ -2552,7 +2582,7 @@ d14_DC_so@meta.data$cell_typeDC <- d14DC.new.cluster.ids[d14_DC_so$seurat_cluste
 
 ```
 
-```{r, eval = F, echo = F}
+```{r "Shannon analysis", eval = F, echo = F}
 
 #if scrunchy doesn't load properly use reticulate::py_install("igraph") and reticulate::py_install("leidenalg")
 load(here("ref/ref_mousespleenDC.rda"))

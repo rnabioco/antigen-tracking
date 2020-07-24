@@ -1,7 +1,7 @@
 
 ```{r "{{.x}} Setup", echo = F}
 
-# Load Seurat object
+# Parameters for input Seurat object
 so_name   <- "{{.x}}"
 so_type   <- so_types[so_name]
 so_title  <- so_titles[so_name]
@@ -10,6 +10,7 @@ sobj      <- sobjs[[so_name]]
 xlsx_name <- here(params$xlsx_dir)
 xlsx_path <- NULL
 
+# Multipliers to adjust point size for differing number of cells
 mtplyr_1 <- if_else(ncol(sobj) < 500, 3, 1)
 mtplyr_2 <- if_else(ncol(sobj) < 500, 6, 1)
 mtplyr_3 <- if_else(ncol(sobj) < 750, mtplyr_2 * 2.5, 1)
@@ -456,91 +457,3 @@ create_marker_panel_v2(
 
 ```
 
-
-
-```{r "{{.x}} TEST", eval = F, echo = F}
-
-group_column <- "type_ova_grp"
-
-res <- sobj %>%
-  wilcoxauc(group_by = group_column) %>%
-  as_tibble() %>%
-  filter(
-    padj    < params$p_max_markers,
-    logFC   > params$FC_min,
-    auc     > params$auc_min,
-    pct_in  > params$pct_in_min,
-    pct_out < params$pct_out_max
-  ) %>%
-  arrange(desc(logFC))
-
-res <- res %>%
-  group_by(feature) %>%
-  filter(n() == 1) %>%
-  ungroup()
-
-x <- res %>% 
-  group_by(feature) %>% 
-  filter(group == "high-cDC2 Tbet-") %>% 
-  head() %>% 
-  pull(feature)
-
-sobj %>% 
-  subset(type_ova_grp == "high-cDC2 Tbet-") %>% 
-  FetchData(x) %>% 
-  as_tibble(rownames = "cell_id") %>% 
-  pivot_longer(cols = -cell_id, names_to = "key", values_to = "value") %>% 
-  mutate(key = fct_reorder(key, value, median)) %>% 
-  ggplot(aes(key, value, color = key)) + 
-  geom_boxplot() + 
-  theme_info
-
-# unique(marks$group)[1:4] %>%
-#   map(~ {
-#     marks_in <- marks %>%
-#       filter(group == .x) %>%
-#       pull(feature)
-#     
-#     if (!is_empty(marks_in)) {
-#       create_marker_boxes(
-#         input_sobj = sobj,
-#         input_markers = marks_in,
-#         clust_column = "type_ova_grp",
-#         box_cols = type_ova_cols
-#         # n_boxes          = 16,
-#         # all_violins      = T,
-#         # order_boxes      = T,
-#         # panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
-#         # panel.spacing.y  = unit(0, "cm"),
-#         # panel.spacing.x  = unit(0.2, "cm"),
-#         # strip.text       = element_text(size = 10, angle = 90, hjust = 0)
-#       )
-#     }
-#   })
-
-```
-
-```{r "{{.x}} CELL CYCLE", eval = F, echo = F}
-
-s.genes <- cc.genes$s.genes %>%
-  str_to_title()
-
-g2m.genes <- cc.genes$g2m.genes %>%
-  str_to_title()
-
-so_in <- sobjs[[2]]
-
-so_in <- so_in %>%
-  CellCycleScoring(
-    s.features = s.genes, 
-    g2m.features = g2m.genes,
-    set.ident = T
-  )
-
-so_in %>%
-  plot_features(
-    feature = "Phase",
-    pt_size = 1
-  )
-
-```
