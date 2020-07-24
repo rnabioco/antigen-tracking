@@ -840,8 +840,12 @@ if (!is.null(params$p_val_xlsx)) {
     ) %>%
     bind_rows()
   
+  file_out <- here(params$p_val_xlsx)
+  
   p_vals %>%
-    write.xlsx(here(params$p_val_xlsx))
+    write.xlsx(file_out)
+  
+  FILES_OUT <- c(FILES_OUT, md5sum(file_out))
 }
 
 # Create final figure
@@ -1396,7 +1400,59 @@ corr_params %>%
 
 <br>
 
-```{r, fig.width = 15, fig.height = 15, eval = F, echo = F}
+## Files
+
+`r here()` was used as the working directory.
+
+### Input files
+
+```{r "Input meta data"}
+
+FILES_IN %>%
+  tibble(
+    path = names(.),
+    md5sum = .
+  ) %>%
+  mutate(path = str_remove(path, str_c(here(), "/"))) %>%
+  arrange(path)
+
+```
+
+<br>
+
+### Output files
+
+```{r "Output meta data"}
+
+if (!is.null(FILES_OUT)) {
+  FILES_OUT %>%
+    tibble(
+      path = names(.),
+      md5sum = .
+    ) %>%
+    mutate(path = str_remove(path, str_c(here(), "/"))) %>%
+    arrange(path)  
+}
+
+```
+
+---
+
+<br>
+
+<br>
+
+## Session info
+
+```{r, comment = "", echo = F}
+session_info()
+```
+
+
+
+
+
+```{r "VV gene counts", fig.width = 15, fig.height = 15, eval = F, echo = F}
 
 # Viccinia genes
 vv_genes <- read_tsv(here("ref/VACV_genes.txt"), col_names = "name")
@@ -1456,139 +1512,3 @@ vv_params %>%
   )
 
 ```
-
-```{r "OLD FUNCTIONS", eval = F, echo = F}
-
-OLD_create_fig4_panels_OLD <- function(sobj_in, type_filt = NULL, gmm_filt = c("GMM_grp" = "ova high"), genes_in = NULL, ref_cols, ova_cols, feat_cols,
-                               pt_size = 0.00001, pt_outline = 0.4, low_col = c("white", "white"), sep_bar_labs = F,
-                               n_panels = 1, filt_gex = F, on_top = NULL) {
-
-  n_genes    <- 6
-  tot_genes  <- n_panels * n_genes
-  show_bars  <- T
-  diff_sobj  <- sobj_in
-  gmm_column <- names(gmm_filt)
-  gmm_filt   <- unname(gmm_filt)
-  
-  # Differentially expressed genes for figure
-  if (!is.null(type_filt)) {
-    show_bars <- F
-    
-    type_column = names(type_filt)
-    type_filt = unname(type_filt)
-    
-    diff_sobj <- diff_sobj %>%
-      subset(subset = !!sym(type_column) == type_filt)
-
-    sobj_in@meta.data <- sobj_in@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(!!sym(gmm_column) := ifelse(
-        !!sym(type_column) != type_filt,
-        "Other",
-        !!sym(gmm_column)
-      )) %>%
-      column_to_rownames("cell_id")
-  }
-    
-  diff_genes <- diff_sobj %>%
-    find_markers(
-      group_column  = gmm_column,
-      exclude_clust = "Other"
-    ) %>%
-    filter(group == gmm_filt) %>%
-    arrange(desc(logFC)) %>%
-    pull(feature) %>%
-    head(tot_genes)
-  
-  feats <- 1:(length(diff_genes) / n_genes) %>%
-    map(~ diff_genes[1:n_genes + ((.x - 1) * n_genes)])
-  
-  if (!is.null(genes_in)) {
-    feats <- append(list(genes_in), feats)
-  }
-  
-  # Create final figure
-  iwalk(feats, ~ {
-    umap_cols <- feat_cols[seq_along(.x)]
-    umap_cols <- set_names(umap_cols, .x)
-    cat("\n### v", .y, "\n", sep = "")
-    
-    create_fig4(
-      sobj_in      = sobj_in,
-      gmm_column   = gmm_column,
-      ova_cols     = ova_cols,
-      feats        = names(umap_cols),
-      feat_cols    = umap_cols,
-      ref_cols     = ref_cols,
-      low_col      = low_col,
-      pt_size      = pt_size,
-      pt_outline   = pt_outline,
-      show_bars    = show_bars,
-      sep_bar_labs = sep_bar_labs,
-      on_top       = on_top
-    ) %>%
-      print()
-    
-    cat("\n\n---\n\n<br>\n\n<br>\n\n")
-  })
-}
-
-```
-
-```{r "MARKER TEST", eval = F, echo = F}
-
-sobj_in <- sobjs[["d14_LEC"]]
-
-subtypes <- unique(sobj_in$subtype)
-
-# GMM classes for each subtype
-GMM_res <- subtypes %>%
-  map(~ {
-    classify_ova(
-      sobj_in     = sobj_in,
-      filt_column = "subtype",
-      filt        = .x,
-      data_column = "adt_ovalbumin",
-      data_slot   = "counts",
-      quiet       = T,
-      return_sobj = F
-    )
-  }) %>%
-  bind_rows() %>%
-  mutate(type_GMM_grp_2 = str_c(subtype, "-", GMM_grp)) %>%
-  select(
-    cell_id,
-    type_GMM_grp = GMM_grp,
-    type_GMM_grp_2,
-    type_mu = mu
-  ) %>%
-  column_to_rownames("cell_id")
-
-sobj_in <- sobj_in %>%
-  AddMetaData(GMM_res)
-
-# OVA high/low for type
-diff_genes <- sobj_in %>%
-  find_markers(
-    group_column  = "GMM_grp",
-    exclude_clust = "Other"
-  ) %>%
-  filter(group == "ova high")
-
-# OVA high/low for subtype
-diff_genes <- sobj_in %>%
-  find_markers(
-    group_column = "type_GMM_grp_2",
-    groups_use = c("cLEC-ova high", "cLEC-ova low")
-  )
-
-```
-
-```{r "GMM TEST", eval = F, echo = F}
-
-
-
-
-
-```
-

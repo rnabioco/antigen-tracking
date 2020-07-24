@@ -116,35 +116,39 @@ chunks <- names(sobjs) %>%
 
 `r knit_child(text = chunks)`
 
-## Input files
+## Files
+
+`r here()` was used as the working directory.
+
+### Input files
 
 ```{r "Input meta data"}
 
 FILES_IN %>%
   tibble(
     path = names(.),
-    checksum = .
+    md5sum = .
   ) %>%
+  mutate(path = str_remove(path, str_c(here(), "/"))) %>%
   arrange(path)
 
 ```
 
----
-
 <br>
 
-<br>
-
-## Output files
+### Output files
 
 ```{r "Output meta data"}
 
-FILES_OUT %>%
-  tibble(
-    path = names(.),
-    checksum = .
-  ) %>%
-  arrange(path)
+if (!is.null(FILES_OUT)) {
+  FILES_OUT %>%
+    tibble(
+      path = names(.),
+      md5sum = .
+    ) %>%
+    mutate(path = str_remove(path, str_c(here(), "/"))) %>%
+    arrange(path)  
+}
 
 ```
 
