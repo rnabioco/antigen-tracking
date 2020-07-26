@@ -198,6 +198,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
     mutate(color = cols_in[cell_type])
   
   # Subtype UMAP
+  # Reorder layers of UMAP
   if (!is.null(on_top)) {
     on_top <- umap_cols[on_top]
     
