@@ -114,11 +114,15 @@ set_type_cols <- function(type_in, sobjs_in, type_key, type_column = "subtype",
 # Processing ----
 
 # Create Seurat object, normalize data, run UMAP, and cluster
-create_sobjs_01 <- function(path_in, resolution, cc_scoring = F, regress_vars = NULL) {
+create_sobjs_01 <- function(path_in, resolution, cc_scoring = F, regress_vars = NULL,
+                            proj_name = "SeuratProject") {
   
   # Create Seurat object
   res <- path_in %>%
-    create_sobj(adt_count_min = 0)
+    create_sobj(
+      proj_name = proj_name,
+      adt_count_min = 0
+    )
   
   # Normalize and cluster
   res <- res %>%
@@ -139,8 +143,8 @@ create_sobjs_01 <- function(path_in, resolution, cc_scoring = F, regress_vars = 
 }
 
 # Annotate cell types and calculate OVA fold change for each object
-clustify_cell_types_02 <- function(sobj_in, ref_mat, threshold) {
-  
+clustify_cell_types_02 <- function(sobj_in, ref_mat, threshold, umap_meta = F) {
+
   # Assign cell types
   # By default variable features are used for annotation
   res <- sobj_in %>%
@@ -155,8 +159,14 @@ clustify_cell_types_02 <- function(sobj_in, ref_mat, threshold) {
   res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
     mutate(cell_type = t1_type) %>%
-    select(-UMAP_1, -UMAP_2) %>%
     column_to_rownames("cell_id")
+  
+  if (!umap_meta) {
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      select(-UMAP_1, -UMAP_2) %>%
+      column_to_rownames("cell_id")
+  }
 
   # Calculate OVA fold change
   res <- res %>%
@@ -291,7 +301,7 @@ classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype
     )
   
   # Split by subtype before classifying based on OVA
-  subtypes <- unique(pull(res, subtype_column))
+  subtypes <- unique(pull(res@meta.data, subtype_column))
   
   GMM_res <- subtypes %>%
     map(~ {
@@ -826,22 +836,27 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
     
     counts <- counts %>%
       mutate(
-        # cor_co  = tidy(cor.test(!!sym(x), !!sym(y)))$estimate,
-        # cor_co  = round(cor_co, digits = 2),
-        # pval    = tidy(cor.test(!!sym(x), !!sym(y)))$p.value,
-        # cor_lab = str_c("r = ", cor_co, "\np = ", pval),
+        r       = tidy(cor.test(!!sym(x), !!sym(y)))$estimate,
+        r       = round(r, digits = 2),
+        pval    = tidy(cor.test(!!sym(x), !!sym(y)))$p.value,
+        cor_lab = str_c("r = ", r, ", p = ", format(pval, digits = 2))
         
-        cor_lab = cor(!!sym(x), !!sym(y)),
-        cor_lab = round(cor_lab, digits = 2),
-        cor_lab = str_c("r = ", cor_lab),
-        
-        min_x   = min(!!sym(x)),
-        max_x   = max(!!sym(x)),
-        min_y   = min(!!sym(y)),
-        max_y   = max(!!sym(y)),
-        lab_x   = (max_x - min_x) * lab_pos[1] + min_x,
-        lab_y   = (max_y - min_y) * lab_pos[1] + min_y
+        # cor_lab = cor(!!sym(x), !!sym(y)),
+        # cor_lab = round(cor_lab, digits = 2),
+        # cor_lab = str_c("r = ", cor_lab),
       )
+    
+    if (lab_pos != "strip") {
+      counts <- counts %>%
+        mutate(
+          min_x = min(!!sym(x)),
+          max_x = max(!!sym(x)),
+          min_y = min(!!sym(y)),
+          max_y = max(!!sym(y)),
+          lab_x = (max_x - min_x) * lab_pos[1] + min_x,
+          lab_y = (max_y - min_y) * lab_pos[2] + min_y
+        )
+    }
   }
   
   # Create scatter plot
@@ -891,10 +906,10 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   }
   
   # Add correlation coefficient label
-  if (calc_cor) {
+  if (calc_cor && lab_pos != "strip") {
     res <- res +
       geom_text(
-        aes(x = lab_x, lab_y, label = cor_lab),
+        aes(lab_x, lab_y, label = cor_lab),
         color = "black",
         size  = lab_size,
         check_overlap = T, 
@@ -917,10 +932,32 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   }
   
   # Split plot into facets
+  cor_labeller <- function(labels) {
+    labels %>%
+      map(~ {
+        cor_labs <- counts %>%
+          ungroup() %>%
+          select(!!sym(feature), cor_lab) %>%
+          unique()
+        
+        cor_labs <- set_names(cor_labs$cor_lab, cor_labs[[feature]])
+        
+        str_c(.x, "\n", cor_labs[.x])
+      })
+  }
+  
   if (!is.null(split_id)) {
     if (length(split_id) == 1) {
+      
+      if (calc_cor && lab_pos == "strip") {
+        my_labs <- cor_labeller
+        
+      } else {
+        my_labs <- "label_value"
+      }
+      
       res <- res +
-        facet_wrap(~ split_id, ...)
+        facet_wrap(~ split_id, labeller = my_labs, ...)
       
     } else if (length(split_id) == 2) {
       eq <- str_c(split_id[1], " ~ ", split_id[2])
@@ -1179,7 +1216,7 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
   # Cluster and create data.frame for UMAPs
   cluster_df <- map(reslns, ~ {
     res <- sobj_in %>%
-      clustify_subsets(
+      clustify_subsets_03(
         ref        = ref_in,
         resolution = .x,
         threshold  = threshold
@@ -2086,7 +2123,6 @@ uniq_paths <- unique(mat_paths)
 uniq_paths %>%
   walk(~ {
     path <- .x
-    
     files <- dir(.x)
     
     files %>%
@@ -2100,12 +2136,15 @@ uniq_paths %>%
 # Create Seurat objects, normalize data, run UMAP, and cluster
 sobjs_raw <- uniq_paths %>%
   set_names(., .) %>%
-  map(
-    create_sobjs_01,
-    cc_scoring   = F,
-    regress_vars = NULL,
-    resolution   = type_res
-  )
+  imap(~ {
+    create_sobjs_01(
+      path_in      = .x,
+      proj_name    = shorten_names(.y),
+      cc_scoring   = F,
+      regress_vars = NULL,
+      resolution   = type_res
+    )
+  })
 
 
 # Annotate cell types and calculate OVA fold change for each object
@@ -2174,8 +2213,7 @@ sobjs <- args_in %>%
   )
 
 
-# Classify classify cells based on OVA counts, do this for each cell type
-# and each subtype
+# Classify cells based on OVA counts, do this for each cell type and subtype
 sobjs <- sobjs %>%
   imap(~ {
     classify_ova_05(
@@ -2189,7 +2227,15 @@ sobjs <- sobjs %>%
   })
 
 
-# Write new objects
+# Write list of Seurat objects divided by cell type
+file_out <- here(params$rds_dir, "sobjs_subsets.rds")
+
+sobjs_sub %>%
+  write_rds(file_out)
+
+FILES_OUT <- c(FILES_OUT, md5sum(file_out))
+
+# Write final Seurat objects
 sobjs %>%
   iwalk(~ {
     file_out <- so_out[.y]
@@ -2205,13 +2251,12 @@ sobjs %>%
 
 # Load Seurat objects
 sobjs <- so_out %>%
-    map(~ {
-      res <- read_rds(.x)
-      
-      FILES_IN <<- c(FILES_IN, md5sum(.x))
-      
-      res
-    })
+  map(~ {
+    res <- read_rds(.x)
+    FILES_IN <<- c(FILES_IN, md5sum(.x))
+    
+    res
+  })
 
 ```
 
@@ -2308,3 +2353,22 @@ so_cols$d2_LEC <- c(
 ```
 
 
+
+
+```{r "TEST", eval = F, echo = F}
+
+NEW_sobjs <- sobjs
+
+# TO TEST FOR DIFFERNCES IN METADATA
+walk2(sobjs, NEW_sobjs, ~ {
+  so1 <- .x
+  so2 <- .y
+  ident_columns <- colnames(so1@meta.data)
+  walk(ident_columns, ~ {
+    iden <- identical(so1@meta.data[, .x], so2@meta.data[, .x])
+    msg <- if_else(iden, str_c("IDENTICAL ", .x), str_c("NOT IDENTICAL NOT IDENTICAL NOT IDENTICAL ", .x))
+    print(msg)
+  })
+})
+
+```

@@ -378,7 +378,7 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
     coord_cartesian(ylim = c(0, 1.7)) +
     scale_fill_manual(values = ova_cols, labels = ova_labeller) +
     scale_x_log10(labels = trans_format("log10", math_format(10^.x)), breaks = 10^(-4:4)) +
-    labs(x = "ova counts", y = "Density") +
+    labs(x = "ova counts + 1", y = "Density") +
     guides(fill = guide_legend(override.aes = list(shape = 22, size = 3.5, stroke = 0.25, color = "black"))) +
     theme_minimal_hgrid() +
     text_theme +
@@ -615,12 +615,10 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
 # Create figure 4 panels
 create_fig4_panels <- function(sobj_in, genes_in, ref_cols, ova_cols, feat_cols, pt_size = 0.00001, pt_outline = 0.4, 
                                low_col = c("white", "white"), sep_bar_labs = F, on_top = NULL, show_bars = F,
-                               gmm_column = "GMM_grp", ova_umap_grps = c("ova low", "ova high"), ova_gmm_grps = ova_umap_grps,
-                               gmm_filt = grep("ova high", ova_umap_grps, value = T)) {
+                               gmm_column = "GMM_grp", ova_umap_grps = c("ova low", "ova high")) {
   
   # Combine with input genes
   genes_in <- head(genes_in, 6)
-  
   names(feat_cols) <- genes_in
   
   sobj_in@meta.data <- sobj_in@meta.data %>%
@@ -748,28 +746,16 @@ create_count_violins <- function(sobj_in, plot_cols, box_counts, type_column = "
 }
 
 # Create correlation heatmaps for cell types
-create_ref_heatmap <- function(sobj_in, ref_in, type_column = "subtype", plot_cols = NULL, 
+create_ref_heatmap <- function(sobj_in, ref_in, type_column = "subtype", plot_cols = NULL, rename_ref = NULL,
                                exclude_ref = "^Endothelial cells ", plot_title = NULL, return_mat = F) {
   
-  # Cell type mean expression
-  var_feats <- sobj_in %>%
-    VariableFeatures(assay = "RNA")
-  
-  so_mat <- sobj_in %>%
-    seurat_ref(cluster_col = type_column) %>%
-    .[var_feats, ]
-  
-  # Clustifyr reference
-  colnames(ref_in) <- colnames(ref_in) %>%
-    str_c(., "-ref")
-  
-  # Combine matrices
-  com_genes <- intersect(rownames(so_mat), rownames(ref_in))
-  merge_mat <- cbind(so_mat[com_genes, ], ref_in[com_genes, ])
-  
-  # Calculate correlations
-  cor_mat <- cor(merge_mat)
-  cor_mat <- cor_mat[colnames(so_mat), colnames(ref_in)]
+  # Get clustifyr matrix
+  cor_mat <- sobj_in %>%
+    clustify(
+      cluster_col = type_column,
+      ref_mat     = ref_in,
+      seurat_out  = F
+    )
   
   if (return_mat) {
     return(cor_mat)
@@ -778,9 +764,9 @@ create_ref_heatmap <- function(sobj_in, ref_in, type_column = "subtype", plot_co
   # Heatmaps
   cor_df <- cor_mat %>%
     as_tibble(rownames = "Cell type") %>%
+    rename(all_of(rename_ref)) %>%
     pivot_longer(cols = -`Cell type`, names_to = "Reference type", values_to = "r") %>%
     mutate(
-      `Reference type` = str_remove(`Reference type`, "\\-ref$"),
       `Reference type` = fct_reorder(`Reference type`, r, mean, .desc = T),
       `Cell type` = fct_reorder(`Cell type`, r, mean)
     )
@@ -796,7 +782,7 @@ create_ref_heatmap <- function(sobj_in, ref_in, type_column = "subtype", plot_co
     ggplot(aes(`Reference type`, `Cell type`, fill = r)) +
     geom_tile(color = "white", size = 1) +
     scale_fill_gradient(low = "white", high = plot_cols) +
-    guides(fill = guide_colorbar(barwidth = unit(0.2, "cm"))) +
+    guides(fill = guide_colorbar(barwidth = unit(0.2, "cm"), frame.colour = "black", frame.linewidth = 0.1)) +
     theme_info +
     theme(
       plot.title   = element_text(size = 12, face = "plain"),
@@ -820,17 +806,14 @@ create_ref_heatmap <- function(sobj_in, ref_in, type_column = "subtype", plot_co
 }
 
 # Plot correlation
-plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title, ...) {
+plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title,
+                      add_y_pseudo = 1, ...) {
   
   res <- sobj_in %>%
     FetchData(c(x, y, feat), slot = data_slot) %>%
     mutate(
       !!sym(x) := log10(!!sym(x)),
-      !!sym(y) := log10(!!sym(y))
-    ) %>%
-    filter(
-      !!sym(x) != -Inf,
-      !!sym(y) != -Inf
+      !!sym(y) := log10(!!sym(y) + add_y_pseudo)
     ) %>%
     plot_features(
       x         = x,
@@ -838,7 +821,8 @@ plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title, ...) 
       feature   = feat,
       data_slot = "counts",
       plot_cols = cols_in,
-      lab_pos   = c(0.9, 1),
+      # lab_pos   = c(0.35, 1),
+      lab_pos   = "strip",
       lab_size  = 5,
       calc_cor  = T,
       lm_line   = T,
@@ -911,6 +895,10 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
 
 ```{r "Setup", echo = F}
 
+# Seurat objects used for subtype annotations
+sobjs_sub <- read_rds(here(params$rds_dir, "sobjs_subsets.rds"))
+
+# Order of UMAP layers
 subtype_order <- list(
   d2_DC   = c("CCR7hi Mig cDC2", "CCR7hi Mig cDC1", "B cell", "T cell"),
   d14_DC  = c("CCR7hi Mig cDC2", "CCR7hi Mig cDC1", "cDC2 Tbet-", "cDC2 Tbet+", "B cell", "T cell", "NK"),
@@ -941,7 +929,7 @@ corr_params <- list(
 
 # Figure 3
 
-Cell populations associated with high antigen counts. (a, d, g, j) UMAP projections are shown for cell subsets identified for myeloid cells, endothelial cells, and fibroblasts. (b, e, h, k) Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for all T and B cells. (c, f, i, l) Antigen counts are displayed on UMAP projections for each cell type.
+Cell populations associated with high antigen counts. (a, d, g, j) UMAP projections are shown for myeloid cells, endothelial cells, and fibroblasts. (b, e, h, k) Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for all T and B cells. (c, f, i, l) Antigen counts are displayed on UMAP projections for each cell type.
 
 ```{r "Fig 3", fig.width = 13, fig.height = 18}
 
@@ -997,14 +985,14 @@ fig3
 
 \newpage
 
-# Figure 4 {.tabset .tabset-pills}
+# Figure 4
 
 LEC markers associated with high antigen counts. (a) LECs containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. T cells, B cells, and epithelial cells are shown in white (Other). (b) The distribution of ova antigen counts is shown for ova-low and ova-high cells. Dotted lines indicate the mean counts for each population. (c) The fraction of cells belonging to each LEC subtype is shown for ova-low and ova-high populations. (d) Gene expression counts were plotted for select genes associated with ova-high LECs. (e) The expression of ova-high LEC markers is shown for each LEC subtype.  
 
 ```{r "Fig 4", fig.width = 10, fig.height = 11.5}
 
 # Genes of interest
-genes <- c("Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Mmrn1")
+genes <- c("Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Nfat5")
 
 # Seurat object for figure
 so_name <- "d14_LEC"
@@ -1025,11 +1013,9 @@ fig_4
 
 ```
 
-\newpage
-
 # Figure S5
 
-```{r "Fig S5", fig.width = 11, fig.height = 22}
+```{r "Fig S5", fig.width = 11, fig.height = 15}
 
 box_counts <- c(
   "ovalbumin" = "adt_ovalbumin",
@@ -1037,7 +1023,7 @@ box_counts <- c(
   "pDNA"      = "adt_unprotected-DNA"
 )
 
-fig_S5 <- sobjs %>%
+fig_S5 <- sobjs[fig3_names] %>%
   imap(~ {
     create_count_violins(
       sobj_in     = .x,
@@ -1064,11 +1050,51 @@ fig_S5
 
 \newpage
 
+# Figure S6
+
+```{r, fig.width = 20, fig.height = 34}
+
+pad <- c(9.5, 2, 9.8, 2, 9.8, 2)
+
+cor_plots <- corr_params %>%
+  pmap(
+    plot_corr,
+    x         = c("RNA counts (log10)" = "nCount_RNA"),
+    y         = c("ova counts + 1 (log10)" = "adt_ovalbumin"),
+    feat      = "subtype",
+    split_id  = "subtype",
+    data_slot = "counts",
+    pt_size   = 1,
+    scales    = "free",
+    ncol      = 3
+  ) %>%
+  map2(pad, ~ {
+    .x + theme(
+      legend.position = "none",
+      strip.text      = element_text(size = 14),
+      plot.margin     = unit(c(0.2, 0.2, .y, 0.2), "cm")
+    )
+  })
+
+plot_grid(
+  plotlist       = cor_plots,
+  rel_heights    = c(1, 0.8, 0.8),
+  labels         = letters,
+  label_size     = 32,
+  label_fontface = "plain",
+  align          = "v",
+  ncol           = 2
+)
+
+```
+
+\newpage
+
 # Figure S7
 
-```{r, fig.width = 13, fig.height = 10}
+```{r, fig.width = 13, fig.height = 9}
 
-# Create UMAPs and violine plots for d2_LEC
+# Create UMAPs and violin plots for d2_LEC
 so_name <- "d2_LEC"
 
 gg_list <- sobjs[[so_name]] %>%
@@ -1096,16 +1122,18 @@ heat_cols <- c(get_cols()[2], get_cols()[3])
 
 heat_maps <- map2(LEC_names, heat_cols, ~ {
   create_ref_heatmap(
-    sobj_in    = sobjs[[.x]],
+    sobj_in    = sobjs_sub[[.x]],
     ref_in     = subtype_refs[[so_types[.x]]],
     plot_cols  = .y,
-    plot_title = so_titles[[.x]]
+    plot_title = so_titles[[.x]],
+    rename_ref = c("BEC (ImmGen)" = "BEC")
   )
 })
 
 # Create final figure
 fig_S7 <- (gg_list[[1]] | gg_list[[2]] | gg_list[[3]]) /
   (heat_maps[[1]] | heat_maps[[2]]) +
+  plot_layout(heights = c(1, 0.6)) +
   plot_annotation(tag_levels = "a") &
   theme(
     plot.margin = unit(c(1, 0.5, 0.5, 0.5), "cm"),
@@ -1160,10 +1188,6 @@ fig_S9
 ```
 
 \newpage
-
-
-
-
 
 
 
@@ -1300,58 +1324,3 @@ create_fig4_panels(
 
 ```
 
-# Cell type ova correlation
-
-```{r, fig.width = 15, fig.height = 15}
-
-corr_params %>%
-  pmap(
-    plot_corr,
-    x         = c("RNA counts (log10)" = "nCount_RNA"),
-    y         = c("ova counts (log10)" = "adt_ovalbumin"),
-    feat      = "subtype",
-    data_slot = "counts",
-    pt_size   = 0.5
-  ) %>%
-  plot_grid(
-    plotlist = .,
-    ncol     = 2,
-    align    = "vh",
-    axis     = "trbl"
-  )
-
-```
-
-# Cell subtype ova correlation
-
-```{r, fig.width = 20, fig.height = 34}
-
-pad <- c(2, 2, 10.5, 2, 10.5, 2)
-
-corr_params %>%
-  pmap(
-    plot_corr,
-    x         = c("RNA counts (log10)" = "nCount_RNA"),
-    y         = c("ova counts (log10)" = "adt_ovalbumin"),
-    feat      = "subtype",
-    split_id  = "subtype",
-    data_slot = "counts",
-    pt_size   = 1,
-    scales    = "free",
-    ncol      = 3
-  ) %>%
-  map2(pad, ~ {
-    .x + theme(
-      legend.position = "none",
-      strip.text      = element_text(size = 14),
-      plot.margin     = unit(c(0.2, 0.2, .y, 0.2), "cm")
-    )
-  }) %>%
-  plot_grid(
-    plotlist    = .,
-    rel_heights = c(1, 1, 1),
-    align       = "v",
-    ncol        = 2
-  )
-
-```

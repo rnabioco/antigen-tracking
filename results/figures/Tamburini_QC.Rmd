@@ -17,15 +17,12 @@ params:
   template_dir: "src"
   rds_dir: "sobjs/so"
   ref_dir: "ref"
-  p_val_xlsx: "results/figures/figure_3_pvals.xlsx"
   
-  # These parameters specify the input Seurat objects and cell types that should be used for analysis
-  # sobj_in: Seurat object from Shannon containing CD45- and CD45+ cells for the timepoint. This object is
-  # divided based on CD45+/- and the provided cell type.
-  # sobj_out: The output Seurat object that is saved after dividing based on CD45+/- and cell type.
-  # cell_type: Cell type used for dividing Seurat objects. These labels are matched with the "cell_type1" column.
-  # Subtypes from the "cell_type2" column are also removed if they contain <15 cells.
-  # title: Plot title
+  # These parameters specify the input matrices and cell types that should be used for analysis
+  # mat_in: Cellranger output folder.
+  # cell_type: Cell type used for subsetting Seurat objects.
+  # title: Section title.
+  # sobj_out: The output Seurat object that is saved after processing and subsetting based on cell type.
   sobjs:
     value:
       d2_DC:
@@ -68,7 +65,7 @@ params:
       DC:         "ref_DC_walsh.rda"
       LEC:        "ref_LEC_walsh.rda"
       fibroblast: "ref_FRC_walsh.rda"
-
+  
   # Cell Ranger metrics
   cellranger: "results/count_metrics.csv"
 ---
@@ -77,25 +74,29 @@ params:
 
 `r knitr::knit_child(here::here(params$template_dir, "setup.Rmd"))`
 
-```{r "Unfiltered objects"}
+```{r "Seurat objects"}
 
-# sobjs_raw <- read_rds(here(params$rds_dir, "sobjs_raw.rds"))
-
-# Generate sample names from matrix path
+# Generate project names from matrix path
 shorten_names <- function(str_in, extra_path = "/outs/(filtered|raw)_feature_bc_matrix$") {
   res <- str_in %>%
     str_remove(extra_path) %>%
     basename() %>%
     str_extract("^[a-zA-Z0-9_]+") %>%
     str_remove("^GEX_")
-  
+
   res
 }
 
 # Create unfiltered sobj
 sobjs_raw <- unique(mat_paths) %>%
-  set_names(., shorten_names(.)) %>%
-  imap(create_sobj, adt_count_min = 0)
+  set_names(., .) %>%
+  imap(~ {
+    create_sobj(
+      matrix_dir    = .x,
+      proj_name     = shorten_names(.y),
+      adt_count_min = 0
+    )
+  })
 
 so_raw <- merge(
   x = sobjs_raw[[1]],
@@ -106,22 +107,52 @@ so_raw <- merge(
 sobjs_clust <- sobjs_raw %>%
   map(~ {
     .x %>%
-      norm_sobj() %>%
+      norm_sobj(
+        cc_scoring = F,
+        regress_vars = NULL
+      ) %>%
       cluster_RNA(
         assay      = "RNA",
         resolution = type_res,
         pca_meta   = F,
-        umap_meta  = T 
+        umap_meta  = F
       )
   })
+
+sobjs_clust <- sobjs_clust %>%
+  map(
+    clustify_cell_types_02,
+    ref_mat   = type_ref,
+    threshold = type_thresh,
+    umap_meta = T
+  )
 
 so_clust <- merge(
   x = sobjs_clust[[1]],
   y = sobjs_clust[2:length(sobjs_clust)]
 )
 
+# Split objects based on cell type, re-cluster and run clustify to annotate
+# cell subtypes
+# Expand Seurat object list for subsets
+sobjs_sub <- sobjs_clust[match(mat_paths, names(sobjs_clust))]
+names(sobjs_sub) <- names(mat_paths)
+
+sobjs_sub <- sobjs_sub %>%
+  imap(~ {
+    so_type <- so_types[[.y]]
+    
+    subset_sobj(
+      sobj_in      = .x,
+      cell_type    = so_type,
+      type_column  = "cell_type",
+      cc_scoring   = F,
+      regress_vars = NULL
+    )
+  })
+
 # Set colors
-orig_cols <- names(sobjs_raw)
+orig_cols <- unique(so_raw$orig.ident)
 orig_cols <- get_cols()[seq_along(orig_cols)] %>%
   set_names(., orig_cols)
 
@@ -129,8 +160,8 @@ orig_cols <- get_cols()[seq_along(orig_cols)] %>%
 qc_theme <- theme_info +
   theme(
     legend.text = element_text(size = 10),
-    axis.title = element_text(size = 10),
-    axis.text  = element_text(size = 10)
+    axis.title  = element_text(size = 10),
+    axis.text   = element_text(size = 10)
   )
 
 ```
@@ -142,14 +173,18 @@ qc_theme <- theme_info +
 ```{r "Violins", fig.width = 8, fig.height = 5}
 
 violins <- so_raw@meta.data %>%
-  rownames_to_column("cell_id") %>%
+  as_tibble(rownames = "cell_id") %>%
   mutate(
     orig.ident = fct_relevel(orig.ident, names(orig_cols)),
     `log10 nCount_RNA` = log10(nCount_RNA + 1),
     `log10 nCount_ADT` = log10(nCount_ADT + 1),
     `log10 nFeature_RNA` = log10(nFeature_RNA + 1)
   ) %>%
-  select(-nCount_RNA, -nCount_ADT, -nFeature_RNA, -nFeature_ADT) %>%
+  select(
+    cell_id, qc_class, orig.ident,
+    `log10 nCount_RNA`, `log10 nCount_ADT`,
+    `log10 nFeature_RNA`, Percent_mito
+  ) %>%
   pivot_longer(cols = c(-orig.ident, -cell_id, -qc_class)) %>%
   ggplot(aes(orig.ident, value, fill = orig.ident)) +
   geom_violin() +
@@ -398,18 +433,18 @@ so_clust %>%
 
 <br>
 
-## clustifyr {.tabset .tabset-pills}
+## Cell type annotation {.tabset .tabset-pills}
 
-### Cell types
+```{r, fig.width = 10, fig.height = 10, results = "asis"}
 
-```{r, fig.width = 10, fig.height = 10}
-
+# Clustering resolution
 reslns <- c(0.4, 0.8, 1.2)
 
+# Create UMAPs
 umaps <- sobjs_clust %>%
   map(create_clust_umaps,
     reslns        = reslns,
-    threshold     = 0.5,
+    threshold     = type_thresh,
     ref_in        = type_ref,
     plot_cols     = get_cols(),
     bar_cols      = c(rep("white", 2), "grey85", "#403164"),
@@ -417,24 +452,24 @@ umaps <- sobjs_clust %>%
     panel.border  = element_rect(color = "grey85", size = 0.2)
   )
 
-umaps
+# Print panels
+umaps %>%
+  iwalk(~ {
+    cat("\n### ", shorten_names(.y), "\n", sep = "")
+    print(.x)
+    cat("\n\n---\n\n<br>\n\n<br>\n\n")
+  })
 
 ```
 
----
+## Cell subtype annotation {.tabset .tabset-pills}
 
-<br>
+```{r, fig.width = 11, fig.height = 8, results = "asis"}
 
-<br>
-
-### Cell subsets
-
-```{r, fig.width = 11, fig.height = 8}
-
-sobjs_sub <- read_rds(here(params$rds_dir, "sobjs_sub.rds"))
-
+# Clustering resolution
 reslns <- c(0.3, 0.6, 1, 1.6, 3.2)
 
+# UMAP args
 so_names <- names(sobjs_sub)
 
 umap_args <- list(
@@ -445,24 +480,27 @@ umap_args <- list(
   plot_cols  = so_cols[so_names]
 )
 
+# Create UMAPs
 umaps <- umap_args %>%
   pmap(create_clust_umaps,
     reslns        = reslns,
-    threshold     = 0.5,
+    threshold     = subtype_thresh,
     bar_cols      = c(rep("white", 2), "grey85", "#403164"),
     panel_heights = c(0.7, 0.7, 1),
     panel.border  = element_rect(color = "grey85", size = 0.2)
   )
 
-umaps
+# Print panels
+umaps %>%
+  iwalk(~ {
+    cat("\n### ", .y, "\n", sep = "")
+    print(.x)
+    cat("\n\n---\n\n<br>\n\n<br>\n\n")
+  })
 
 ```
 
----
 
-<br>
-
-<br>
 
 ```{r, eval = F, echo = F}
 
