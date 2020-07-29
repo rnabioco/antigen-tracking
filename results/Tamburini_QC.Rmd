@@ -1,0 +1,603 @@
+---
+title: "Antigen Tracking QC"
+author: "Ryan Sheridan"
+date: "`r Sys.Date()`"
+
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    df_print: "paged"
+    code_folding: "hide"
+    self_contained: true
+    highlight: "kate"
+    
+params:
+  template_dir: "src"
+  rds_dir: "sobjs/so"
+  ref_dir: "ref"
+  
+  # These parameters specify the input matrices and cell types that should be used for analysis
+  # mat_in: Cellranger output folder.
+  # cell_type: Cell type used for subsetting Seurat objects.
+  # title: Section title.
+  # sobj_out: The output Seurat object that is saved after processing and subsetting based on cell type.
+  sobjs:
+    value:
+      d2_DC:
+        mat_in:    "results/GEX_CD45pos_d2-ADT_CD45pos_d2/outs/filtered_feature_bc_matrix"
+        cell_type: "DC"
+        title:     "Myeloid Cells (Day 2)"
+        sobj_out:  "d2_DC_so_2.rds"
+      d14_DC:
+        mat_in:    "results/GEX_CD45pos_d14-ADT_CD45pos_d14/outs/filtered_feature_bc_matrix"
+        cell_type: "DC"
+        title:     "Myeloid Cells (Day 14)"
+        sobj_out:  "d14_DC_so_2.rds"
+      d2_LEC:
+        mat_in:    "results/GEX_CD45neg_d2-ADT_CD45neg_d2/outs/filtered_feature_bc_matrix"
+        cell_type: "LEC"
+        title:     "Endothelial/Stromal Cells (Day 2)"
+        sobj_out:  "d2_LEC_so_2.rds"
+      d14_LEC:
+        mat_in:    "results/GEX_CD45neg_d14-ADT_CD45neg_d14/outs/filtered_feature_bc_matrix"
+        cell_type: "LEC"
+        title:     "Endothelial/Stromal Cells (Day 14)"
+        sobj_out:  "d14_LEC_so_2.rds"
+      d2_FRC:
+        mat_in:    "results/GEX_CD45neg_d2-ADT_CD45neg_d2/outs/filtered_feature_bc_matrix"
+        cell_type: "fibroblast"
+        title:     "Fibroblast/Stromal Cells (Day 2)"
+        sobj_out:  "d2_FRC_so_2.rds"
+      d14_FRC:
+        mat_in:    "results/GEX_CD45neg_d14-ADT_CD45neg_d14/outs/filtered_feature_bc_matrix"
+        cell_type: "fibroblast"
+        title:     "Fibroblast/Stromal Cells (Day 14)"
+        sobj_out:  "d14_FRC_so_2.rds"
+        
+  # These parameters specify paths to clustifyr references
+  ref_sobjs: ["d2_so.rds", "d14_so.rds"]
+  type_ref:  "ref_celltype_walsh.rda"
+  xiang_ref: "ref_LEC_xiang.rda"
+  subtype_refs:
+    value:
+      DC:         "ref_DC_walsh.rda"
+      LEC:        "ref_LEC_walsh.rda"
+      fibroblast: "ref_FRC_walsh.rda"
+  
+  # Cell Ranger metrics
+  cellranger: "results/count_metrics.csv"
+---
+
+---
+
+`r knitr::knit_child(here::here(params$template_dir, "setup.Rmd"))`
+
+```{r "Seurat objects"}
+
+# Generate project names from matrix path
+shorten_names <- function(str_in, extra_path = "/outs/(filtered|raw)_feature_bc_matrix$") {
+  res <- str_in %>%
+    str_remove(extra_path) %>%
+    basename() %>%
+    str_extract("^[a-zA-Z0-9_]+") %>%
+    str_remove("^GEX_")
+
+  res
+}
+
+# Create unfiltered sobj
+sobjs_raw <- unique(mat_paths) %>%
+  set_names(., .) %>%
+  imap(~ {
+    create_sobj(
+      matrix_dir    = .x,
+      proj_name     = shorten_names(.y),
+      adt_count_min = 0
+    )
+  })
+
+so_raw <- merge(
+  x = sobjs_raw[[1]],
+  y = sobjs_raw[2:length(sobjs_raw)]
+)
+
+# Normalize and cluster
+sobjs_clust <- sobjs_raw %>%
+  map(~ {
+    .x %>%
+      norm_sobj(
+        cc_scoring = F,
+        regress_vars = NULL
+      ) %>%
+      cluster_RNA(
+        assay      = "RNA",
+        resolution = type_res,
+        pca_meta   = F,
+        umap_meta  = F
+      )
+  })
+
+sobjs_clust <- sobjs_clust %>%
+  map(
+    clustify_cell_types_02,
+    ref_mat   = type_ref,
+    threshold = type_thresh,
+    umap_meta = T
+  )
+
+so_clust <- merge(
+  x = sobjs_clust[[1]],
+  y = sobjs_clust[2:length(sobjs_clust)]
+)
+
+# Split objects based on cell type, re-cluster and run clustify to annotate
+# cell subtypes
+# Expand Seurat object list for subsets
+sobjs_sub <- sobjs_clust[match(mat_paths, names(sobjs_clust))]
+names(sobjs_sub) <- names(mat_paths)
+
+sobjs_sub <- sobjs_sub %>%
+  imap(~ {
+    so_type <- so_types[[.y]]
+    
+    subset_sobj(
+      sobj_in      = .x,
+      cell_type    = so_type,
+      type_column  = "cell_type",
+      cc_scoring   = F,
+      regress_vars = NULL
+    )
+  })
+
+# Set colors
+orig_cols <- unique(so_raw$orig.ident)
+orig_cols <- get_cols()[seq_along(orig_cols)] %>%
+  set_names(., orig_cols)
+
+# QC theme
+qc_theme <- theme_info +
+  theme(
+    legend.text = element_text(size = 10),
+    axis.title  = element_text(size = 10),
+    axis.text   = element_text(size = 10)
+  )
+
+```
+
+## Basic Stats {.tabset .tabset-pills}
+
+### Summary
+
+```{r "Violins", fig.width = 8, fig.height = 5}
+
+violins <- so_raw@meta.data %>%
+  as_tibble(rownames = "cell_id") %>%
+  mutate(
+    orig.ident = fct_relevel(orig.ident, names(orig_cols)),
+    `log10 nCount_RNA` = log10(nCount_RNA + 1),
+    `log10 nCount_ADT` = log10(nCount_ADT + 1),
+    `log10 nFeature_RNA` = log10(nFeature_RNA + 1)
+  ) %>%
+  select(
+    cell_id, qc_class, orig.ident,
+    `log10 nCount_RNA`, `log10 nCount_ADT`,
+    `log10 nFeature_RNA`, Percent_mito
+  ) %>%
+  pivot_longer(cols = c(-orig.ident, -cell_id, -qc_class)) %>%
+  ggplot(aes(orig.ident, value, fill = orig.ident)) +
+  geom_violin() +
+  stat_summary(geom = "point", shape = 22, fun = median, fill = "white", size = 1) +
+  facet_wrap(~ name, scales = "free_y") +
+  scale_fill_manual(values = orig_cols) +
+  qc_theme +
+  theme(
+    legend.position = "none",
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+violins
+
+```
+
+```{r "Bars", fig.width = 8, fig.height = 2.5}
+
+bars <- so_raw %>%
+  plot_cell_count(
+    group_id    = "orig.ident",
+    fill_id     = "qc_class",
+    plot_cols   = get_cols(18),
+    group_order = names(orig_cols),
+    bar_line    = 0.3
+  ) +
+  coord_flip() +
+  qc_theme +
+  theme(
+    legend.title = element_blank(),
+    axis.title.y = element_blank()
+  )
+
+plot_grid(bars, NA, rel_widths = c(1, 0.25))
+
+```
+
+---
+
+<br>
+
+<br>
+
+### Cell Ranger
+
+```{r "Cell Ranger", fig.width = 10, fig.height = 15}
+
+# Format metrics data.frame
+cellranger_metrics <- read_csv(here(params$cellranger)) %>%
+  mutate_all(as.character) %>%
+  pivot_longer(-sample, names_to = "key", values_to = "value") %>%
+  pivot_wider(names_from = "sample", values_from = "value") %>%
+  pivot_longer(-key, names_to = "sample", values_to = "value") %>%
+  mutate(
+    key = str_remove(key, "\\(.+\\)"),
+    sample = shorten_names(sample)
+  ) %>%
+  mutate(
+    sample = fct_relevel(sample, names(orig_cols)),
+    key    = str_trim(key),
+    key    = ifelse(grepl("%", value), str_c(key, " (%)"), key),
+    key    = str_wrap(key, width = 35),
+    value  = str_remove(value, "%"),
+    value  = as.double(value)
+  )
+
+# Create bar graphs
+cellranger_metrics %>%
+  ggplot(aes(sample, value, fill = sample)) + 
+  geom_bar(stat = "identity", size = 0.3, color = "black") + 
+  scale_fill_manual(values = orig_cols) +
+  facet_wrap(~ key, scales = "free_y", ncol = 4) + 
+  qc_theme + 
+  theme(
+    strip.text      = element_text(size = 8),
+    legend.position = "top",
+    legend.title    = element_blank(),
+    legend.text     = element_text(size = 10), 
+    axis.title      = element_blank(), 
+    axis.text       = element_text(size = 7), 
+    axis.text.x     = element_blank(), 
+    axis.ticks.x    = element_blank()
+  ) +
+  guides(fill = guide_legend(nrow = 4))
+
+```
+
+---
+
+<br>
+
+<br>
+
+### Scatter plots
+
+```{r "Scatter plots", fig.width = 8, fig.height = 6}
+
+# Create QC scatter plots
+create_scatters <- function(sobj_in, plot_cols, gene_min = 250, gene_max = 5000, mito_max = 15) {
+  
+  # Create legend
+  scat_legend <- sobj_in@meta.data %>%
+    ggplot(aes(nCount_RNA, nFeature_RNA, color = orig.ident)) +
+    geom_point(size = 3.5) +
+    scale_color_manual(values = plot_cols) +
+    qc_theme +
+    theme(legend.title = element_blank())
+  
+  scat_legend <- get_legend(scat_legend)
+
+  # Create scatter plots
+  vars_to_plot <- list(
+    c("nCount_RNA",  "nFeature_RNA"),
+    c("nCount_RNA",  "Percent_mito"),
+    c("nFeature_RNA", "Percent_mito")
+  )
+  
+  scat_plots <- vars_to_plot %>%
+    map(~ {
+      p <- sobj_in@meta.data %>%
+        ggplot(aes(!!sym(.x[1]), !!sym(.x[2]), color = orig.ident)) +
+        geom_point(size = 0.25) +
+        scale_color_manual(values = plot_cols) +
+        qc_theme +
+        theme(legend.position = "none")
+      
+      if (identical(.x, c("nFeature_RNA", "Percent_mito"))) {
+        p <- p +
+          geom_segment(
+            x = gene_min, xend = gene_min, 
+            y = 0,        yend = mito_max, 
+            color = "black",
+            linetype = 2
+          ) +
+          geom_segment(
+            x = gene_max, xend = gene_max, 
+            y = 0,        yend = mito_max, 
+            color = "black", 
+            linetype = 2
+          ) +
+          geom_segment(
+            x = gene_min, xend = gene_max,
+            y = mito_max, yend = mito_max,
+            color = "black", 
+            linetype = 2
+          ) +
+          geom_segment(
+            x = gene_min, xend = gene_max,
+            y = 0,        yend = 0,
+            color = "black",
+            linetype = 2
+          )
+      }
+      
+      p
+    })
+  
+  scat_plots <- append(scat_plots, list(scat_legend))
+  
+  # Create final figure with key
+  plot_grid(
+    plotlist = scat_plots,
+    nrow = 2
+  )
+}
+
+so_raw %>%
+  create_scatters(plot_cols = orig_cols)
+
+```
+
+---
+
+<br>
+
+<br>
+
+### UMAPs
+
+```{r "UMAPs", fig.width = 9, fig.height = 8}
+
+# Set colors for stats
+stat_cols <- c(
+  "nCount_RNA", "nFeature_RNA",
+  "nCount_ADT", "Percent_mito"
+)
+
+stat_cols <- get_cols(17)[1:length(stat_cols)] %>%
+  set_names(., stat_cols)
+
+# Helper function to create UMAPs
+create_stat_umaps <- function(so_in, plot_cols, plot_title, ...) {
+  res <- so_in %>%
+    plot_features(
+      feature      = "value",
+      split_id     = "orig.ident",
+      pt_size      = 0.01,
+      pt_outline   = 0.1,
+      plot_cols    = plot_cols,
+      ...
+    ) +
+    ggtitle(plot_title) +
+    guides(color = guide_colorbar(barwidth = unit(0.2, "cm"))) +
+    blank_theme +
+    theme(
+      plot.title = element_text(size = 12),
+      panel.border = element_rect(color = "grey85"),
+      strip.text = element_text(size = 10),
+      legend.title = element_blank(),
+      legend.text  = element_text(size = 10)
+    )
+  
+  res
+}
+
+# Create stat UMAPs
+so_clust %>%
+  FetchData(c(
+    "orig.ident", names(stat_cols),
+    "UMAP_1", "UMAP_2"
+  )) %>%
+  rownames_to_column("cell_id") %>%
+  pivot_longer(cols = names(stat_cols)) %>%
+  nest(data = -name) %>%
+  mutate(gg = map2(data, name, ~ {
+    create_stat_umaps(
+      so_in        = .x,
+      split_levels = names(orig_cols),
+      plot_cols    = c("white", stat_cols[.y]),
+      plot_title   = .y
+    )    
+  })) %>%
+  pull(gg) %>%
+  plot_grid(
+    plotlist = .,
+    align    = "vh",
+    axis     = "trbl"
+  )
+  
+```
+
+---
+
+<br>
+
+<br>
+
+## Cell type annotation {.tabset .tabset-pills}
+
+```{r, fig.width = 10, fig.height = 10, results = "asis"}
+
+# Clustering resolution
+reslns <- c(0.4, 0.8, 1.2)
+
+# Create UMAPs
+umaps <- sobjs_clust %>%
+  map(create_clust_umaps,
+    reslns        = reslns,
+    threshold     = type_thresh,
+    ref_in        = type_ref,
+    plot_cols     = get_cols(),
+    bar_cols      = c(rep("white", 2), "grey85", "#403164"),
+    panel_heights = c(0.75, 0.75, 1),
+    panel.border  = element_rect(color = "grey85", size = 0.2)
+  )
+
+# Print panels
+umaps %>%
+  iwalk(~ {
+    cat("\n### ", shorten_names(.y), "\n", sep = "")
+    print(.x)
+    cat("\n\n---\n\n<br>\n\n<br>\n\n")
+  })
+
+```
+
+## Cell subtype annotation {.tabset .tabset-pills}
+
+```{r, fig.width = 11, fig.height = 8, results = "asis"}
+
+# Clustering resolution
+reslns <- c(0.3, 0.6, 1, 1.6, 3.2)
+
+# UMAP args
+so_names <- names(sobjs_sub)
+
+umap_args <- list(
+  sobj_in    = sobjs_sub[so_names],
+  ref_in     = subtype_refs[so_types[so_names]],
+  pt_size    = c(0.05, 0.05, 1, 0.05, 1, 0.05),
+  pt_outline = c(0.06, 0.06, 1.1, 0.06, 1.1, 0.06),
+  plot_cols  = so_cols[so_names]
+)
+
+# Create UMAPs
+umaps <- umap_args %>%
+  pmap(create_clust_umaps,
+    reslns        = reslns,
+    threshold     = subtype_thresh,
+    bar_cols      = c(rep("white", 2), "grey85", "#403164"),
+    panel_heights = c(0.7, 0.7, 1),
+    panel.border  = element_rect(color = "grey85", size = 0.2)
+  )
+
+# Print panels
+umaps %>%
+  iwalk(~ {
+    cat("\n### ", .y, "\n", sep = "")
+    print(.x)
+    cat("\n\n---\n\n<br>\n\n<br>\n\n")
+  })
+
+```
+
+
+
+```{r, eval = F, echo = F}
+
+# FRC TEST
+sobjs_raw <- unique(mat_paths) %>%
+  set_names(., .) %>%
+  map(create_sobj, adt_count_min = 0)
+
+# Normalize and cluster
+sobjs_raw <- sobjs_raw %>%
+  map(~ {
+    .x %>%
+      norm_sobj(regress_vars = c("Percent_mito", "nCount_RNA"))
+  })
+
+so_clust <- sobjs_raw %>%
+  map(~ {
+    .x %>%
+      cluster_RNA(
+        assay      = "RNA",
+        resolution = 4,
+        pca_meta   = F,
+        umap_meta  = F 
+      )
+  })
+
+# Assign cell types
+so_clust <- so_clust %>%
+  map(~ {
+    res <- clustify(
+      input         = .x,
+      cluster_col   = "RNA_clusters",
+      ref_mat       = type_ref,
+      rename_prefix = "t1",
+      seurat_out    = T,
+      threshold     = type_thresh
+    )
+    
+    res@meta.data <- res@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      mutate(cell_type = t1_type) %>%
+      select(-UMAP_1, -UMAP_2) %>%
+      column_to_rownames("cell_id")
+    
+    res
+  })
+
+# Expand Seurat object list for subsets
+sobjs <- so_clust[match(mat_paths, names(so_clust))]
+names(sobjs) <- names(mat_paths)
+
+# Subset based on cell type
+# Additional cell types to include in objects
+inc_types <- so_types %>%
+  map(~ if_else(
+    .x == "LEC",
+    list(c("B cell", "T cell", "epithelial")),
+    list(c("B cell", "T cell", "NK"))
+  )) %>%
+  flatten()
+
+x <- sobjs["d14_FRC"] %>%
+  imap(~ {
+    subset_sobj(
+      sobj_in      = .x,
+      cell_types   = c(so_types[[.y]], inc_types[[.y]]),
+      type_column  = "cell_type",
+      regress_vars = c("Percent_mito", "nCount_RNA", "S.Score", "G2M.Score")
+    )
+  })
+
+# TEST SUBTYPE ASSIGNMENTS
+so_type <- "fibroblast"
+
+x <- x$d14_FRC
+
+reslns <- c(0.2, 0.4, 0.6, 0.8, 1, 1.4, 1.8, 2.2)
+
+gg <- reslns %>% 
+  map(~ {
+    run_clustifyr(
+      sobj_in    = x,
+      type_in    = so_type,
+      ref        = subtype_refs[[so_type]],
+      threshold  = subtype_thresh,
+      resolution = .x,
+      prefix     = "t2"
+    ) %>%
+      plot_features(
+        feature = "subtype",
+        pt_size = 0.6
+      ) +
+      guides(color = col_guide) +
+      blank_theme
+  }) %>%
+  plot_grid(plotlist = .)
+
+gg
+
+```

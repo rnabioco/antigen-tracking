@@ -9,7 +9,7 @@ output:
 
 documentclass: article
 mainfont: DejaVu Sans
-geometry: top=0.5in,bottom=0.5in,right=1.8in,left=1.8in
+geometry: top=0.5in,bottom=0.5in,right=2in,left=2in
 
 params:
   template_dir:  "src"
@@ -277,10 +277,10 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
   res
 }
 
-# Create figure 4 panels
-create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_cols, ref_cols, pt_size = 0.00001, pt_outline = 0.4,
-                        show_bars = T, low_col = c("white", "white"), sep_bar_labs = F, plot_boxes = T, median_pt = 1, on_top = NULL) {
-
+# Create GMM panels
+create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_cols, pt_size = 0.00001,
+                              pt_outline = 0.4, show_bars = T, plot_labs = c(letters[1:3], "")) {
+  
   # Theme elements
   legd_guide <- guide_legend(override.aes = list(
     size   = 3.5,
@@ -359,7 +359,7 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
   # Add +1 pseudo count to adt_ovalbumin since using log scale
   ova_hist_order <- names(ova_cols) %>%
     grep("ova (low|high)", ., value = T)
-
+  
   ova_hist <- sobj_in@meta.data %>%
     filter(!!sym(gmm_column) != "Other") %>%
     
@@ -373,7 +373,7 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
     stat_density(geom = "point", position = "identity", size = 0, color = "white") +
     geom_density(fill = "white", color = "white", size = 0.3, alpha = 0.9) +
     geom_density(size = 0.3, alpha = 0.8, show.legend = F) +
-  
+    
     geom_vline(aes(xintercept = mu), size = 0.5, linetype = 2, color = "grey35") +
     coord_cartesian(ylim = c(0, 1.7)) +
     scale_fill_manual(values = ova_cols, labels = ova_labeller) +
@@ -405,7 +405,7 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
     stat_count(position = "fill", geom = "point", size = 0, color = "white") +
     geom_bar(position = "fill", size = 0.25, color = "black", show.legend = F) +
     
-    scale_fill_manual(values = ref_cols) +
+    scale_fill_manual(values = bar_cols) +
     scale_y_continuous(breaks = c(0, 0.5, 1)) +
     guides(fill = guide_legend(ncol = 1, override.aes = list(shape = 22, size = 3.5, stroke = 0.25, color = "black"))) +
     labs(y = "Fraction of cells") +
@@ -421,10 +421,45 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
       panel.grid.major.y = element_blank()
     )
   
-  if (sep_bar_labs) {
-    type_bar <- type_bar +
-      theme(axis.text.x = element_text(hjust = c(0.8, 0.2)))
+  # Create final figure
+  blank_gg <- ggplot() +
+    theme_void()
+  
+  if (!show_bars) {
+    type_bar <- blank_gg
   }
+  
+  res <- plot_grid(
+    ova_grp_umap, ova_hist, type_bar, blank_gg,
+    rel_widths     = c(0.86, 1, 0.7, 0.2),
+    labels         = plot_labs,
+    label_fontface = "plain",
+    label_size     = 18,
+    align          = "h",
+    axis           = "tb",
+    nrow           = 1
+  )
+  
+  res
+}
+
+# Create feature UMAPs
+create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001, pt_outline = 0.4,
+                                    low_col = c("white", "white"), high_col_mtplyr = 1, on_top = NULL) {
+  
+  # Theme elements
+  legd_guide <- guide_legend(override.aes = list(
+    size   = 3.5,
+    shape  = 21,
+    color  = "black",
+    stroke = 0.25
+  ))
+  
+  text_theme <- theme(
+    axis.title  = element_text(size = 10),
+    legend.text = element_text(size = 8),
+    axis.text   = element_text(size = 8)
+  )
   
   # Reference UMAP
   if (!is.null(on_top)) {
@@ -453,10 +488,11 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
   # Create list of feature UMAPs
   feat_umaps <- sobj_in %>%
     create_marker_umaps(
-      pt_mtplyr     = pt_size / 0.1,
-      add_outline   = pt_outline,
-      input_markers = feat_cols,
-      low_col       = low_col
+      pt_mtplyr       = pt_size / 0.1,
+      add_outline     = pt_outline,
+      input_markers   = feats,
+      low_col         = low_col,
+      high_col_mtplyr = high_col_mtplyr
     ) %>%
     map(~ {
       .x +
@@ -482,13 +518,70 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
     )
   
   # Final feature UMAP figure
-  feat_umaps <- plot_grid(
+  res <- plot_grid(
     top_umaps, bot_umaps,
     ncol  = 1,
     align = "vh",
     axis  = "trbl"
   ) + 
     theme(plot.margin = unit(c(1, 0.2, 1.5, 0.2), "cm"))
+  
+  res
+}
+
+# Create figure 4 panels
+create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.00001, pt_outline = 0.4,
+                        median_pt = 1, low_col = c("white", "white"), on_top = NULL,  gmm_column = "GMM_grp",
+                        gmm_grps = c("ova low", "ova high")) {
+  
+  # Theme elements
+  feats <- names(feat_cols)
+  
+  legd_guide <- guide_legend(override.aes = list(
+    size   = 3.5,
+    shape  = 21,
+    color  = "black",
+    stroke = 0.25
+  ))
+  
+  text_theme <- theme(
+    axis.title  = element_text(size = 10),
+    legend.text = element_text(size = 8),
+    axis.text   = element_text(size = 8)
+  )
+  
+  # Set GMM groups in Seurat object
+  sobj_in@meta.data <- sobj_in@meta.data %>%
+    rownames_to_column("cell_id") %>%
+    mutate(!!sym(gmm_column) := ifelse(
+      !(!!sym(gmm_column)) %in% gmm_grps,
+      "Other",
+      !!sym(gmm_column)
+    )) %>%
+    column_to_rownames("cell_id")
+  
+  # GMM summary plots
+  gmm_panels <- create_gmm_panels(
+    sobj_in    = sobj_in,
+    gmm_column = gmm_column,
+    ova_cols   = ova_cols,
+    bar_cols   = ref_cols,
+    pt_size    = pt_size,
+    pt_outline = pt_outline,
+    show_bars  = T,
+    plot_labs  = c(letters[1:3], "")
+  )
+  
+  # Feature UMAPs
+  feat_umaps <- create_feat_umap_panels(
+    sobj_in    = sobj_in,
+    ref_cols   = ref_cols,
+    feats      = feat_cols,
+    pt_size    = pt_size,
+    pt_outline = pt_outline,
+    low_col    = low_col,
+    on_top     = on_top
+  )
   
   # Feature boxplots
   box_data <- sobj_in %>%
@@ -532,17 +625,6 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
   feat_boxes <- feat_boxes +
     stat_summary(geom = "point", shape = 22, fun = median, size = 0) +
     stat_summary(geom = "point", shape = 22, fun = median, size = median_pt + 1, color = "black") +
-    # geom_boxplot(
-    #   color          = "white",
-    #   fill           = "white",
-    #   alpha          = 1,
-    #   size           = 0.3,
-    #   width          = 0.6,
-    #   outlier.colour = "white",
-    #   outlier.alpha  = 1,
-    #   outlier.size   = 0.1,
-    #   coef           = 0
-    # ) +
     geom_boxplot(
       size           = 0.3,
       width          = 0.6,
@@ -565,46 +647,21 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
     ) +
     guides(fill = guide_legend(override.aes = list(size = 3.5, stroke = 0.25)))
   
-  # Final top panel
-  blank_gg <- ggplot() +
-    theme_void()
-  
-  top_lets <- c(letters[1:3], "")
-  bot_lets <- c("", "d", "e")
-  
-  if (!show_bars) {
-    type_bar <- blank_gg
-    
-    top_lets <- c(letters[1:2], "", "")
-    bot_lets <- c("", "c", "d")
-  }
-  
-  top <- plot_grid(
-    ova_grp_umap, ova_hist, type_bar, blank_gg,
-    rel_widths     = c(0.86, 1, 0.7, 0.2),
-    labels         = top_lets,
-    label_fontface = "plain",
-    label_size     = 18,
-    align          = "h",
-    axis           = "tb",
-    nrow           = 1
-  )
-  
   # Final bottom panel
   blank_gg <- ggplot() +
     theme_void()
   
   bot <- plot_grid(
     feat_boxes, blank_gg,
-    rel_widths = c(1, if_else(plot_boxes, 0.45, 0.2))
+    rel_widths = c(1, 0.45)
   )
   
   # Create final figure
   res <- plot_grid(
-    top, feat_umaps, feat_boxes,
+    gmm_panels, feat_umaps, feat_boxes,
     rel_heights    = c(0.55, 1.05, 0.35),
     ncol           = 1,
-    labels         = bot_lets,
+    labels         = c("", "d", "e"),
     label_fontface = "plain",
     label_size     = 18
   )
@@ -612,39 +669,55 @@ create_fig4 <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, feats, feat_c
   res
 }
 
-# Create figure 4 panels
-create_fig4_panels <- function(sobj_in, genes_in, ref_cols, ova_cols, feat_cols, pt_size = 0.00001, pt_outline = 0.4, 
-                               low_col = c("white", "white"), sep_bar_labs = F, on_top = NULL, show_bars = F,
-                               gmm_column = "GMM_grp", ova_umap_grps = c("ova low", "ova high")) {
+# Create figure S10 panels
+create_figS10 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.00001, pt_outline = 0.4,
+                          low_col = c("white", "white"), high_col_mtplyr = 1, on_top = NULL,  gmm_column = "GMM_grp",
+                          gmm_grps = c("ova low", "ova high"), plot_labs) {
   
-  # Combine with input genes
-  genes_in <- head(genes_in, 6)
-  names(feat_cols) <- genes_in
-  
+  # Set GMM groups in Seurat object
   sobj_in@meta.data <- sobj_in@meta.data %>%
     rownames_to_column("cell_id") %>%
     mutate(!!sym(gmm_column) := ifelse(
-      !(!!sym(gmm_column)) %in% ova_umap_grps,
+      !(!!sym(gmm_column)) %in% gmm_grps,
       "Other",
       !!sym(gmm_column)
     )) %>%
     column_to_rownames("cell_id")
   
-  # Create final figure
-  create_fig4(
-    sobj_in      = sobj_in,
-    gmm_column   = gmm_column,
-    ova_cols     = ova_cols,
-    feats        = genes_in,
-    feat_cols    = feat_cols,
-    ref_cols     = ref_cols,
-    low_col      = low_col,
-    pt_size      = pt_size,
-    pt_outline   = pt_outline,
-    show_bars    = show_bars,
-    sep_bar_labs = sep_bar_labs,
-    on_top       = on_top
+  # GMM summary plots
+  gmm_panels <- create_gmm_panels(
+    sobj_in    = sobj_in,
+    gmm_column = gmm_column,
+    ova_cols   = ova_cols,
+    bar_cols   = ref_cols,
+    pt_size    = pt_size,
+    pt_outline = pt_outline,
+    show_bars  = F,
+    plot_labs  = c(plot_labs[1:2], "", "")
   )
+  
+  # Feature UMAPs
+  feat_umaps <- create_feat_umap_panels(
+    sobj_in    = sobj_in,
+    ref_cols   = ref_cols,
+    feats      = feat_cols,
+    pt_size    = pt_size,
+    pt_outline = pt_outline,
+    on_top     = on_top,
+    low_col    = low_col,
+    high_col_mtplyr = high_col_mtplyr
+  )
+  
+  res <- plot_grid(
+    gmm_panels, feat_umaps,
+    rel_heights    = c(0.55, 1.05),
+    ncol           = 1,
+    labels         = c("", plot_labs[3:4]),
+    label_fontface = "plain",
+    label_size     = 18
+  )
+  
+  res
 }
 
 # Create violin plots for DNA-tag counts
@@ -929,7 +1002,7 @@ corr_params <- list(
 
 # Figure 3
 
-Cell populations associated with high antigen counts. (a, d, g, j) UMAP projections are shown for myeloid cells, endothelial cells, and fibroblasts. (b, e, h, k) Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for all T and B cells. (c, f, i, l) Antigen counts are displayed on UMAP projections for each cell type.
+Cell types associated with high antigen counts. (a, d, g, j) UMAP projections are shown for DCs, LECs, and FRCs. (b, e, h, k) Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for T and B cells. (c, f, i, l) Antigen counts are displayed on UMAP projections for each cell type.
 
 ```{r "Fig 3", fig.width = 13, fig.height = 18}
 
@@ -987,7 +1060,7 @@ fig3
 
 # Figure 4
 
-LEC markers associated with high antigen counts. (a) LECs containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. T cells, B cells, and epithelial cells are shown in white (Other). (b) The distribution of ova antigen counts is shown for ova-low and ova-high cells. Dotted lines indicate the mean counts for each population. (c) The fraction of cells belonging to each LEC subtype is shown for ova-low and ova-high populations. (d) Gene expression counts were plotted for select genes associated with ova-high LECs. (e) The expression of ova-high LEC markers is shown for each LEC subtype.  
+Genes associated with high antigen counts for day 14 LECs. (a) LECs containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. T cells, B cells, and epithelial cells are shown in white (Other). (b) The distribution of ova antigen counts is shown for ova-low and ova-high cells. Dotted lines indicate the mean counts for each population. (c) The fraction of cells belonging to each LEC cell type is shown for ova-low and ova-high populations. (d) UMAP projections show the expression of top ova-high markers. (e) The expression of ova-high markers was plotted for each cell type.
 
 ```{r "Fig 4", fig.width = 10, fig.height = 11.5}
 
@@ -997,23 +1070,25 @@ genes <- c("Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Nfat5")
 # Seurat object for figure
 so_name <- "d14_LEC"
 
-fig_4 <- create_fig4_panels(
-  sobj_in       = sobjs[[so_name]],
-  genes_in      = genes,
-  ref_cols      = so_cols[[so_name]],
-  ova_cols      = ova_cols,
-  feat_cols     = feat_cols,
-  on_top        = subtype_order[[so_name]],
-  gmm_column    = "GMM_grp",
-  ova_umap_grps = c("ova low", "ova high"),
-  show_bars     = T
+fig_4 <- create_fig4(
+  sobj_in    = sobjs[[so_name]],
+  feat_cols  = set_names(feat_cols, genes),
+  ref_cols   = so_cols[[so_name]],
+  ova_cols   = ova_cols,
+  on_top     = subtype_order[[so_name]],
+  gmm_column = "GMM_grp",
+  gmm_grps   = c("ova low", "ova high")
 )
 
 fig_4
 
 ```
 
+\newpage
+
 # Figure S5
+
+Comparison of ova-psDNA, psDNA, and pDNA signal for each cell type. Counts are shown for ova-psDNA, psDNA, and pDNA for DCs (a, b), LECs (c), and FRCs (d).  
 
 ```{r "Fig S5", fig.width = 11, fig.height = 15}
 
@@ -1051,6 +1126,8 @@ fig_S5
 \newpage
 
 # Figure S6
+
+Antigen counts were compared with total mRNA counts for each cell for DCs (a, b), LECs (c, d), and FRCs (e, f).
 
 ```{r, fig.width = 20, fig.height = 34}
 
@@ -1091,6 +1168,8 @@ plot_grid(
 \newpage
 
 # Figure S7
+
+LEC cell types associated wih high antigen counts for the day 2 timepoint. (a) A UMAP projection is shown for LEC cell types, epithelial cells, B cells, and T cells identified for the day 2 timepoint. (b) Relative ova signal is shown for each cell type. Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for T and B cells. (c) Antigen counts are displayed on the UMAP projection shown in (a). (d, e) Correlation coefficients are shown comparing each identified LEC cell type with the reference cell types from Xiang et al. 
 
 ```{r, fig.width = 13, fig.height = 9}
 
@@ -1149,6 +1228,8 @@ fig_S7
 
 # Figure S9
 
+FRC cell types associated wih high antigen counts for the day 2 timepoint. (a) A UMAP projection is shown for FRC cell types, B cells, and T cells identified for the day 2 timepoint. (b) Relative ova signal is shown for each cell type. Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for T and B cells. (c) Antigen counts are displayed on the UMAP projection shown in (a).
+
 ```{r, fig.width = 13, fig.height = 5}
 
 # Create UMAPs and violine plots for d2_FRC
@@ -1189,138 +1270,60 @@ fig_S9
 
 \newpage
 
+# Figure S10
 
+Genes associated with high antigen counts for day 2 and day 14 cDC2 Tbet- cells. (a, d) Day 2 (a) and day 14 (d) cDC2 Tbet- cells containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. Cell types not included in the comparison are shown in white (Other). (b, e) The distribution of ova antigen counts is shown for ova-low and ova-high cDC2 Tbet- cells. Dotted lines indicate the mean counts for each population. (c, f) UMAP projections show the expression of top markers associated with ova-high cDC2 Tbet- cells.
 
+```{r, fig.width = 10, fig.height = 18}
 
-# Fig 4 - day 2 - cDC2 Tbet- {.tabset .tabset-pills}
-
-```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
-
-# Genes of interest
-genes <- c("Ccl2", "Cxcl2", "Mif", "Msr1", "Pkm", "Lgals3")
-
-# Seurat object for figure
-so_name <- "d2_DC"
+# Seurat objects, genes, cell types
+so_names <- c("d2_DC", "d14_DC")
 type <- "cDC2 Tbet-"
 
-fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
-names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
-  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
+genes <- list(
+  "d2_DC"  = c("Ccl2", "Cxcl2", "Mif", "Msr1", "Pkm", "Lgals3"),
+  "d14_DC" = c("Fcgr4", "Cd72", "Prkcb", "Acp5", "Itgam", "Pecam1")
+) %>%
+  map(set_names, x = feat_cols)
 
-gmm_grps <- ova_grps <- names(fig_cols) %>%
-  grep("ova low$|ova high$", ., value = T)
+# OVA colors and groups
+fig_cols <- rev(ova_cols)
 
-create_fig4_panels(
-  sobj_in       = sobjs[[so_name]],
-  genes_in      = genes,
-  ref_cols      = so_cols[[so_name]],
-  ova_cols      = fig_cols,
-  feat_cols     = feat_cols,
-  on_top        = subtype_order[[so_name]],
-  low_col       = c("white", "#fafafa"),
-  gmm_column    = "type_GMM_grp_2",
-  ova_umap_grps = ova_grps,
-  ova_gmm_grps  = gmm_grps
+names(fig_cols) <- names(fig_cols) %>%
+  str_c(if_else(. != "Other", str_c(type, "-"), ""), .)
+  
+gmm_grps <- names(fig_cols)[names(fig_cols) != "Other"]
+
+# Figure parameters
+plot_args <- list(
+  sobj_in   = sobjs[so_names],
+  feat_cols = genes[so_names],
+  ref_cols  = so_cols[so_names],
+  on_top    = subtype_order[so_names],
+  plot_labs = list(letters[1:3], letters[4:6]),
+  low_col   = list(c("white", "white"), "white"),
+  high_col_mtplyr = list(c(1, 2, rep(1, 4)), 1)
 )
+
+# Create figures
+fig_S10 <- plot_args %>%
+  pmap(
+    create_figS10,
+    ova_cols   = fig_cols,
+    gmm_column = "type_GMM_grp_2",
+    gmm_grps   = gmm_grps
+  ) %>%
+  plot_grid(
+    plotlist = .,
+    ncol     = 1,
+    align    = "vh", 
+    axis     = "trbl"
+  )
+
+fig_S10
 
 ```
 
-# Fig 4 - day 2 - CCR7hi Mig cDC2 {.tabset .tabset-pills}
 
-```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
 
-# Genes of interest
-genes <- c("Vim", "S100a10", "Dstn", "Id2", "Eef2", "Ccl22")
-
-# Seurat object for figure
-so_name <- "d2_DC"
-type <- "CCR7hi Mig cDC2"
-
-fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
-names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
-  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
-
-gmm_grps <- ova_grps <- names(fig_cols) %>%
-  grep("ova low$|ova high$", ., value = T)
-
-create_fig4_panels(
-  sobj_in       = sobjs[[so_name]],
-  genes_in      = genes,
-  ref_cols      = so_cols[[so_name]],
-  ova_cols      = fig_cols,
-  feat_cols     = feat_cols,
-  on_top        = subtype_order[[so_name]],
-  low_col       = c("white", "#fafafa"),
-  gmm_column    = "type_GMM_grp_2",
-  ova_umap_grps = ova_grps,
-  ova_gmm_grps  = gmm_grps
-)
-
-```
-
-# Fig 4 - day 14 - cDC2 Tbet- {.tabset .tabset-pills}
-
-```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
-
-# Genes of interest
-genes <- c("Cd53", "Ywhab", "Fcgr4", "Cd72", "Prkcb", "Acp5")
-
-# Seurat object for figure
-so_name <- "d14_DC"
-type <- "cDC2 Tbet-"
-
-fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
-names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
-  str_replace("^[a-zA-Z\\- 0-9]+\\-Other", "Other")
-
-gmm_grps <- ova_grps <- names(fig_cols) %>%
-  grep("ova low$|ova high$", ., value = T)
-
-create_fig4_panels(
-  sobj_in       = sobjs[[so_name]],
-  genes_in      = genes,
-  ref_cols      = so_cols[[so_name]],
-  ova_cols      = fig_cols,
-  feat_cols     = feat_cols,
-  on_top        = subtype_order[[so_name]],
-  low_col       = "white",
-  gmm_column    = "type_GMM_grp_2",
-  ova_umap_grps = ova_grps,
-  ova_gmm_grps  = gmm_grps
-)
-
-```
-
-# Fig 4 - day 14 - Nr4a1+SC {.tabset .tabset-pills}
-
-```{r, fig.width = 10, fig.height = 11.5, results = "asis"}
-
-# Genes of interest
-genes <- c("Cfd", "Fabp4", "Car3", "Scd1", "Retn", "Dbi")
-
-# Seurat object for figure
-so_name <- "d14_FRC"
-type <- "Nr4a1+SC"
-
-fig_cols <- ova_cols[c("Other", "ova low", "ova high")]
-names(fig_cols) <- str_c(type, "-", names(fig_cols)) %>%
-  str_replace("^[a-zA-Z\\-\\+ 0-9]+\\-Other", "Other")
-
-gmm_grps <- ova_grps <- names(fig_cols) %>%
-  grep("ova low$|ova high$", ., value = T)
-
-create_fig4_panels(
-  sobj_in       = sobjs[[so_name]],
-  genes_in      = genes,
-  ref_cols      = so_cols[[so_name]],
-  ova_cols      = fig_cols,
-  feat_cols     = feat_cols,
-  on_top        = subtype_order[[so_name]],
-  low_col       = "white",
-  gmm_column    = "type_GMM_grp_2",
-  ova_umap_grps = ova_grps,
-  ova_gmm_grps  = gmm_grps
-)
-
-```
 
