@@ -9,18 +9,13 @@ output:
 
 documentclass: article
 mainfont: DejaVu Sans
-geometry: top=0.5in,bottom=0.5in,right=2in,left=2in
+geometry: top=0.5in,bottom=0.5in,right=2.3in,left=2.3in
 
 params:
-  template_dir:  "src"
-  rds_dir:       "sobjs/so"
-  ref_dir:       "ref"
-  p_max_markers: 0.05                               # Max p-value for marker genes
-  FC_min:        0.25                               # Min fold change for marker genes
-  auc_min:       0.5                                # Min AUC for marker genes
-  pct_in_min:    50                                 # Min percentage cells expressing marker in group
-  pct_out_max:   100                                # Max percentage cells expressing marker outside group
-  uniq_markers:  FALSE                              # Remove markers that are present in more than one group
+  template_dir: "src"
+  rds_dir:      "sobjs/so"
+  ref_dir:      "ref"
+  p_val_xlsx:   "results/figures/figure_3_pvals.xlsx"
   
   # These parameters specify the input matrices and cell types that should be used for analysis
   # mat_in: Cellranger output folder.
@@ -444,8 +439,8 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
 }
 
 # Create feature UMAPs
-create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001, pt_outline = 0.4,
-                                    low_col = c("white", "white"), high_col_mtplyr = 1, on_top = NULL) {
+create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001, pt_outline = 0.4, n_row = 2,
+                                    low_col = c("white", "white"), high_col_mtplyr = 1, on_top = NULL, ...) {
   
   # Theme elements
   legd_guide <- guide_legend(override.aes = list(
@@ -483,7 +478,8 @@ create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001,
       legend.position = "left",
       legend.margin   = margin(0.2, 0.2, 0.2, 1.5, "cm"),
       legend.text     = element_text(size = 8)
-    )
+    ) +
+    theme(...)
   
   # Create list of feature UMAPs
   feat_umaps <- sobj_in %>%
@@ -501,18 +497,21 @@ create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001,
     })
   
   # Top panel of feature UMAPs
-  top_umaps <- append(list(ref_umap), feat_umaps[1:2]) %>%
+  n_umaps <- (length(feat_umaps) + 2) / n_row
+  n_top <- n_umaps - 2
+  
+  top_umaps <- append(list(ref_umap), feat_umaps[1:n_top]) %>%
     plot_grid(
       plotlist   = .,
-      rel_widths = c(1, 0.5, 0.5),
+      rel_widths = c(1, rep(0.5, n_top)),
       nrow       = 1
     )
   
   # Bottom panel of feature UMAPs
-  bot_umaps <- feat_umaps[3:6] %>%
+  bot_umaps <- feat_umaps[(n_top + 1):length(feat_umaps)] %>%
     plot_grid(
       plotlist = .,
-      nrow     = 1,
+      nrow     = n_row - 1,
       align    = "h",
       axis     = "tb"
     )
@@ -520,9 +519,10 @@ create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001,
   # Final feature UMAP figure
   res <- plot_grid(
     top_umaps, bot_umaps,
-    ncol  = 1,
-    align = "vh",
-    axis  = "trbl"
+    rel_heights = c(1, n_row - 1),
+    ncol        = 1,
+    align       = "vh",
+    axis        = "trbl"
   ) + 
     theme(plot.margin = unit(c(1, 0.2, 1.5, 0.2), "cm"))
   
@@ -670,9 +670,9 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
 }
 
 # Create figure S10 panels
-create_figS10 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.00001, pt_outline = 0.4,
+create_figS10 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.00001, pt_outline = 0.4, n_row = 2,
                           low_col = c("white", "white"), high_col_mtplyr = 1, on_top = NULL,  gmm_column = "GMM_grp",
-                          gmm_grps = c("ova low", "ova high"), plot_labs) {
+                          gmm_grps = c("ova low", "ova high"), rel_h = c(0.55, 1.05), plot_labs, ...) {
   
   # Set GMM groups in Seurat object
   sobj_in@meta.data <- sobj_in@meta.data %>%
@@ -698,19 +698,21 @@ create_figS10 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.00
   
   # Feature UMAPs
   feat_umaps <- create_feat_umap_panels(
-    sobj_in    = sobj_in,
-    ref_cols   = ref_cols,
-    feats      = feat_cols,
-    pt_size    = pt_size,
-    pt_outline = pt_outline,
-    on_top     = on_top,
-    low_col    = low_col,
-    high_col_mtplyr = high_col_mtplyr
+    sobj_in         = sobj_in,
+    ref_cols        = ref_cols,
+    feats           = feat_cols,
+    n_row           = n_row,
+    pt_size         = pt_size,
+    pt_outline      = pt_outline,
+    on_top          = on_top,
+    low_col         = low_col,
+    high_col_mtplyr = high_col_mtplyr,
+    ...
   )
   
   res <- plot_grid(
     gmm_panels, feat_umaps,
-    rel_heights    = c(0.55, 1.05),
+    rel_heights    = rel_h,
     ncol           = 1,
     labels         = c("", plot_labs[3:4]),
     label_fontface = "plain",
@@ -894,7 +896,6 @@ plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title,
       feature   = feat,
       data_slot = "counts",
       plot_cols = cols_in,
-      # lab_pos   = c(0.35, 1),
       lab_pos   = "strip",
       lab_size  = 5,
       calc_cor  = T,
@@ -924,7 +925,12 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
   # Calculate median
   gg_stats <- gg_data %>%
     group_by(!!sym(type_column)) %>%
-    summarize(med = median(!!sym(data_column)))
+    summarize(
+      n_cells = n_distinct(cell_id),
+      med = median(!!sym(data_column))
+    ) %>%
+    ungroup() %>%
+    mutate(frac_cells = n_cells / sum(n_cells))
   
   # Run wilcox test
   gg_counts <- gg_data %>%
@@ -946,7 +952,10 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
     right_join(res, by = c("cell_type" = "group1"))
   
   res <- gg_stats %>%
-    rename(med_2 = med) %>%
+    select(
+      cell_type,
+      med_2 = med
+    ) %>%
     right_join(res, by = c("cell_type" = "group2"))
   
   # Format final table
@@ -954,10 +963,12 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
     mutate(Sample = sample_name) %>%
     select(
       Sample,
-      `Cell type 1`             = str_c(type_column, ".y"),
-      `Median OVA FC 1 (log10)` = med_1,
-      `Cell type 2`             = type_column,
-      `Median OVA FC 2 (log10)` = med_2,
+      `Cell type 1`                   = str_c(type_column, ".y"),
+      `n cells 1`                     = n_cells,
+      `fraction cells 1`              = frac_cells,
+      `Median relative ova 1 (log10)` = med_1,
+      `Cell type 2`                   = type_column,
+      `Median relative ova 2 (log10)` = med_2,
       p.value
     )
   
@@ -1274,17 +1285,27 @@ fig_S9
 
 Genes associated with high antigen counts for day 2 and day 14 cDC2 Tbet- cells. (a, d) Day 2 (a) and day 14 (d) cDC2 Tbet- cells containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. Cell types not included in the comparison are shown in white (Other). (b, e) The distribution of ova antigen counts is shown for ova-low and ova-high cDC2 Tbet- cells. Dotted lines indicate the mean counts for each population. (c, f) UMAP projections show the expression of top markers associated with ova-high cDC2 Tbet- cells.
 
-```{r, fig.width = 10, fig.height = 18}
+```{r, fig.width = 10, fig.height = 20}
 
 # Seurat objects, genes, cell types
 so_names <- c("d2_DC", "d14_DC")
 type <- "cDC2 Tbet-"
 
 genes <- list(
-  "d2_DC"  = c("Ccl2", "Cxcl2", "Mif", "Msr1", "Pkm", "Lgals3"),
-  "d14_DC" = c("Fcgr4", "Cd72", "Prkcb", "Acp5", "Itgam", "Pecam1")
+  d2_DC = c(
+    "Ccl2", "Cxcl2", "Mif", "Msr1",
+    "Pkm", "Lgals3", "Lgmn", "Il1rn",
+    "Dusp1", "Maf", "Fpr2", "Ctsb",
+    "Clec4a1"
+  ),
+  d14_DC = c(
+    "Fcgr4", "Cd72", "Prkcb", "Acp5",
+    "Itgam", "Pecam1", "Siglece", "Ccnd2",
+    "Cd300e", "C1qb", "Tcf7l2", "Pltp",
+    "Fcrl5"
+  )
 ) %>%
-  map(set_names, x = feat_cols)
+  map(set_names, x = get_cols()[c(1:3, 5:14)])
 
 # OVA colors and groups
 fig_cols <- rev(ova_cols)
@@ -1295,23 +1316,29 @@ names(fig_cols) <- names(fig_cols) %>%
 gmm_grps <- names(fig_cols)[names(fig_cols) != "Other"]
 
 # Figure parameters
+mtplyr_1 <- rep(1, 13)
+mtplyr_1[2] <- 2
+
 plot_args <- list(
-  sobj_in   = sobjs[so_names],
-  feat_cols = genes[so_names],
-  ref_cols  = so_cols[so_names],
-  on_top    = subtype_order[so_names],
-  plot_labs = list(letters[1:3], letters[4:6]),
-  low_col   = list(c("white", "white"), "white"),
-  high_col_mtplyr = list(c(1, 2, rep(1, 4)), 1)
+  sobj_in         = sobjs[so_names],
+  feat_cols       = genes[so_names],
+  ref_cols        = so_cols[so_names],
+  on_top          = subtype_order[so_names],
+  plot_labs       = list(letters[1:3], letters[4:6]),
+  low_col         = list(c("white", "white"), "white"),
+  high_col_mtplyr = list(mtplyr_1, 1)
 )
 
 # Create figures
 fig_S10 <- plot_args %>%
   pmap(
     create_figS10,
-    ova_cols   = fig_cols,
-    gmm_column = "type_GMM_grp_2",
-    gmm_grps   = gmm_grps
+    ova_cols    = fig_cols,
+    gmm_column  = "type_GMM_grp_2",
+    gmm_grps    = gmm_grps,
+    n_row       = 3,
+    rel_h       = c(0.55, 1.4),
+    plot.margin = unit(c(0.2, 0, 0.7, 0), "cm")
   ) %>%
   plot_grid(
     plotlist = .,

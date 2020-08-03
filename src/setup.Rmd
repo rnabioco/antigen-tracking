@@ -334,6 +334,17 @@ classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype
 
 # Processing helpers ----
 
+# Generate project names from matrix path
+shorten_names <- function(str_in, extra_path = "/outs/(filtered|raw)_feature_bc_matrix$") {
+  res <- str_in %>%
+    str_remove(extra_path) %>%
+    basename() %>%
+    str_extract("^[a-zA-Z0-9_]+") %>%
+    str_remove("^GEX_")
+
+  res
+}
+
 # Import matrices and create Seurat object
 create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL, adt_count_min = 0,
                         gene_min = 250, gene_max = 5000, mito_max = 15, mt_str = "^mt-",
@@ -2373,10 +2384,18 @@ NEW_sobjs <- sobjs
 walk2(sobjs, NEW_sobjs, ~ {
   so1 <- .x
   so2 <- .y
+  
   ident_columns <- colnames(so1@meta.data)
+  
   walk(ident_columns, ~ {
     iden <- identical(so1@meta.data[, .x], so2@meta.data[, .x])
-    msg <- if_else(iden, str_c("IDENTICAL ", .x), str_c("NOT IDENTICAL NOT IDENTICAL NOT IDENTICAL ", .x))
+    
+    msg <- if_else(
+      iden,
+      str_c("IDENTICAL ", .x),
+      str_c("NOT IDENTICAL NOT IDENTICAL NOT IDENTICAL ", .x)
+    )
+    
     print(msg)
   })
 })
