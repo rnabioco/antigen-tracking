@@ -15,7 +15,7 @@ params:
   template_dir: "src"
   rds_dir:      "sobjs/so"
   ref_dir:      "ref"
-  p_val_xlsx:   "results/figures/figure_3_pvals.xlsx"
+  xlsx_dir:     "results/figures"
   
   # These parameters specify the input matrices and cell types that should be used for analysis
   # mat_in: Cellranger output folder.
@@ -910,21 +910,23 @@ plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title,
   res
 }
 
-# Calculate pairwise p-values for gg objects
-calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran = T) {
+# Calculate pairwise p-values for Seurat objects
+calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran = T) {
   
   # Pull data from gg object
-  gg_data <- gg_in$data
+  p_data <- sobj_in@meta.data %>%
+    as_tibble(rownames = "cell_id") %>%
+    mutate("cell_type" = !!sym(type_column))
   
   # Log transform
   if (log_tran) {
-    gg_data <- gg_data %>%
+    p_data <- p_data %>%
       mutate(!!sym(data_column) := log10(!!sym(data_column)))
   }
   
   # Calculate median
-  gg_stats <- gg_data %>%
-    group_by(!!sym(type_column)) %>%
+  p_stats <- p_data %>%
+    group_by(cell_type) %>%
     summarize(
       n_cells = n_distinct(cell_id),
       med = median(!!sym(data_column))
@@ -933,25 +935,39 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
     mutate(frac_cells = n_cells / sum(n_cells))
   
   # Run wilcox test
-  gg_counts <- gg_data %>%
+  p_counts <- p_data %>%
     pull(data_column)
   
-  gg_groups <- gg_data %>%
-    pull(type_column)
+  p_grps <- p_data %>%
+    pull(cell_type)
   
-  res <- gg_counts %>%
+  res <- p_counts %>%
     pairwise.wilcox.test(
-      g = gg_groups, 
+      g = p_grps, 
       p.adj = "bonf"
     ) %>%
-    tidy()
+    tidy() %>%
+    
+    # Switch group1 and group2 for B and T cells so group1 has all cell types
+    mutate(
+      group1 = if_else(
+        group1 == "T cell" & group2 == "B cell",
+        "B cell",
+        group1
+      ),
+      group2 = if_else(
+        group1 == "B cell" & group2 == "B cell",
+        "T cell",
+        group2
+      )
+    )
   
   # Add medians to data.frame
-  res <- gg_stats %>%
+  res <- p_stats %>%
     rename(med_1 = med) %>%
-    right_join(res, by = c("cell_type" = "group1"))
+    right_join(res, by = c(cell_type = "group1"))
   
-  res <- gg_stats %>%
+  res <- p_stats %>%
     select(
       cell_type,
       med_2 = med
@@ -963,16 +979,64 @@ calc_p_vals <- function(gg_in, sample_name, data_column, type_column, log_tran =
     mutate(Sample = sample_name) %>%
     select(
       Sample,
-      `Cell type 1`                   = str_c(type_column, ".y"),
+      `Cell type 1`                   = cell_type.y,
       `n cells 1`                     = n_cells,
       `fraction cells 1`              = frac_cells,
       `Median relative ova 1 (log10)` = med_1,
-      `Cell type 2`                   = type_column,
+      `Cell type 2`                   = cell_type,
       `Median relative ova 2 (log10)` = med_2,
-      p.value
-    )
+      p_adj                           = p.value
+    ) %>%
+    arrange(`Cell type 2`, p_adj)
   
   res
+}
+
+# Helper to find subtype ova markers
+find_ova_markers <- function(sobj_in, prefix = "", gmm_column, so_title, p_max = 0.05, FC_min = 0.25,
+                             auc_min = 0.5, pct_in_min = 50, pct_out_max = 100, uniq = F) {
+  
+  grps <- c("ova low", "ova high") %>%
+    set_names(., .)
+  
+  if (prefix != "") {
+    grps <- grps %>%
+      map_chr(~ str_c(prefix, "-", .x))
+  }
+  
+  res <- find_markers(
+    sobj_in      = sobj_in,
+    group_column = gmm_column,
+    groups_use   = grps,
+    p_max        = p_max,
+    FC_min       = FC_min,
+    auc_min      = auc_min,
+    pct_in_min   = pct_in_min,
+    pct_out_max  = pct_out_max,
+    uniq         = uniq
+  ) %>%
+    filter(group == grps[["ova high"]]) %>%
+    arrange(desc(logFC)) %>%
+    mutate(Sample = so_title) %>%
+    relocate(Sample, before = feature)
+  
+  res
+}
+
+# Helper to write excel files
+write_xlsx <- function(df_in, file_in, ...) {
+  
+  if (file.exists(file_in)) {
+    stop("File exists: ", file_in)
+  }
+  
+  df_in %>%
+    as.data.frame() %>%
+    write.xlsx(
+      file      = file_in, 
+      row.names = F,
+      ...
+    )
 }
 
 ```
@@ -992,6 +1056,25 @@ subtype_order <- list(
   d14_FRC = NULL
 )
 
+# Write excel files
+write_tables <- !is.null(params$xlsx_dir)
+
+```
+
+# Methods
+
+Fastq files from the gene expression and antigen tracking libraries were processed using the feature barcode version of the cellranger count pipeline (v3.1.0). Reads were aligned to the mm10 and Vaccinia vi-rus (NC_006998) reference genomes. Analysis of gene expression and antigen tracking data was performed using the Seurat R package (v3.2). Antigen tracking and gene expression data were combined into the same Seurat object for each sample (CD45-/day2, CD45+/day2, CD45-/day14, CD45+/day14). Cells were filtered based on the number of detected genes (>250 and <5000) and the percent of mitochondrial reads (<15%). Gene expression counts were log nor-malized (NormalizeData), and relative ova signal was calculated by dividing ova-psDNA counts by the median ova-psDNA counts for all T and B cells present in the sample. Gene expression data were scaled and centered (ScaleData). 2000 variable features (FindVariableFeatures) were used for PCA (RunPCA) and the first 40 principal components were used to find clusters (FindNeighbors, FindClusters) and calculate uniform manifold approximation and projection (UMAP) (RunUMAP). Cell types were annotated using the R package clustifyr (https://rnabi-oco.github.io/clustifyr) along with reference bulk RNA-seq data from ImmGen (available for download through the clustifyrdata R package, https://rnabioco.github.io/clustifyrdata). The samples were then divided into separate objects for DCs, LECs, and FRCs. Cell subsets were annotated using clustifyr with reference bulk RNA-seq data for DCs, LECs, and FRCs.
+
+Identification of ova-low and ova-high populations was accomplished using a gaussian mixture model implemented with the R package mixtools (https://cran.r-project.org/web/packages/mix-tools/index.html). All LECs were used when identifying ova-low and ova-high cells (Fig. 4). For DCs (Fig. S10), ova-low and -high populations were identified independently for each DC cell type. For ova-low and ova-high populations, differentially expressed genes were identified using the R package presto (wilcoxauc, https://github.com/immunogenomics/presto). Differentially expressed genes were filtered to include those with an adjusted p-value <0.05, log fold change >0.25, AUC >0.5, and with at least 50% of ova-high cells expressing the gene. A reproducible analysis pipeline is available at https://github.com/rnabioco/antigen-tracking.
+
+\newpage
+
+# Figure 3
+
+Cell types associated with high antigen counts. (a, d, g, j) UMAP projections are shown for DCs, LECs, and FRCs. (b, e, h, k) Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for T and B cells. (c, f, i, l) Antigen counts are displayed on UMAP projections for each cell type.
+
+```{r "Fig 3", fig.width = 13, fig.height = 18}
+
 # Parameter lists
 fig3_names <- c("d2_DC", "d14_DC", "d14_LEC", "d14_FRC")
 fig3_sobjs <- sobjs[fig3_names]
@@ -1002,20 +1085,6 @@ fig3_params <- list(
   cols_in    = so_cols[names(fig3_sobjs)],
   on_top     = subtype_order[names(fig3_sobjs)]
 )
-
-corr_params <- list(
-  sobj_in    = sobjs, 
-  plot_title = so_titles[names(sobjs)], 
-  cols_in    = so_cols[names(sobjs)]
-)
-
-```
-
-# Figure 3
-
-Cell types associated with high antigen counts. (a, d, g, j) UMAP projections are shown for DCs, LECs, and FRCs. (b, e, h, k) Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for T and B cells. (c, f, i, l) Antigen counts are displayed on UMAP projections for each cell type.
-
-```{r "Fig 3", fig.width = 13, fig.height = 18}
 
 # Create panel plots
 gg_list <- fig3_params %>%
@@ -1031,27 +1100,9 @@ gg_list <- fig3_params %>%
 
 # Set violin scales equal
 violin_idx <- seq_along(gg_list) %% 3 == 2
+
 gg_list[violin_idx] <- gg_list[violin_idx] %>%
   equalize_x(log_tran = T)
-
-# Create table of p-values
-if (!is.null(params$p_val_xlsx)) {
-  p_vals <- gg_list[violin_idx] %>%
-    imap(
-      calc_p_vals,
-      data_column = "Relative ova signal",
-      type_column = "cell_type",
-      log_tran    = T
-    ) %>%
-    bind_rows()
-  
-  file_out <- here(params$p_val_xlsx)
-  
-  p_vals %>%
-    write.xlsx(file_out)
-  
-  FILES_OUT <- c(FILES_OUT, md5sum(file_out))
-}
 
 # Create final figure
 fig3 <- gg_list %>%
@@ -1140,10 +1191,21 @@ fig_S5
 
 Antigen counts were compared with total mRNA counts for each cell for DCs (a, b), LECs (c, d), and FRCs (e, f).
 
-```{r, fig.width = 20, fig.height = 34}
+```{r "Fig S6", fig.width = 20, fig.height = 34}
 
+# Parameter lists
+so_names <- names(sobjs)
+
+corr_params <- list(
+  sobj_in    = sobjs[so_names],
+  plot_title = so_titles[so_names], 
+  cols_in    = so_cols[so_names]
+)
+
+# Padding to add to figure panels
 pad <- c(9.5, 2, 9.8, 2, 9.8, 2)
 
+# Create scatter plots
 cor_plots <- corr_params %>%
   pmap(
     plot_corr,
@@ -1164,7 +1226,8 @@ cor_plots <- corr_params %>%
     )
   })
 
-plot_grid(
+# Create final figure
+figS6 <- plot_grid(
   plotlist       = cor_plots,
   rel_heights    = c(1, 0.8, 0.8),
   labels         = letters,
@@ -1174,6 +1237,8 @@ plot_grid(
   ncol           = 2
 )
 
+figS6
+
 ```
 
 \newpage
@@ -1182,7 +1247,7 @@ plot_grid(
 
 LEC cell types associated wih high antigen counts for the day 2 timepoint. (a) A UMAP projection is shown for LEC cell types, epithelial cells, B cells, and T cells identified for the day 2 timepoint. (b) Relative ova signal is shown for each cell type. Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for T and B cells. (c) Antigen counts are displayed on the UMAP projection shown in (a). (d, e) Correlation coefficients are shown comparing each identified LEC cell type with the reference cell types from Xiang et al. 
 
-```{r, fig.width = 13, fig.height = 9}
+```{r "Fig S7", fig.width = 13, fig.height = 9}
 
 # Create UMAPs and violin plots for d2_LEC
 so_name <- "d2_LEC"
@@ -1241,7 +1306,7 @@ fig_S7
 
 FRC cell types associated wih high antigen counts for the day 2 timepoint. (a) A UMAP projection is shown for FRC cell types, B cells, and T cells identified for the day 2 timepoint. (b) Relative ova signal is shown for each cell type. Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for T and B cells. (c) Antigen counts are displayed on the UMAP projection shown in (a).
 
-```{r, fig.width = 13, fig.height = 5}
+```{r "Fig S9", fig.width = 13, fig.height = 5}
 
 # Create UMAPs and violine plots for d2_FRC
 so_name <- "d2_FRC"
@@ -1285,7 +1350,7 @@ fig_S9
 
 Genes associated with high antigen counts for day 2 and day 14 cDC2 Tbet- cells. (a, d) Day 2 (a) and day 14 (d) cDC2 Tbet- cells containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. Cell types not included in the comparison are shown in white (Other). (b, e) The distribution of ova antigen counts is shown for ova-low and ova-high cDC2 Tbet- cells. Dotted lines indicate the mean counts for each population. (c, f) UMAP projections show the expression of top markers associated with ova-high cDC2 Tbet- cells.
 
-```{r, fig.width = 10, fig.height = 20}
+```{r "Fig S10", fig.width = 10, fig.height = 20}
 
 # Seurat objects, genes, cell types
 so_names <- c("d2_DC", "d14_DC")
@@ -1350,6 +1415,94 @@ fig_S10 <- plot_args %>%
 fig_S10
 
 ```
+
+```{r "Table S1", eval = write_tables, echo = F}
+
+# Create table of ova counts stats
+ova_stats <- sobjs %>%
+  imap(~ {
+    calc_p_vals(
+      sobj_in     = .x,
+      sample_name = so_titles[.y],
+      data_column = "ova_fc",
+      type_column = "subtype",
+      log_tran    = T
+    )
+  }) %>%
+  bind_rows()
+
+# Write excel file
+xlsx_file <- here(params$xlsx_dir, "ova_counts_stats.xlsx")
+
+ova_stats %>%
+  write_xlsx(xlsx_file)
+
+```
+
+```{r "Table S2", eval = write_tables, echo = F}
+
+# Ova markers
+ova_marks <- sobjs %>%
+  imap(~ {
+    find_ova_markers(
+      sobj_in    = .x,
+      prefix     = "",
+      gmm_column = "GMM_grp",
+      so_title   = so_titles[.y]
+    )
+  }) %>%
+  bind_rows()
+
+# Write excel file
+xlsx_file <- here(params$xlsx_dir, "ova_markers.xlsx")
+
+ova_marks %>%
+  write_xlsx(xlsx_file)
+
+```
+
+```{r "Table S3", eval = write_tables, echo = F}
+
+# Subtype ova markers
+exclude_types <- c("T cell", "B cell", "Epithelial", "NK")
+
+sub_ova_marks <- sobjs %>%
+  imap(~ {
+    so_in <- .x
+    so_title <- so_titles[.y]
+    
+    cell_types <- so_in@meta.data$subtype %>%
+      unique() %>%
+      .[!. %in% exclude_types]
+    
+    res <- cell_types %>%
+      map(~ {
+        find_ova_markers(
+          sobj_in    = so_in,
+          prefix     = .x,
+          gmm_column = "type_GMM_grp_2",
+          so_title   = so_title
+        )
+      }) %>%
+      bind_rows()
+    
+    res
+  }) %>%
+  bind_rows()
+
+# Write excel file
+xlsx_file <- here(params$xlsx_dir, "subtype_ova_markers.xlsx")
+
+sub_ova_marks %>%
+  write_xlsx(xlsx_file)
+
+```
+
+
+
+
+
+
 
 
 
