@@ -6,10 +6,11 @@ date:   "`r Sys.Date()`"
 output: 
   pdf_document:
     latex_engine: xelatex
+    fig_caption: false
 
 documentclass: article
 mainfont: DejaVu Sans
-geometry: top=0.5in,bottom=0.5in,right=2.3in,left=2.3in
+geometry: top=1in,bottom=1in,left=1in,right=1in
 
 params:
   template_dir: "src"
@@ -1063,11 +1064,11 @@ write_tables <- !is.null(params$xlsx_dir)
 
 # Methods
 
-Fastq files from the gene expression and antigen tracking libraries were processed using the feature barcode version of the cellranger count pipeline (v3.1.0). Reads were aligned to the mm10 and Vaccinia vi-rus (NC_006998) reference genomes. Analysis of gene expression and antigen tracking data was performed using the Seurat R package (v3.2). Antigen tracking and gene expression data were combined into the same Seurat object for each sample (CD45-/day2, CD45+/day2, CD45-/day14, CD45+/day14). Cells were filtered based on the number of detected genes (>250 and <5000) and the percent of mitochondrial reads (<15%). Gene expression counts were log nor-malized (NormalizeData), and relative ova signal was calculated by dividing ova-psDNA counts by the median ova-psDNA counts for all T and B cells present in the sample. Gene expression data were scaled and centered (ScaleData). 2000 variable features (FindVariableFeatures) were used for PCA (RunPCA) and the first 40 principal components were used to find clusters (FindNeighbors, FindClusters) and calculate uniform manifold approximation and projection (UMAP) (RunUMAP). Cell types were annotated using the R package clustifyr (https://rnabi-oco.github.io/clustifyr) along with reference bulk RNA-seq data from ImmGen (available for download through the clustifyrdata R package, https://rnabioco.github.io/clustifyrdata). The samples were then divided into separate objects for DCs, LECs, and FRCs. Cell subsets were annotated using clustifyr with reference bulk RNA-seq data for DCs, LECs, and FRCs.
+Fastq files from the gene expression and antigen tracking libraries were processed using the feature barcode version of the cellranger count pipeline (v3.1.0). Reads were aligned to the mm10 and Vaccinia virus (NC_006998) reference genomes. Analysis of gene expression and antigen tracking data was performed using the Seurat R package (v3.2). Antigen tracking and gene expression data were combined into the same Seurat object for each sample (CD45-/day2, CD45+/day2, CD45-/day14, CD45+/day14). Cells were filtered based on the number of detected genes (>250 and <5000) and the percent of mitochondrial reads (<15%). Gene expression counts were log nor-malized (NormalizeData), and relative ova signal was calculated by dividing ova-psDNA counts by the median ova-psDNA counts for all T and B cells present in the sample. Gene expression data were scaled and centered (ScaleData). 2000 variable features (FindVariableFeatures) were used for PCA (RunPCA) and the first 40 principal components were used to find clusters (FindNeighbors, FindClusters) and calculate uniform manifold approximation and projection (UMAP) (RunUMAP). Cell types were annotated using the R package clustifyr (https://rnabi-oco.github.io/clustifyr) along with reference bulk RNA-seq data from ImmGen (available for download through the clustifyrdata R package, https://rnabioco.github.io/clustifyrdata). The samples were then divided into separate objects for DCs, LECs, and FRCs. Cell subsets were annotated using clustifyr with reference bulk RNA-seq data for DCs, LECs, and FRCs.
 
 Identification of ova-low and ova-high populations was accomplished using a gaussian mixture model implemented with the R package mixtools (https://cran.r-project.org/web/packages/mix-tools/index.html). All LECs were used when identifying ova-low and ova-high cells (Fig. 4). For DCs (Fig. S10), ova-low and -high populations were identified independently for each DC cell type. For ova-low and ova-high populations, differentially expressed genes were identified using the R package presto (wilcoxauc, https://github.com/immunogenomics/presto). Differentially expressed genes were filtered to include those with an adjusted p-value <0.05, log fold change >0.25, AUC >0.5, and with at least 50% of ova-high cells expressing the gene. A reproducible analysis pipeline is available at https://github.com/rnabioco/antigen-tracking.
 
-\newpage
+\newgeometry{top=1in,bottom=1in,left=1.5in,right=1.5in}
 
 # Figure 3
 
@@ -1118,7 +1119,7 @@ fig3
 
 ```
 
-\newpage
+\restoregeometry
 
 # Figure 4
 
@@ -1146,7 +1147,7 @@ fig_4
 
 ```
 
-\newpage
+\newgeometry{top=1in,bottom=1in,left=1.5in,right=1.5in}
 
 # Figure S5
 
@@ -1185,7 +1186,7 @@ fig_S5
 
 ```
 
-\newpage
+\newgeometry{top=1in,bottom=1in,left=2in,right=2in}
 
 # Figure S6
 
@@ -1241,7 +1242,7 @@ figS6
 
 ```
 
-\newpage
+\restoregeometry
 
 # Figure S7
 
@@ -1344,7 +1345,7 @@ fig_S9
 
 ```
 
-\newpage
+\newgeometry{top=0.5in,bottom=0.5in,left=2.3in,right=2.3in}
 
 # Figure S10
 
