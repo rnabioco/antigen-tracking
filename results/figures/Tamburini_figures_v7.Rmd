@@ -275,7 +275,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
 
 # Create GMM panels
 create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_cols, pt_size = 0.00001,
-                              pt_outline = 0.4, show_bars = T, plot_labs = c(letters[1:3], "")) {
+                              pt_outline = 0.4, show_bars = T, plot_labs = c(letters[1:3], ""), ...) {
   
   # Theme elements
   legd_guide <- guide_legend(override.aes = list(
@@ -362,12 +362,13 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
     group_by(!!sym(gmm_column)) %>%
     mutate(mu = mean(adt_ovalbumin)) %>%
     ungroup() %>%
-    
     mutate(!!sym(gmm_column) := fct_relevel(!!sym(gmm_column), ova_hist_order)) %>%
+    
     ggplot(aes(adt_ovalbumin + 1, after_stat(density), fill = !!sym(gmm_column))) +
     
-    stat_density(geom = "point", position = "identity", size = 0, color = "white") +
-    geom_density(fill = "white", color = "white", size = 0.3, alpha = 0.9) +
+    stat_density(geom = "point", position = "identity", size = 0, color = "white") +  # Need this for legend labels
+    # geom_density(fill = "white", color = "white", size = 0.3, alpha = 0.9) +
+    
     geom_density(size = 0.3, alpha = 0.8, show.legend = F) +
     
     geom_vline(aes(xintercept = mu), size = 0.5, linetype = 2, color = "grey35") +
@@ -408,6 +409,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
     theme_minimal_hgrid() +
     text_theme +
     theme(
+      plot.margin        = unit(c(0.2, 4, 0.2, 0.2), "cm"),
       legend.title       = element_blank(),
       legend.key.height  = unit(0.35, "cm"),
       axis.title.x       = element_blank(),
@@ -418,22 +420,17 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
     )
   
   # Create final figure
-  blank_gg <- ggplot() +
-    theme_void()
-  
   if (!show_bars) {
-    type_bar <- blank_gg
+    type_bar <- ggplot() +
+      theme_void()
   }
   
   res <- plot_grid(
-    ova_grp_umap, ova_hist, type_bar, blank_gg,
-    rel_widths     = c(0.86, 1, 0.7, 0.2),
+    ova_grp_umap, ova_hist, type_bar,
     labels         = plot_labs,
     label_fontface = "plain",
     label_size     = 18,
-    align          = "h",
-    axis           = "tb",
-    nrow           = 1
+    ...
   )
   
   res
@@ -441,7 +438,8 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
 
 # Create feature UMAPs
 create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001, pt_outline = 0.4, n_row = 2,
-                                    low_col = c("white", "white"), high_col_mtplyr = 1, on_top = NULL, ...) {
+                                    low_col = c("white", "white"), high_col_mtplyr = 1, on_top = NULL,
+                                    return_list = F, ...) {
   
   # Theme elements
   legd_guide <- guide_legend(override.aes = list(
@@ -475,10 +473,8 @@ create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001,
       feat_levels = names(ref_cols)
     ) +
     theme(
-      plot.margin     = unit(c(0.2, 1.5, 0.2, 0.2), "cm"),
       legend.position = "left",
-      legend.margin   = margin(0.2, 0.2, 0.2, 1.5, "cm"),
-      legend.text     = element_text(size = 8)
+      legend.text = element_text(size = 8)
     ) +
     theme(...)
   
@@ -496,6 +492,11 @@ create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001,
         guides(color = guide_colorbar(frame.colour = "black", frame.linewidth = 0.2)) +
         theme(plot.title = element_text(size = 12))
     })
+  
+  # Return plot list
+  if (return_list) {
+    return(append(list(ref_umap), feat_umaps))
+  }
   
   # Top panel of feature UMAPs
   n_umaps <- (length(feat_umaps) + 2) / n_row
@@ -563,28 +564,59 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
   
   # GMM summary plots
   gmm_panels <- create_gmm_panels(
-    sobj_in    = sobj_in,
-    gmm_column = gmm_column,
-    ova_cols   = ova_cols,
-    bar_cols   = ref_cols,
-    pt_size    = pt_size,
-    pt_outline = pt_outline,
-    show_bars  = T,
-    plot_labs  = c(letters[1:3], "")
+    sobj_in     = sobj_in,
+    gmm_column  = gmm_column,
+    ova_cols    = ova_cols,
+    bar_cols    = ref_cols,
+    pt_size     = pt_size,
+    pt_outline  = pt_outline,
+    show_bars   = T,
+    plot_labs   = letters[1:3],
+    rel_heights = c(1, 0.65, 0.7), 
+    nrow        = 3,
+    align       = "v",
+    axis        = "l"
   )
   
   # Feature UMAPs
   feat_umaps <- create_feat_umap_panels(
-    sobj_in    = sobj_in,
-    ref_cols   = ref_cols,
-    feats      = feat_cols,
-    pt_size    = pt_size,
-    pt_outline = pt_outline,
-    low_col    = low_col,
-    on_top     = on_top
+    sobj_in     = sobj_in,
+    ref_cols    = ref_cols,
+    feats       = feat_cols,
+    pt_size     = pt_size,
+    pt_outline  = pt_outline,
+    low_col     = low_col,
+    on_top      = on_top,
+    return_list = T
   )
   
-  # Feature boxplots
+  umap_legd <- get_legend(feat_umaps[[1]]) %>%
+    plot_grid(
+      ., NULL,
+      rel_heights = c(0.4, 1),
+      ncol = 1
+    )
+  
+  feat_umaps[[1]] <- feat_umaps[[1]] +
+    theme(legend.position = "none")
+  
+  feat_umaps <- feat_umaps %>%
+    plot_grid(
+      plotlist = .,
+      ncol     = 2,
+      align    = "vh",
+      axis     = "trbl"
+    )
+  
+  feat_umaps <- feat_umaps %>%
+    plot_grid(
+      umap_legd, .,
+      rel_widths = c(0.1, 1),
+      nrow = 1
+    )
+  
+  # Boxplot data
+  # What to arrange boxplots by median and 3rd quartile
   box_data <- sobj_in %>%
     FetchData(c(feats, "subtype", gmm_column)) %>%
     as_tibble(rownames = "cell_id") %>%
@@ -593,7 +625,7 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
     group_by(type_name) %>%
     mutate(
       up_qt = boxplot.stats(value)$stats[4],
-      med   = median(value)
+      med = median(value)
     ) %>%
     ungroup() %>%
     arrange(desc(med), desc(up_qt)) %>%
@@ -601,10 +633,11 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
       name = fct_relevel(name, feats),
       type_name = fct_inorder(type_name)
     )
-    
+  
+  # Create boxplots
   feat_boxes <- box_data %>%
     ggplot(aes(type_name, value, fill = subtype)) +
-    facet_wrap(~ name, nrow = 1, scales = "free_x") +
+    facet_wrap(~ name, ncol = 1, scales = "free_x") +
     scale_fill_manual(values = ref_cols) +
     scale_color_manual(values = ref_cols) +
     labs(y = "Counts") +
@@ -612,6 +645,7 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
     text_theme +
     theme(
       strip.text         = element_text(size = 12),
+      legend.position    = "bottom",
       legend.title       = element_blank(),
       legend.key.height  = unit(0.35, "cm"),
       axis.title.x       = element_blank(),
@@ -620,7 +654,10 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
       axis.ticks.x       = element_blank(),
       axis.line.y        = element_line(size = 0.5, color = "grey85"),
       panel.grid.major.y = element_blank(),
-      panel.background   = element_rect(fill = "#fafafa")
+      plot.margin        = unit(c(0.1, 2, 0.1, 1.5), "cm")
+      
+      # legend.position    = c(0.8, 0.1),
+      # panel.background   = element_rect(fill = "#fafafa")
     )
   
   feat_boxes <- feat_boxes +
@@ -646,22 +683,16 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
       fill        = "white",
       show.legend = F
     ) +
-    guides(fill = guide_legend(override.aes = list(size = 3.5, stroke = 0.25)))
-  
-  # Final bottom panel
-  blank_gg <- ggplot() +
-    theme_void()
-  
-  bot <- plot_grid(
-    feat_boxes, blank_gg,
-    rel_widths = c(1, 0.45)
-  )
+    guides(fill = guide_legend(
+      override.aes = list(size = 3.5, stroke = 0.25),
+      ncol = 2
+    ))
   
   # Create final figure
   res <- plot_grid(
     gmm_panels, feat_umaps, feat_boxes,
-    rel_heights    = c(0.55, 1.05, 0.35),
-    ncol           = 1,
+    rel_widths     = c(0.8, 1, 0.6),
+    nrow           = 1,
     labels         = c("", "d", "e"),
     label_fontface = "plain",
     label_size     = 18
@@ -694,7 +725,11 @@ create_figS10 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.00
     pt_size    = pt_size,
     pt_outline = pt_outline,
     show_bars  = F,
-    plot_labs  = c(plot_labs[1:2], "", "")
+    plot_labs  = c(plot_labs[1:2], "", ""), 
+    rel_widths = c(0.86, 1, 0.7, 0.2),
+    nrow       = 1,
+    align      = "h",
+    axis       = "tb"
   )
   
   # Feature UMAPs
@@ -708,6 +743,8 @@ create_figS10 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.00
     on_top          = on_top,
     low_col         = low_col,
     high_col_mtplyr = high_col_mtplyr,
+    legend.margin   = margin(0.2, 0.2, 0.2, 1.5, "cm"),
+    # plot.margin     = unit(c(0.2, 1.5, 0.2, 0.2), "cm"),
     ...
   )
   
@@ -1125,17 +1162,18 @@ fig3
 
 Genes associated with high antigen counts for day 14 LECs. (a) LECs containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. T cells, B cells, and epithelial cells are shown in white (Other). (b) The distribution of ova antigen counts is shown for ova-low and ova-high cells. Dotted lines indicate the mean counts for each population. (c) The fraction of cells belonging to each LEC cell type is shown for ova-low and ova-high populations. (d) UMAP projections show the expression of top ova-high markers. (e) The expression of ova-high markers was plotted for each cell type.
 
-```{r "Fig 4", fig.width = 10, fig.height = 11.5}
+```{r "Fig 4", fig.width = 12, fig.height = 8}
 
 # Genes of interest
-genes <- c("Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2", "Nfat5")
+genes <- c("Prox1", "Cavin1", "Cavin2", "Stab1", "Stab2") %>%
+  set_names(feat_cols[seq_along(.)], .)
 
 # Seurat object for figure
 so_name <- "d14_LEC"
 
 fig_4 <- create_fig4(
   sobj_in    = sobjs[[so_name]],
-  feat_cols  = set_names(feat_cols, genes),
+  feat_cols  = genes,
   ref_cols   = so_cols[[so_name]],
   ova_cols   = ova_cols,
   on_top     = subtype_order[[so_name]],
