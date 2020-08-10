@@ -1964,7 +1964,8 @@ R_packages <- c(
   "patchwork",  "ComplexHeatmap",
   "devtools",   "broom",
   "presto",     "here",
-  "tools",      "clustifyrdata"
+  "tools",      "clustifyrdata",
+  "gtools"
 )
 
 purrr::walk(R_packages, library, character.only = T)

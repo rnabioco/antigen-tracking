@@ -950,7 +950,32 @@ plot_corr <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title,
 }
 
 # Calculate pairwise p-values for Seurat objects
-calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran = T) {
+calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran = F) {
+  
+  # Helper to calc p-values for give cell types
+  calc_p <- function(x, y, df_in, data_column, type_column) {
+    
+    x_dat <- df_in %>%
+      filter(!!sym(type_column) == x) %>%
+      pull(data_column)
+    
+    y_dat <- df_in %>%
+      filter(!!sym(type_column) == y) %>%
+      pull(data_column)
+    
+    res <- wilcox.test(
+      x        = x_dat, 
+      y        = y_dat, 
+      conf.int = T
+    ) %>%
+      tidy() %>%
+      mutate(
+        group1 = x,
+        group2 = y
+      )
+    
+    res
+  }
   
   # Pull data from gg object
   p_data <- sobj_in@meta.data %>%
@@ -963,7 +988,7 @@ calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran
       mutate(!!sym(data_column) := log10(!!sym(data_column)))
   }
   
-  # Calculate median
+  # Calculate additional stats for table
   p_stats <- p_data %>%
     group_by(cell_type) %>%
     summarize(
@@ -973,33 +998,38 @@ calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran
     ungroup() %>%
     mutate(frac_cells = n_cells / sum(n_cells))
   
-  # Run wilcox test
-  p_counts <- p_data %>%
-    pull(data_column)
+  # Create data.frame with all combinations of cell types for comparison
+  # Flip group columns for B and T cells so group1 includes all cell types
+  c_types <- p_data %>%
+    pull(type_column) %>%
+    unique()
   
-  p_grps <- p_data %>%
-    pull(cell_type)
-  
-  res <- p_counts %>%
-    pairwise.wilcox.test(
-      g = p_grps, 
-      p.adj = "bonf"
-    ) %>%
-    tidy() %>%
-    
-    # Switch group1 and group2 for B and T cells so group1 has all cell types
+  c_comps <- combinations(
+    n = length(c_types),
+    r = 2,
+    v = c_types
+  ) %>%
+    as_tibble(.name_repair = "unique") %>%
     mutate(
-      group1 = if_else(
-        group1 == "T cell" & group2 == "B cell",
-        "B cell",
-        group1
-      ),
-      group2 = if_else(
-        group1 == "B cell" & group2 == "B cell",
-        "T cell",
-        group2
-      )
+      ...1 = if_else(...1 == "B cell" & ...2 == "T cell", "T cell", ...1),
+      ...2 = if_else(...1 == "T cell" & ...2 == "T cell", "B cell", ...2)
     )
+
+  # Calculate pairwise wilcox test for all combinations of cell types
+  res <- map2(c_comps$...1, c_comps$...2, ~ {
+    calc_p(
+      x           = .x,
+      y           = .y,
+      df_in       = p_data,
+      data_column = data_column,
+      type_column = type_column
+    )
+  }) %>%
+    bind_rows()
+  
+  # Apply multiple testing correction
+  res <- res %>%
+    mutate(p_adj = p.adjust(p.value, method = "bonf"))
   
   # Add medians to data.frame
   res <- p_stats %>%
@@ -1007,10 +1037,7 @@ calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran
     right_join(res, by = c(cell_type = "group1"))
   
   res <- p_stats %>%
-    select(
-      cell_type,
-      med_2 = med
-    ) %>%
+    select(cell_type, med_2 = med) %>%
     right_join(res, by = c("cell_type" = "group2"))
   
   # Format final table
@@ -1018,15 +1045,22 @@ calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran
     mutate(Sample = sample_name) %>%
     select(
       Sample,
-      `Cell type 1`                   = cell_type.y,
-      `n cells 1`                     = n_cells,
-      `fraction cells 1`              = frac_cells,
-      `Median relative ova 1 (log10)` = med_1,
-      `Cell type 2`                   = cell_type,
-      `Median relative ova 2 (log10)` = med_2,
-      p_adj                           = p.value
+      `Cell type 1`      = cell_type.y,
+      `n cells 1`        = n_cells,
+      `frac cells 1`     = frac_cells,
+      `Median rel ova 1` = med_1,
+      `Cell type 2`      = cell_type,
+      `Median rel ova 2` = med_2,
+      method,
+      alternative,
+      statistic,
+      estimate,
+      conf.low,
+      conf.high,
+      p.value,
+      p_adj
     ) %>%
-    arrange(`Cell type 2`, p_adj)
+    arrange(`Cell type 1`, p_adj)
   
   res
 }
@@ -1471,7 +1505,11 @@ fig_S10
 
 ```
 
-```{r "Table S1", eval = write_tables, echo = F}
+# Table S2
+
+Statistics comparing relative ova signal for each cell type.
+
+```{r "Table S2", eval = write_tables}
 
 # Create table of ova counts stats
 ova_stats <- sobjs %>%
@@ -1494,7 +1532,9 @@ ova_stats %>%
 
 ```
 
-```{r "Table S2", eval = write_tables, echo = F}
+# Table S3
+
+```{r "Table S3", eval = write_tables}
 
 # Ova markers
 ova_marks <- sobjs %>%
@@ -1516,7 +1556,9 @@ ova_marks %>%
 
 ```
 
-```{r "Table S3", eval = write_tables, echo = F}
+# Table S4
+
+```{r "Table S4", eval = write_tables}
 
 # Subtype ova markers
 exclude_types <- c("T cell", "B cell", "Epithelial", "NK")
