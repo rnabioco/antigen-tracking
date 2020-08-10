@@ -1518,8 +1518,7 @@ ova_stats <- sobjs %>%
       sobj_in     = .x,
       sample_name = so_titles[.y],
       data_column = "ova_fc",
-      type_column = "subtype",
-      log_tran    = T
+      type_column = "subtype"
     )
   }) %>%
   bind_rows()
