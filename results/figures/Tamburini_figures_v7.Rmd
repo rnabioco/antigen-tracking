@@ -1507,7 +1507,7 @@ fig_S10
 
 # Table S2
 
-Statistics comparing relative ova signal for each cell type.
+Comparison of relative ova signal for cell types shown in Fig 3, S7b, and S9b. A two-sided Wilcoxon rank sum test was used to compare relative ova signal for each cell type. Relative ova signal was calculated by dividing antigen counts for each cell by the median antigen counts for T and B cells. The Bonferroni method was used to correct for multiple comparisons. The number of cells in each group (n cells), fraction of the total cells for the sample (frac cells), median relative ova signal, test statistic (statistic), estimation of the median difference (estimate), and confidence interval (conf.low, conf.high) are included.
 
 ```{r "Table S2", eval = write_tables}
 
@@ -1533,6 +1533,8 @@ ova_stats %>%
 
 # Table S3
 
+Genes associated with ova-high cells for DCs, FRCs, and LECs. Ova-high cells were independently identified for DCs, FRCs, and LECs using a gaussian mixture model implemented with the R package mixtools. Differentially expressed genes were identified using a Wilcoxon rank sum test performed using the R package presto (wilcoxauc). The Benjamini-Hochberg method was used to correct for multiple comparisons. Genes were filtered to only include those with an adjusted p-value <0.05, log fold change >0.25, auc >0.5, and with at least 50% of ova-high cells expressing the gene. The average expression, log fold change, test statistic (statistic), area under the receiver operator curve (auc), percentage of ova-high cells that express the gene (pct_in), and percentage of ova-low cells that express the gene (pct_out) are included.
+
 ```{r "Table S3", eval = write_tables}
 
 # Ova markers
@@ -1556,6 +1558,8 @@ ova_marks %>%
 ```
 
 # Table S4
+
+Genes associated with ova-high cells for different DC, FRC, and LEC cell types. Ova-high cells were identified independently for each cell type shown in Fig 3 using a gaussian mixture model implemented with the R package mixtools. Differentially expressed genes were identified using a Wilcoxon rank sum test performed using the R package presto (wilcoxauc). The Benjamini-Hochberg method was used to correct for multiple comparisons. Genes were filtered to only include those with an adjusted p-value <0.05, log fold change >0.25, auc >0.5, and with at least 50% of ova-high cells expressing the gene. The average expression, log fold change, test statistic (statistic), area under the receiver operator curve (auc), percentage of ova-high cells that express the gene (pct_in), and percentage of ova-low cells that express the gene (pct_out) are included.
 
 ```{r "Table S4", eval = write_tables}
 
