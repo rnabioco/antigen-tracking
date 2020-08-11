@@ -38,7 +38,7 @@ def _check_path(path):
 
 
 # Set sample/group names
-FASTQ_REGEX = "(_S[0-9]+_L[0-9]+_R[12]_[0-9]+\.fastq\.gz|_S[0-9]+_R[12]_[0-9]+\.fastq\.gz)"
+FASTQ_REGEX = "_S[0-9]+_L[0-9]+_R[12]_[0-9]+\.fastq\.gz"
 
 if RNA_SAMPLES:
     RNA_SAMPLES = [x.strip() for x in RNA_SAMPLES]
