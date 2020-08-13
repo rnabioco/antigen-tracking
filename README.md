@@ -3,3 +3,5 @@
 ### Data availability
 
 Data have been deposited at [NCBI GEO](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE150719)
+
+A cell browser is availble [here](https://antigen-tracking.s3-us-west-2.amazonaws.com/index.html)
