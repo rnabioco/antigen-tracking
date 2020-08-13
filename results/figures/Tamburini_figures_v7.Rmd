@@ -17,6 +17,7 @@ params:
   rds_dir:      "sobjs/so"
   ref_dir:      "ref"
   xlsx_dir:     "results/figures"
+  browser_dir:  "results/cellbrowser"
   
   # These parameters specify the input matrices and cell types that should be used for analysis
   # mat_in: Cellranger output folder.
@@ -1067,7 +1068,7 @@ calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran
 
 # Helper to find subtype ova markers
 find_ova_markers <- function(sobj_in, prefix = "", gmm_column, so_title, p_max = 0.05, FC_min = 0.25,
-                             auc_min = 0.5, pct_in_min = 50, pct_out_max = 100, uniq = F) {
+                             auc_min = 0.5, pct_in_min = 50, pct_out_max = 100, uniq = F, filt_ova_high = T) {
   
   grps <- c("ova low", "ova high") %>%
     set_names(., .)
@@ -1087,8 +1088,14 @@ find_ova_markers <- function(sobj_in, prefix = "", gmm_column, so_title, p_max =
     pct_in_min   = pct_in_min,
     pct_out_max  = pct_out_max,
     uniq         = uniq
-  ) %>%
-    filter(group == grps[["ova high"]]) %>%
+  )
+  
+  if (filt_ova_high) {
+    res <- res %>%
+      filter(group == grps[["ova high"]])
+  }
+  
+  res <- res %>%      
     arrange(desc(logFC)) %>%
     mutate(Sample = so_title) %>%
     relocate(Sample, before = feature)
@@ -1110,6 +1117,52 @@ write_xlsx <- function(df_in, file_in, ...) {
       row.names = F,
       ...
     )
+}
+
+# Create Cell Browser files
+create_browser <- function(sobj_in, markers, browser_dir, browser_name, cols = NULL, ...) {
+
+  # Set file paths
+  brow_path   <- file.path(browser_dir, browser_name)  
+  marker_path <- file.path(brow_path, "markers.tsv")
+  
+  dir.create(brow_path, recursive = T)
+  
+  # Create tsv file for marker genes
+  markers %>%
+    select(
+      cluster = group,
+      gene    = feature,
+      score   = logFC
+    ) %>%
+    write_tsv(marker_path)
+  
+  # Change adt_ovalbumin column name so raw counts are pulled
+  sobj_in@meta.data <- sobj_in@meta.data %>%
+    rename(ova_counts = adt_ovalbumin)
+  
+  # Create Cell Browser files for gene expression data
+  sobj_in %>%
+    ExportToCellbrowser(
+      markers.file     = marker_path,
+      dir              = brow_path,
+      reductions       = "umap",
+      dataset.name     = browser_name,
+      GMM_grp          = "Cluster",
+      subtype          = "Cell type",
+      nCount_RNA       = "RNA UMI count",
+      nFeature_RNA     = "Gene count",
+      Percent_mito     = "Percent mito",
+      ova_counts       = "ova counts",
+      ova_fc           = "Relative ova signal",
+      ...
+    )
+  
+  # Save color.tsv
+  if (!is.null(cols)) {
+    cols %>%
+      write_tsv(file.path(brow_path, "colors.tsv"), col_names = F)
+  }
 }
 
 ```
@@ -1541,10 +1594,11 @@ Genes associated with ova-high cells for DCs, FRCs, and LECs. Ova-high cells wer
 ova_marks <- sobjs %>%
   imap(~ {
     find_ova_markers(
-      sobj_in    = .x,
-      prefix     = "",
-      gmm_column = "GMM_grp",
-      so_title   = so_titles[.y]
+      sobj_in       = .x,
+      prefix        = "",
+      gmm_column    = "GMM_grp",
+      so_title      = so_titles[.y],
+      filt_ova_high = F
     )
   }) %>%
   bind_rows()
@@ -1553,6 +1607,7 @@ ova_marks <- sobjs %>%
 xlsx_file <- here(params$xlsx_dir, "table_S3.xlsx")
 
 ova_marks %>%
+  filter(group == "ova high") %>%
   write_xlsx(xlsx_file)
 
 ```
@@ -1598,6 +1653,66 @@ sub_ova_marks %>%
 
 ```
 
+```{r "Cellbrowser 1", eval = F}
+
+# Save color tsv
+browser_cols <- append(so_cols, ova_cols) %>%
+  flatten() %>%
+  tibble(
+    metadataValue = names(.),
+    colorCode = .
+  ) %>%
+  unnest(cols = colorCode) %>%
+  unique() %>%
+  mutate(colorCode = if_else(
+    metadataValue == "Other", 
+    "#f0f0f0", 
+    colorCode
+  ))
+
+# Create cellbrowser directories
+sobjs %>%
+  iwalk(~ {
+    marks_in  <- ova_marks %>%
+      filter(Sample == so_titles[[.y]])
+    
+    create_browser(
+      sobj_in      = .x,
+      markers      = marks_in,
+      browser_dir  = params$browser_dir,
+      browser_name = .y,
+      cols         = browser_cols,
+      skip.expr.matrix = T
+    )
+  })
+
+```
+
+```{bash "Cellbrowser 2", eval = F}
+
+html_dir=../cellbrowser
+
+mkdir -p $html_dir/html
+
+browsers=(
+  d2_DC  d14_DC
+  d2_LEC d14_LEC
+  d2_FRC d14_FRC
+)
+
+args=""
+
+for dir in ${browsers[@]}
+do
+  echo -e "\ncolors=\"colors.tsv\"" \
+    >> $html_dir/$dir/cellbrowser.conf
+
+  args=$(echo "$args" "-i $html_dir/$dir/cellbrowser.conf")
+done
+
+cbBuild $args -o $html_dir/html
+
+```
 
 
 
