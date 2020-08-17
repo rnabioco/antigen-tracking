@@ -470,7 +470,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
   cell_chk <- identical(rownames(res), rownames(sobj_in@meta.data))
   
   if (!data_chk && cell_chk) {
-    stop("Input cells do not match cell in GMM output.")
+    stop("Input cells do not match cells in GMM output.")
   }
   
   res <- list(
@@ -507,11 +507,13 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
   gmm_df <- gmm_res$res %>%
     rownames_to_column("cell_id") %>%
     mutate(
-      mu      = gmm_res$mu[GMM_grp],
-      GMM_grp = str_to_lower(GMM_grp),
-      GMM_grp = str_c("ova ", GMM_grp),
+      GMM_mu     = gmm_res$mu[GMM_grp],
+      GMM_sigma  = gmm_res$sigma[GMM_grp],
+      GMM_lambda = gmm_res$lambda[GMM_grp],
+      GMM_grp    = str_to_lower(GMM_grp),
+      GMM_grp    = str_c("ova ", GMM_grp)
     ) %>%
-    select(-!!sym(data_column))
+    select(-!!sym(data_column), -Low, -High)
   
   # Return data.frame
   if (!return_sobj) {
@@ -748,9 +750,11 @@ classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype
     mutate(type_GMM_grp_2 = str_c(!!sym(subtype_column), "-", GMM_grp)) %>%
     select(
       cell_id,
-      type_GMM_grp = GMM_grp,
+      type_GMM_grp    = GMM_grp,
       type_GMM_grp_2,
-      type_mu = mu
+      type_GMM_mu     = GMM_mu,
+      type_GMM_sigma  = GMM_sigma,
+      type_GMM_lambda = GMM_lambda
     ) %>%
     column_to_rownames("cell_id")
   
@@ -1041,7 +1045,7 @@ create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
     ) +
     xlim(1, 8) +
     labs(y = "-log10(p-value)") +
-    theme_info +
+    base_theme +
     theme(
       axis.title.x    = element_blank(),
       axis.text.x     = element_blank(),
@@ -1266,7 +1270,7 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
         nrow       = 1
       ) +
       guides(color = guide) +
-      blank_theme +
+      umap_theme +
       theme(
         plot.margin     = unit(c(0.7, 0.2, 0.2, 0.2), "cm"),
         legend.position = "bottom",
@@ -1335,20 +1339,20 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
 }
 
 # Create reference UMAP for comparisons
-create_ref_umap <- function(input_sobj, pt_mtplyr = 1, pt_outline = NULL, color_guide, ...) {
+create_ref_umap <- function(input_sobj, pt_size = 0.1, pt_outline = NULL, pt_mtplyr = 1, color_guide, ...) {
   
   if (is.null(pt_outline)) {
-    pt_outline <- 0.1 * pt_mtplyr + 0.3
+    pt_outline <- pt_size * pt_mtplyr + 0.3
   }
   
   res <- input_sobj %>%
     plot_features(
-      pt_size     = 0.1 * pt_mtplyr,
+      pt_size     = pt_size * pt_mtplyr,
       pt_outline  = pt_outline,
       ...
     ) +
     guides(color = color_guide) +
-    blank_theme +
+    umap_theme +
     theme(
       legend.position = "top",
       legend.title    = element_blank(),
@@ -1359,46 +1363,49 @@ create_ref_umap <- function(input_sobj, pt_mtplyr = 1, pt_outline = NULL, color_
 }
 
 # Create UMAPs showing marker gene signal
-create_marker_umaps <- function(input_sobj, input_markers, umap_col = NULL, add_outline = NULL, 
-                                pt_mtplyr = 1, low_col = "#fafafa", high_col_mtplyr = 1) {
+create_marker_umaps <- function(input_sobj, input_markers, low_col = "#fafafa", high_col = NULL, pt_size = 0.1, 
+                                pt_outline = NULL, pt_mtplyr = 1, low_col_mtplyr = 1, high_col_mtplyr = 1) {
+
+  # Set UMAP point size
+  pt_size <- pt_size * pt_mtplyr
   
-  # pt_size <- 0.25 * pt_mtplyr
-  pt_size <- 0.1 * pt_mtplyr
-  
-  if (!is.null(umap_col)) {
+  # Set UMAP colors
+  if (!is.null(high_col)) {
     input_markers <- set_names(
-      x  = rep(umap_col, length(input_markers)),
+      x  = rep(high_col, length(input_markers)),
       nm = input_markers
     )
   }
   
+  # Set color multipliers
   if (length(high_col_mtplyr) == 1) {
     high_col_mtplyr <- rep(high_col_mtplyr, length(input_markers))
   }
   
-  if (!is_list(low_col)) {
-    low_col <- seq_along(input_markers) %>%
-      map(~ low_col)
+  if (length(low_col_mtplyr) == 1) {
+    low_col_mtplyr <- rep(low_col_mtplyr, length(input_markers))
   }
   
+  # Plot parameters
   umap_args <- list(
     unname(input_markers),
     names(input_markers),
-    low_col,
+    low_col_mtplyr,
     high_col_mtplyr
   )
   
+  # Create UMAPs
   res <- umap_args %>%
     pmap(~ {
       input_sobj %>%
         plot_features(
           feature    = ..2,
-          plot_cols  = c(..3, rep(..1, ..4)),
-          pt_outline = add_outline,
+          plot_cols  = c(rep(low_col, ..3), rep(..1, ..4)),
+          pt_outline = pt_outline,
           pt_size    = pt_size
         ) +
         ggtitle(.y) +
-        blank_theme +
+        umap_theme +
         theme(
           plot.title        = element_text(size = 13),
           legend.position   = "bottom",
@@ -1464,7 +1471,7 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
     ggplot(aes(!!sym(clust_column), Counts, fill = !!sym(clust_column))) + 
     facet_wrap(~ key, ncol = n_cols) +
     scale_color_manual(values = box_cols) +
-    theme_info +
+    base_theme +
     theme(
       panel.spacing.x  = unit(0.7, "cm"),
       strip.background = element_blank(),
@@ -1573,10 +1580,8 @@ create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_col
 }
 
 # Create figure summarizing marker genes
-create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column, 
-                              input_umap, umap_color, fig_heights = c(0.46, 0.3, 0.3), 
-                              GO_genome = params$genome, box_colors, n_boxes = 10,
-                              umap_outline = NULL, umap_mtplyr = 1, xlsx_name = NULL, 
+create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column, input_umap, umap_color, fig_heights = c(0.46, 0.3, 0.3), 
+                              GO_genome = params$genome, box_colors, n_boxes = 10, umap_outline = NULL, umap_mtplyr = 1, xlsx_name = NULL, 
                               sheet_name = NULL, ...) {
   
   # Set blank plots
@@ -2242,6 +2247,7 @@ sobjs <- args_in %>%
 
 
 # Classify cells based on OVA counts, do this for each cell type and subtype
+# sobjs <- sobjs %>%
 sobjs <- sobjs %>%
   imap(~ {
     classify_ova_05(
@@ -2291,23 +2297,26 @@ sobjs <- so_out %>%
 ```{r "Themes", echo = F}
 
 # ggplot2 themes
-theme_info <- theme_cowplot() +
+text_theme <- theme(
+  legend.text = element_text(size = 8),
+  axis.title  = element_text(size = 10),
+  axis.text   = element_text(size = 8)
+)
+
+base_theme <- theme_cowplot() +
   theme(
     plot.title       = element_text(face = "plain", size = 20),
     strip.background = element_blank(),
     strip.text       = element_text(face = "plain")
-  )
+  ) +
+  text_theme
 
-umap_theme <- theme_info +
+umap_theme <- base_theme +
   theme(
-    axis.text  = element_blank(),
-    axis.ticks = element_blank()
-  )
-
-blank_theme <- umap_theme +
-  theme(
+    axis.title = element_blank(),
     axis.line  = element_blank(),
-    axis.title = element_blank()
+    axis.ticks = element_blank(),
+    axis.text  = element_blank()
   )
 
 # Legend guides
@@ -2378,10 +2387,11 @@ so_cols$d2_LEC <- c(
 
 ```{r "TEST", eval = F, echo = F}
 
-NEW_sobjs <- sobjs
+NEW_so <- x
+OLD_so <- OLD_sobjs
 
 # TO TEST FOR DIFFERNCES IN METADATA
-walk2(sobjs, NEW_sobjs, ~ {
+walk2(OLD_so, NEW_so, ~ {
   so1 <- .x
   so2 <- .y
   
