@@ -862,6 +862,44 @@ create_browser <- function(sobj_in, markers, browser_dir, browser_name, cols = N
   }
 }
 
+# Helper to export counts and meta.data tables
+export_matrices <- function(sobj_in, out_dir, file_prefix) {
+  
+  # Format count matrices
+  rna <- sobj_in %>%
+    GetAssayData(assay = "RNA", "counts") %>%
+    as_tibble(rownames = "gene_symbol")
+  
+  adt <- sobj_in %>%
+    GetAssayData(assay = "ADT", "counts") %>%
+    as_tibble(rownames = "gene_symbol") %>%
+    mutate(gene_symbol = str_c("adt_", gene_symbol))
+  
+  # Write count matrix
+  counts_out <- file.path(out_dir, str_c(file_prefix, "_count_matrix.tsv.gz"))
+  
+  bind_rows(rna, adt) %>%
+    write_tsv(counts_out)
+  
+  # meta.data columns to include  
+  meta_cols <- c(
+    "cell_id",      "orig.ident",
+    "nCount_RNA",   "nFeature_RNA",
+    "Percent_mito", "S.Score",
+    "G2M.Score",    "Phase",
+    "subtype",      "UMAP_1",
+    "UMAP_2"
+  )
+
+  # Write meta.data table
+  meta_out <- file.path(out_dir, str_c(file_prefix, "_metadata.tsv.gz"))
+  
+  sobj_in@meta.data %>%
+    as_tibble(rownames = "cell_id") %>%
+    select(all_of(meta_cols)) %>%
+    write_tsv(meta_out)
+}
+
 
 # Create figure panels ----
 
@@ -1761,33 +1799,15 @@ sub_ova_marks %>%
 
 ```
 
-```{r "Export meta.data", eval = T}
-
-# Export meta.data for each Seurat object
-export_meta <- function(sobj_in, file_out) {
-  
-  # meta.data columns to include  
-  meta_cols <- c(
-    "cell_id",      "orig.ident",
-    "nCount_RNA",   "nFeature_RNA",
-    "Percent_mito", "S.Score",
-    "G2M.Score",    "Phase",
-    "subtype",      "UMAP_1",
-    "UMAP_2"
-  )
-
-  # Write meta.data table
-  sobj_in@meta.data %>%
-    as_tibble(rownames = "cell_id") %>%
-    select(all_of(meta_cols)) %>%
-    write_tsv(file_out)
-}
+```{r "Export matrices and meta.data", eval = T}
 
 sobjs %>%
   iwalk(~ {
-    file_out <- here(params$rds_dir, str_c("walsh_", .y, ".tsv"))
-    
-    export_meta(.x, file_out)
+    export_matrices(
+      sobj_in     = .x,
+      out_dir     = here(params$rds_dir),
+      file_prefix = str_c("walsh_", .y)
+    )
   })
 
 ```
@@ -1852,8 +1872,6 @@ done
 cbBuild $args -o $html_dir/html
 
 ```
-
-
 
 
 
