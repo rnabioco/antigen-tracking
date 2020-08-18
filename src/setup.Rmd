@@ -1612,8 +1612,8 @@ create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column,
   marks_umap <- input_sobj %>%
     create_marker_umaps(
       input_markers = head(top_marks, 7),
-      umap_col      = umap_color,
-      add_outline   = umap_outline,
+      high_col      = umap_color,
+      pt_outline    = umap_outline,
       pt_mtplyr     = umap_mtplyr
     ) %>%
     append(list(input_umap), .)

@@ -16,7 +16,7 @@ params:
   template_dir: "src"
   rds_dir:      "sobjs"
   ref_dir:      "ref"
-  xlsx_dir:     "results/figures"
+  # xlsx_dir:     "results/figures"
   browser_dir:  "results/cellbrowser"
   
   # These parameters specify the input matrices and cell types that should be used for analysis
@@ -86,7 +86,7 @@ knitr::opts_chunk$set(
 
 `r knitr::knit_child(here::here(params$template_dir, "setup.Rmd"))`
 
-```{r "Plotting functions", echo = F}
+```{r "Figure functions", echo = F}
 
 # Figure helpers ----
 
@@ -791,7 +791,7 @@ find_ova_markers <- function(sobj_in, prefix = "", gmm_column, so_title, p_max =
 write_xlsx <- function(df_in, file_out, sheet_id, ...) {
   
   if (file.exists(file_out)) {
-    stop("File exists: ", file_out)
+    stop("File ", file_out, " exists, nothing written.")
   }
   
   samples <- df_in %>%
@@ -1413,7 +1413,7 @@ fig3
 
 # Figure 4
 
-Genes associated with high antigen counts for day 2 and day 14 cDC2 Tbet- cells. (a, d) Day 2 (a) and day 14 (d) cDC2 Tbet- cells containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. Cell types not included in the comparison are shown in white (Other). (b, e) The distribution of ova antigen counts is shown for ova-low and ova-high cDC2 Tbet- cells. Dotted lines indicate the mean counts for each population. (c, f) UMAP projections show the expression of top markers associated with ova-high cDC2 Tbet- cells.
+Genes associated with high antigen counts for day 2 and day 14 cDC2 Tbet- cells. (a, e) Day 2 (a) and day 14 (e) cDC2 Tbet- cells containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. Cell types not included in the comparison are shown in white (Other). (b, f) The distribution of ova antigen counts is shown for ova-low and ova-high cDC2 Tbet- cells. Dotted lines indicate the mean counts for each population. (c, g) UMAP projections show the expression of top markers associated with ova-high cDC2 Tbet- cells. (d, h) Expression of ova-high markers for each cell type.
 
 ```{r "Fig 4", fig.width = 10, fig.height = 17}
 
@@ -1487,7 +1487,7 @@ fig_4
 
 # Figure 5
 
-Genes associated with high antigen counts for day 14 LECs. (a) LECs containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. T cells, B cells, and epithelial cells are shown in white (Other). (b) The distribution of ova antigen counts is shown for ova-low and ova-high cells. Dotted lines indicate the mean counts for each population. (c) The fraction of cells belonging to each LEC cell type is shown for ova-low and ova-high populations. (d) UMAP projections show the expression of top ova-high markers. (e) The expression of ova-high markers was plotted for each cell type.
+Genes associated with high antigen counts for day 14 LECs. (a) LECs containing low and high antigen counts were identified using a gaussian mixture model. A UMAP projection is shown for ova-low and ova-high cells. T cells, B cells, and epithelial cells are shown in white (Other). (b) Distribution of ova antigen counts for ova-low (light blue) and ova-high (dark blue) cells. Dotted lines indicate the mean counts for each population. (c) The fraction of cells belonging to each LEC cell type for ova-low and ova-high populations. (d) UMAP projections show the expression of top ova-high markers. (e) Expression of ova-high markers for each cell type.
 
 ```{r "Fig 5", fig.width = 12, fig.height = 8}
 
@@ -1785,7 +1785,7 @@ ova_marks %>%
 
 # Table S4
 
-Genes associated with ova-high cells for different DC, FRC, and LEC cell types. Ova-high cells were identified independently for each cell type shown in Fig 3 using a gaussian mixture model implemented with the R package mixtools. Differentially expressed genes were identified using a Wilcoxon rank sum test performed using the R package presto (wilcoxauc). The Benjamini-Hochberg method was used to correct for multiple comparisons. Genes were filtered to only include those with an adjusted p-value <0.05, log fold change >0.25, auc >0.5, and with at least 50% of ova-high cells expressing the gene. The average expression, log fold change, test statistic (statistic), area under the receiver operator curve (auc), percentage of ova-high cells that express the gene (pct_in), and percentage of ova-low cells that express the gene (pct_out) are included.
+Genes associated with ova-high cells for different DC, FRC, and LEC cell types. Ova-low and ova-high cells were identified independently for each cell type shown in Fig 3 using a gaussian mixture model implemented with the R package mixtools. Differentially expressed genes were identified as described for Supplemental Table 3.
 
 ```{r "Table S4", eval = write_tables}
 
@@ -1905,6 +1905,7 @@ cbBuild $args -o $html_dir/html
 aws s3 sync $html_dir/html s3://antigen-tracking-browser
 
 ```
+
 
 
 

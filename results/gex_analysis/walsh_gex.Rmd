@@ -16,9 +16,9 @@ output:
 params:
   genome:        "mmusculus"                        # Genome to use for GO analysis
   template_dir:  "src"                              # Directory containing template Rmarkdowns
-  rds_dir:       "sobjs/so"                         # Direcotry to use for loading/saving Seurat objects
+  rds_dir:       "sobjs"                            # Direcotry to use for loading/saving Seurat objects
   ref_dir:       "ref"                              # Directory to use for loading/saving clustifyr references
-  xlsx_dir:      "results/gex_analysis/gene_lists"  # Directory to use for writing gene lists (comment out to skip)
+  # xlsx_dir:      "results/gex_analysis/gene_lists"  # Directory to use for writing gene lists (comment out to skip)
   p_max_markers: 0.05                               # Max p-value for marker genes
   FC_min:        0.25                               # Min fold change for marker genes
   auc_min:       0.5                                # Min AUC for marker genes
@@ -42,32 +42,32 @@ params:
         mat_in:    "results/GEX_CD45pos_d2-ADT_CD45pos_d2/outs/filtered_feature_bc_matrix"
         cell_type: "DC"
         title:     "Myeloid Cells (Day 2)"
-        sobj_out:  "d2_DC_so_2.rds"
+        sobj_out:  "walsh_d2_DC.rds"
       d14_DC:
         mat_in:    "results/GEX_CD45pos_d14-ADT_CD45pos_d14/outs/filtered_feature_bc_matrix"
         cell_type: "DC"
         title:     "Myeloid Cells (Day 14)"
-        sobj_out:  "d14_DC_so_2.rds"
+        sobj_out:  "walsh_d14_DC.rds"
       d2_LEC:
         mat_in:    "results/GEX_CD45neg_d2-ADT_CD45neg_d2/outs/filtered_feature_bc_matrix"
         cell_type: "LEC"
         title:     "Endothelial/Stromal Cells (Day 2)"
-        sobj_out:  "d2_LEC_so_2.rds"
+        sobj_out:  "walsh_d2_LEC.rds"
       d14_LEC:
         mat_in:    "results/GEX_CD45neg_d14-ADT_CD45neg_d14/outs/filtered_feature_bc_matrix"
         cell_type: "LEC"
         title:     "Endothelial/Stromal Cells (Day 14)"
-        sobj_out:  "d14_LEC_so_2.rds"
+        sobj_out:  "walsh_d14_LEC.rds"
       d2_FRC:
         mat_in:    "results/GEX_CD45neg_d2-ADT_CD45neg_d2/outs/filtered_feature_bc_matrix"
         cell_type: "fibroblast"
         title:     "Fibroblast/Stromal Cells (Day 2)"
-        sobj_out:  "d2_FRC_so_2.rds"
+        sobj_out:  "walsh_d2_FRC.rds"
       d14_FRC:
         mat_in:    "results/GEX_CD45neg_d14-ADT_CD45neg_d14/outs/filtered_feature_bc_matrix"
         cell_type: "fibroblast"
         title:     "Fibroblast/Stromal Cells (Day 14)"
-        sobj_out:  "d14_FRC_so_2.rds"
+        sobj_out:  "walsh_d14_FRC.rds"
   
   # These parameters specify paths to clustifyr references
   ref_sobjs: ["d2_so.rds", "d14_so.rds"]
