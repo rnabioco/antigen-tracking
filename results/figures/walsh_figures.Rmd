@@ -66,6 +66,11 @@ params:
       DC:         "ref_DC_walsh.rda"
       LEC:        "ref_LEC_walsh.rda"
       fibroblast: "ref_FRC_walsh.rda"
+      
+  abstract: |
+    Live, attenuated vaccines generate humoral and cellular immune memory, increasing the duration of protective immune memory. We previously found that antigens derived from vaccination or viral infection persist within lymphatic endothelial cells (LECs) beyond the clearance of the infection, a process we termed “antigen archiving”. Technical limitations of fluorescent labeling have precluded a complete picture of antigen archiving across cell types in the lymph node. We developed a “molecular tracking device” to follow the distribution, acquisition, and retention of antigen in the lymph node. We immunized mice with an antigen conjugated to a nuclease-re-sistant DNA tag and used single-cell mRNA sequencing to quantify its abundance in lymph node hematopoietic and non-hematopoietic cell types. At early and late time points after vac-cination, we found antigen acquisition by dendritic cell populations (DCs) and associated ex-pression of genes involved in DC activation and antigen processing, and antigen acquisition and archiving by LECs and unexpected stromal cell types. Variable antigen levels in LECs enabled the identification of caveolar endocytosis as a mechanism of antigen acquisition or retention. Molecular tracking devices enable new approaches to study dynamic tissue dissemination of antigens and identify new mechanisms of antigen acquisition and retention at cellular resolution in vivo.
+  methods: |
+    FASTQ files from the gene expression and antigen tracking libraries were processed using the cellranger count pipeline (v3.1.0). Reads were aligned to the mm10 and Vaccinia virus (NC_006998) reference genomes. Analysis of gene expression and antigen tracking data was performed using the Seurat R package (v3.2). Antigen tracking and gene expression data were combined into the same Seurat object for each sample (CD45-/day 2, CD45+/day 2, CD45-/day 14, CD45+/day 14). Cells were filtered based on the number of detected genes (>250 and <5000) and the percent of mitochondrial reads (<15%). Gene expression counts were log normalized (NormalizeData), and relative ova signal was calculated by dividing ova-psDNA counts by the median ova-psDNA counts for all T and B cells present in the sample. Gene expression data were scaled and centered (ScaleData). 2000 variable features (FindVariableFeatures) were used for PCA (RunPCA) and the first 40 principal components were used to find clusters (FindNeighbors, FindClusters) and for uniform manifold approximation and projection (UMAP, RunUMAP). Cell types were annotated using the R package [clustifyr](https://rnabioco.github.io/clustifyr) along with reference bulk RNA-seq data from ImmGen (available for download through [clustifyrdata](https://rnabioco.github.io/clustifyrdata)). The samples were then divided into separate objects for DCs, LECs, and FRCs. Cell subsets were then annotated using clustifyr with reference bulk RNA-seq data for DCs, FRCs, and LECs. Ova-low and ova-high populations were identified using a two-component Gaussian mixture model implemented with the R package [mixtools](https://cran.r-project.org/web/packages/mixtools/index.html). Differentially expressed genes were identified using the R package [presto](https://github.com/immunogenomics/presto) and filtered to include those with an adjusted p-value <0.05, log fold change >0.25, AUC >0.5, and with at least 50% of ova-high cells expressing the gene.
 ---
 
 ```{r "Chunk opts", echo = F}
@@ -817,7 +822,8 @@ write_xlsx <- function(df_in, file_out, sheet_id, ...) {
 }
 
 # Create Cell Browser files
-create_browser <- function(sobj_in, markers, browser_dir, browser_name, cols = NULL, ...) {
+create_browser <- function(sobj_in, markers, browser_dir, browser_name, cols = NULL,
+                           browser_title = NULL, abstract = NULL, methods_desc = NULL, ...) {
 
   # Set file paths
   brow_path   <- file.path(browser_dir, browser_name)  
@@ -829,8 +835,8 @@ create_browser <- function(sobj_in, markers, browser_dir, browser_name, cols = N
   markers %>%
     select(
       cluster = group,
-      gene    = feature,
-      score   = logFC
+      gene,
+      score = padj
     ) %>%
     write_tsv(marker_path)
   
@@ -841,19 +847,39 @@ create_browser <- function(sobj_in, markers, browser_dir, browser_name, cols = N
   # Create Cell Browser files for gene expression data
   sobj_in %>%
     ExportToCellbrowser(
-      markers.file     = marker_path,
-      dir              = brow_path,
-      reductions       = "umap",
-      dataset.name     = browser_name,
-      GMM_grp          = "Cluster",
-      subtype          = "Cell type",
-      nCount_RNA       = "RNA UMI count",
-      nFeature_RNA     = "Gene count",
-      Percent_mito     = "Percent mito",
-      ova_counts       = "ova counts",
-      ova_fc           = "Relative ova signal",
+      markers.file  = marker_path,
+      dir           = brow_path,
+      reductions    = "umap",
+      dataset.name  = browser_name,
+      subtype       = "Cell type",
+      GMM_grp       = "Cluster",
+      nCount_RNA    = "RNA UMI count",
+      nFeature_RNA  = "Gene count",
+      Percent_mito  = "Percent mito",
+      ova_counts    = "ova counts",
+      ova_fc        = "Relative ova signal",
       ...
     )
+  
+  # Helper to write desc file
+  write_desc <- function(str_in, key) {
+    if (!is.null(str_in)) {
+      str_in %>%
+        str_trim() %>%
+        str_replace_all("\\]", " ") %>%
+        str_remove_all("[\\[\\]]") %>%
+        str_c("\"", ., "\"\n") %>%
+        str_c(key, "=", .) %>%
+        cat(file = desc_path, append = T)
+    }
+  }
+  
+  # Write desc.conf
+  desc_path <- file.path(brow_path, "desc.conf")
+  
+  write_desc(browser_title, "title")
+  write_desc(abstract, "abstract")
+  write_desc(methods_desc, "methods")
   
   # Save color.tsv
   if (!is.null(cols)) {
@@ -1324,11 +1350,13 @@ write_tables <- !is.null(params$xlsx_dir)
 
 ```
 
+# Abstract
+
+`r params$abstract`
+
 # Methods
 
-Fastq files from the gene expression and antigen tracking libraries were processed using the feature barcode version of the cellranger count pipeline (v3.1.0). Reads were aligned to the mm10 and Vaccinia virus (NC_006998) reference genomes. Analysis of gene expression and antigen tracking data was performed using the Seurat R package (v3.2). Antigen tracking and gene expression data were combined into the same Seurat object for each sample (CD45-/day2, CD45+/day2, CD45-/day14, CD45+/day14). Cells were filtered based on the number of detected genes (>250 and <5000) and the percent of mitochondrial reads (<15%). Gene expression counts were log nor-malized (NormalizeData), and relative ova signal was calculated by dividing ova-psDNA counts by the median ova-psDNA counts for all T and B cells present in the sample. Gene expression data were scaled and centered (ScaleData). 2000 variable features (FindVariableFeatures) were used for PCA (RunPCA) and the first 40 principal components were used to find clusters (FindNeighbors, FindClusters) and calculate uniform manifold approximation and projection (UMAP) (RunUMAP). Cell types were annotated using the R package clustifyr (https://rnabi-oco.github.io/clustifyr) along with reference bulk RNA-seq data from ImmGen (available for download through the clustifyrdata R package, https://rnabioco.github.io/clustifyrdata). The samples were then divided into separate objects for DCs, LECs, and FRCs. Cell subsets were annotated using clustifyr with reference bulk RNA-seq data for DCs, LECs, and FRCs.
-
-Identification of ova-low and ova-high populations was accomplished using a gaussian mixture model implemented with the R package mixtools (https://cran.r-project.org/web/packages/mix-tools/index.html). All LECs were used when identifying ova-low and ova-high cells (Fig. 4). For DCs (Fig. S10), ova-low and -high populations were identified independently for each DC cell type. For ova-low and ova-high populations, differentially expressed genes were identified using the R package presto (wilcoxauc, https://github.com/immunogenomics/presto). Differentially expressed genes were filtered to include those with an adjusted p-value <0.05, log fold change >0.25, AUC >0.5, and with at least 50% of ova-high cells expressing the gene. A reproducible analysis pipeline is available at https://github.com/rnabioco/antigen-tracking.
+`r params$methods`
 
 \newgeometry{top=1in,bottom=1in,left=1.5in,right=1.5in}
 
@@ -1799,7 +1827,7 @@ sub_ova_marks %>%
 
 ```
 
-```{r "Export matrices and meta.data", eval = T}
+```{r "Export matrices and meta.data", eval = F}
 
 sobjs %>%
   iwalk(~ {
@@ -1836,11 +1864,14 @@ sobjs %>%
       filter(Sample == so_titles[[.y]])
     
     create_browser(
-      sobj_in      = .x,
-      markers      = marks_in,
-      browser_dir  = params$browser_dir,
-      browser_name = .y,
-      cols         = browser_cols,
+      sobj_in       = .x,
+      markers       = marks_in,
+      browser_dir   = params$browser_dir,
+      browser_name  = .y,
+      cols          = browser_cols,
+      browser_title = so_titles[.y],
+      abstract      = params$abstract,
+      methods_desc  = params$methods,
       skip.expr.matrix = T
     )
   })
@@ -1870,6 +1901,8 @@ do
 done
 
 cbBuild $args -o $html_dir/html
+
+aws s3 sync $html_dir/html s3://antigen-tracking-browser
 
 ```
 

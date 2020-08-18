@@ -466,7 +466,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
     column_to_rownames("cell_id")
   
   # Check that GMM results match input data
-  data_chk <- identical(res[, data_column], sobj_in@meta.data[, data_column])
+  data_chk <- identical(res[, data_column], data_df[, data_column])
   cell_chk <- identical(rownames(res), rownames(sobj_in@meta.data))
   
   if (!data_chk && cell_chk) {
@@ -475,9 +475,10 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
   
   res <- list(
     res    = res,
-    mu     = mixmdl$mu,
-    sigma  = mixmdl$sigma,
-    lambda = mixmdl$lambda
+    mu      = mixmdl$mu,
+    sigma   = mixmdl$sigma,
+    lambda  = mixmdl$lambda,
+    mix_obj = mixmdl
   )
   
   res
@@ -2247,7 +2248,6 @@ sobjs <- args_in %>%
 
 
 # Classify cells based on OVA counts, do this for each cell type and subtype
-# sobjs <- sobjs %>%
 sobjs <- sobjs %>%
   imap(~ {
     classify_ova_05(
@@ -2273,9 +2273,9 @@ FILES_OUT <- c(FILES_OUT, md5sum(file_out))
 sobjs %>%
   iwalk(~ {
     file_out <- so_out[.y]
-    
+
     write_rds(.x, path = file_out)
-    
+
     FILES_OUT <<- c(FILES_OUT, md5sum(file_out))
   })
 
