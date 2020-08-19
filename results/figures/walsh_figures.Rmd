@@ -296,7 +296,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
 # Create feature UMAPs
 create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001, pt_outline = 0.4, panels_n_row = 2,
                                     low_col = "#ffffff", low_col_mtplyr = 2, high_col_mtplyr = 1, on_top = NULL,
-                                    return_list = F, ...) {
+                                    return_list = F, include_pie = F, pie_pos = c(-Inf, -Inf), pie_size = c(0.3, 0.3), ...) {
   
   # Theme elements
   legd_guide <- guide_legend(override.aes = list(
@@ -329,6 +329,38 @@ create_feat_umap_panels <- function(sobj_in, feats, ref_cols, pt_size = 0.00001,
       legend.text       = element_text(size = 8)
     ) +
     theme(...)
+  
+  # Add pie chart to reference UMAP
+  if (include_pie) {
+    ref_pie <- sobj_in %>%
+      plot_cell_count(
+        group_id  = "orig.ident",
+        fill_id   = "subtype",
+        plot_cols = ref_cols,
+        bar_line  = 0.1
+      ) +
+      coord_polar("y", start = 0) +
+      umap_theme +
+      theme(
+        plot.margin = unit(c(0, 0, 0, 0), "cm"),
+        legend.position = "none"
+      )
+    
+    inset_df <- tibble(
+      x  = pie_pos[1],
+      y  = pie_pos[2],
+      gg = list(ref_pie)
+    )
+    
+    ref_umap <- ref_umap +
+      geom_plot(data = inset_df, mapping = aes(
+        x         = x,
+        y         = y,
+        label     = gg,
+        vp.width  = pie_size[1],
+        vp.height = pie_size[2]
+      ))
+  }
   
   # Create list of feature UMAPs
   feat_umaps <- sobj_in %>%
@@ -1091,7 +1123,7 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
     low_col_mtplyr  = low_col_mtplyr,
     high_col_mtplyr = high_col_mtplyr,
     return_list     = T,
-    legend.margin   = margin(0.1, 0, 0.1, 1.5, "cm"),
+    legend.margin   = margin(0.1, 0, 0.1, 1.5, "cm")
     ...
   )
   
@@ -1857,6 +1889,7 @@ cbBuild $args -o $html_dir/html
 aws s3 sync $html_dir/html s3://antigen-tracking-browser
 
 ```
+
 
 
 
