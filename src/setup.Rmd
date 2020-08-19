@@ -542,6 +542,44 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
   res
 }
 
+# Helper to export counts and meta.data tables
+export_matrices <- function(sobj_in, out_dir, file_prefix) {
+  
+  # Format count matrices
+  rna <- sobj_in %>%
+    GetAssayData(assay = "RNA", "counts") %>%
+    as_tibble(rownames = "gene_symbol")
+  
+  adt <- sobj_in %>%
+    GetAssayData(assay = "ADT", "counts") %>%
+    as_tibble(rownames = "gene_symbol") %>%
+    mutate(gene_symbol = str_c("adt_", gene_symbol))
+  
+  # Write count matrix
+  counts_out <- file.path(out_dir, str_c(file_prefix, "_count_matrix.tsv.gz"))
+  
+  bind_rows(rna, adt) %>%
+    write_tsv(counts_out)
+  
+  # meta.data columns to include  
+  meta_cols <- c(
+    "cell_id",      "orig.ident",
+    "nCount_RNA",   "nFeature_RNA",
+    "Percent_mito", "S.Score",
+    "G2M.Score",    "Phase",
+    "subtype",      "UMAP_1",
+    "UMAP_2"
+  )
+
+  # Write meta.data table
+  meta_out <- file.path(out_dir, str_c(file_prefix, "_metadata.tsv.gz"))
+  
+  sobj_in@meta.data %>%
+    as_tibble(rownames = "cell_id") %>%
+    select(all_of(meta_cols)) %>%
+    write_tsv(meta_out)
+}
+
 
 # Processing ----
 
@@ -2269,7 +2307,7 @@ sobjs_sub %>%
 
 FILES_OUT <- c(FILES_OUT, md5sum(file_out))
 
-# Write final Seurat objects
+# Write final Seurat objects and meta.data
 sobjs %>%
   iwalk(~ {
     file_out <- so_out[.y]
@@ -2278,6 +2316,16 @@ sobjs %>%
 
     FILES_OUT <<- c(FILES_OUT, md5sum(file_out))
   })
+
+sobjs %>%
+  iwalk(~ {
+    export_matrices(
+      sobj_in     = .x,
+      out_dir     = here(params$rds_dir),
+      file_prefix = str_c("walsh_", .y)
+    )
+  })
+
 
 ```
 
