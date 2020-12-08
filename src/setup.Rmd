@@ -35,13 +35,6 @@ create_col_fun <- function(cols_in) {
   }
 }
 
-# Pull items from list of vectors
-pull_nest_vec <- function(list_in, idx) {
-  res <- map_chr(list_in, ~ .x[[idx]])
-  
-  res
-}
-
 # Capitalize first character without modifying other characters
 str_to_title_v2 <- function(string, exclude = "cell") {
   
@@ -397,7 +390,7 @@ subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type", di
   res
 }
 
-# Filter list of Seurat objects for patient, normalize and merge objects 
+# Merge Seurat objects 
 merge_sobj <- function(sobj_list, sample_order = NULL) {
 
   res <- merge(
@@ -423,7 +416,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
   
   set.seed(42)
   
-  # Fit GMM for OVA signal
+  # Fit GMM for ova signal
   data_df <- sobj_in %>%
     FetchData(data_column, slot = data_slot)
   
@@ -454,7 +447,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
   names(mixmdl$sigma)  <- ova_names
   names(mixmdl$lambda) <- ova_names
 
-  # Divide into OVA groups
+  # Divide into ova groups
   res <- data.frame(
     cell_id = rownames(data_df),
     data = data_df[, data_column],
@@ -474,7 +467,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
   }
   
   res <- list(
-    res    = res,
+    res     = res,
     mu      = mixmdl$mu,
     sigma   = mixmdl$sigma,
     lambda  = mixmdl$lambda,
@@ -484,7 +477,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
   res
 }
 
-# Classify cells based on OVA signal
+# Classify cells based on ova signal
 classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_column = "adt_ovalbumin", 
                          data_slot = "counts", return_sobj = T, ...) {
   
@@ -526,7 +519,7 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
     return(gmm_df)
   }
   
-  # Add OVA groups to meta.data for input object
+  # Add ova groups to meta.data for input object
   gmm_df <- gmm_df %>%
     column_to_rownames("cell_id")
   
@@ -563,12 +556,13 @@ export_matrices <- function(sobj_in, out_dir, file_prefix) {
   
   # meta.data columns to include  
   meta_cols <- c(
-    "cell_id",      "orig.ident",
-    "nCount_RNA",   "nFeature_RNA",
-    "Percent_mito", "S.Score",
-    "G2M.Score",    "Phase",
-    "subtype",      "UMAP_1",
-    "UMAP_2"
+    "cell_id",    "orig.ident",
+    "nCount_RNA", "nFeature_RNA",
+    "nCount_ADT", "Percent_mito",
+    "S.Score",    "G2M.Score", 
+    "Phase",      "subtype",
+    "GMM_grp",    "type_GMM_grp_2",
+    "UMAP_1",     "UMAP_2"
   )
 
   # Write meta.data table
@@ -599,8 +593,8 @@ create_sobjs_01 <- function(path_in, resolution, cc_scoring = F, regress_vars = 
     norm_sobj(
       rna_assay    = "RNA",
       adt_assay    = "ADT",
-      cc_scoring   = F, 
-      regress_vars = NULL
+      cc_scoring   = cc_scoring, 
+      regress_vars = regress_vars
     ) %>%
     cluster_RNA(
       assay      = "RNA",
@@ -612,7 +606,7 @@ create_sobjs_01 <- function(path_in, resolution, cc_scoring = F, regress_vars = 
   res
 }
 
-# Annotate cell types and calculate OVA fold change for each object
+# Annotate cell types and calculate ova fold change for each object
 clustify_cell_types_02 <- function(sobj_in, ref_mat, threshold, umap_meta = F) {
 
   # Assign cell types
@@ -638,7 +632,7 @@ clustify_cell_types_02 <- function(sobj_in, ref_mat, threshold, umap_meta = F) {
       column_to_rownames("cell_id")
   }
 
-  # Calculate OVA fold change
+  # Calculate ova fold change
   res <- res %>%
     calc_feat_fc(
       feat         = "adt_ovalbumin",
@@ -697,7 +691,6 @@ clustify_subsets_03 <- function(sobj_in, type_in = NULL, ref, assay = "RNA", res
       new_col <- str_c(prefix, "_", new_col)
     }
     
-    type_col  <- sym(type_column)
     sub_col   <- sym(subtype_column)
     clust_col <- sym(str_c(subtype_column, "_clusters"))
     new_col   <- sym(new_col)
@@ -754,12 +747,12 @@ resplit_objects_04 <- function(sobj_in, subtype_so, type_in, inc_types, cc_scori
   
 }
 
-# Classify classify cells based on OVA counts, do this for each cell type
+# Classify classify cells based on ova counts, do this for each cell type
 # and each subtype
 classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype_column = "subtype",
                             data_column = "adt_ovalbumin", data_slot = "counts") {
   
-  # Classify cells for cell type based on OVA signal
+  # Classify cells for cell type based on ova signal
   res <- sobj_in %>%
     classify_ova(
       filt_column = type_column,
@@ -770,11 +763,11 @@ classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype
       return_sobj = T
     )
   
-  # Split by subtype before classifying based on OVA
+  # Split by subtype before classifying based on ova
   subtypes <- unique(pull(res@meta.data, subtype_column))
   
   GMM_res <- subtypes %>%
-    map(~ {
+    map_dfr(~ {
       classify_ova(
         sobj_in     = res,
         filt_column = subtype_column,
@@ -785,7 +778,6 @@ classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype
         return_sobj = F
       )
     }) %>%
-    bind_rows() %>%
     mutate(type_GMM_grp_2 = str_c(!!sym(subtype_column), "-", GMM_grp)) %>%
     select(
       cell_id,
@@ -1250,6 +1242,51 @@ run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL, p_max = param
       ) %>%
       arrange(source, p_value)
   }
+  
+  res
+}
+
+# Helper to find subtype ova markers
+find_ova_markers <- function(sobj_in, prefix = "", gmm_column, so_title, p_max = 0.05, FC_min = 0.25,
+                             auc_min = 0.5, pct_in_min = 50, pct_out_max = 100, meta_data = NULL) {
+  
+  grps <- c("ova low", "ova high") %>%
+    set_names(., .)
+  
+  if (prefix != "") {
+    grps <- grps %>%
+      map_chr(~ str_c(prefix, "-", .x))
+  }
+  
+  res <- find_markers(
+    sobj_in      = sobj_in,
+    group_column = gmm_column,
+    groups_use   = grps,
+    p_max        = p_max,
+    FC_min       = FC_min,
+    auc_min      = auc_min,
+    pct_in_min   = pct_in_min,
+    pct_out_max  = pct_out_max,
+    uniq         = F
+  )
+  
+  if (!is.null(meta_data)) {
+    meta_data <- sobj_in %>%
+      FetchData(c(gmm_column, meta_data)) %>%
+      unique() %>%
+      as_tibble()
+    
+    res <- res %>%
+      left_join(meta_data, by = c("group" = gmm_column))
+  }
+  
+  res <- res %>%
+    mutate(Sample = so_title) %>%
+    relocate(Sample, before = feature) %>%
+    rename(gene = feature) %>%
+    group_by(Sample, group) %>%
+    arrange(desc(logFC), .by_group = T) %>%
+    ungroup()
   
   res
 }
@@ -2023,18 +2060,18 @@ knitr::opts_chunk$set(message = F, warning = F)
 
 # Set paths/names
 mat_paths <- params$sobjs %>%
-  pull_nest_vec("mat_in") %>%
+  map_chr(pluck, "mat_in") %>%
   map_chr(here)
 
 so_out <- params$sobjs %>%
-  pull_nest_vec("sobj_out") %>%
+  map_chr(pluck, "sobj_out") %>%
   map_chr(~ here(params$rds_dir, .x))
 
 so_types <- params$sobjs %>%
-  pull_nest_vec("cell_type")
+  map_chr(pluck, "cell_type")
 
 so_titles <- params$sobjs %>%
-  pull_nest_vec("title")
+  map_chr(pluck, "title")
 
 type_ref_path <- here(params$ref_dir, params$type_ref)
 
@@ -2117,23 +2154,15 @@ subtype_refs <- cell_types %>%
       seurat_ref(cluster_col = subtype_column)
   })
 
-# Load Xiang et al. LEC ref
-file_in <- here(params$ref_dir, params$xiang_ref)
+# Create LEC ref
+# Use Immgen and Xiang et al. LEC ref matrices from clustifyrdata
+immgen_LEC <- ref_immgen[, grepl("Endothelial", colnames(ref_immgen))]
+immgen_LEC <- immgen_LEC[rownames(immgen_LEC) %in% rownames(ref_LEC_xiang), ]
 
-load(file_in)
-
-FILES_IN <<- c(FILES_IN, md5sum(file_in))
-
-LEC_ref <- str_remove(params$xiang_ref, "\\.rda$")
-LEC_ref <- eval(parse(text = LEC_ref))
-
-# Add Immgen endothelial refs
-immgen_LEC <- immgen_ref[, grepl("Endothelial", colnames(immgen_ref))]
-immgen_LEC <- immgen_LEC[rownames(immgen_LEC) %in% rownames(LEC_ref), ]
 colnames(immgen_LEC) <- colnames(immgen_LEC) %>%
   str_replace("Endothelial cells \\(BEC\\)", "BEC")
 
-LEC_ref <- LEC_ref[rownames(immgen_LEC), ]
+LEC_ref <- ref_LEC_xiang[rownames(immgen_LEC), ]
 
 if (!identical(rownames(immgen_LEC), rownames(LEC_ref))) {
   stop("LEC reference rownames do not match.")
@@ -2219,7 +2248,7 @@ sobjs_raw <- uniq_paths %>%
   })
 
 
-# Annotate cell types and calculate OVA fold change for each object
+# Annotate cell types and calculate ova fold change for each object
 sobjs_raw <- sobjs_raw %>%
   map(
     clustify_cell_types_02,
@@ -2228,7 +2257,7 @@ sobjs_raw <- sobjs_raw %>%
   )
 
 
-# Split objects based on cell type, re-cluster and run clustify to annotate
+# Split objects based on cell type, re-cluster and run clustifyr to annotate
 # cell subtypes
 # Expand Seurat object list for subsets
 sobjs <- sobjs_raw[match(mat_paths, names(sobjs_raw))]
@@ -2268,10 +2297,10 @@ inc_types <- so_types %>%
 so_names <- names(sobjs)
 
 args_in <- list(
-  sobj_in    <- sobjs[so_names],
-  subtype_so <- sobjs_sub[so_names],
-  type_in    <- so_types[so_names],
-  inc_types  <- inc_types[so_names]
+  sobj_in    = sobjs[so_names],
+  subtype_so = sobjs_sub[so_names],
+  type_in    = so_types[so_names],
+  inc_types  = inc_types[so_names]
 )
 
 sobjs <- args_in %>%
@@ -2285,7 +2314,7 @@ sobjs <- args_in %>%
   )
 
 
-# Classify cells based on OVA counts, do this for each cell type and subtype
+# Classify cells based on CLR-transformed ova counts, do this for each cell type and subtype
 sobjs <- sobjs %>%
   imap(~ {
     classify_ova_05(
@@ -2294,7 +2323,7 @@ sobjs <- sobjs %>%
       type_column    = "cell_type",
       subtype_column = "subtype",
       data_column    = "adt_ovalbumin",
-      data_slot      = "counts"
+      data_slot      = "data"
     )
   })
 
@@ -2391,7 +2420,7 @@ ito_cols <- ito_cols[3:length(ito_cols)] %>%
 # Set default palette
 get_cols <- create_col_fun(ito_cols)
 
-# OVA colors
+# ova colors
 ova_cols <- c(
   "ova high" = "#475C81",
   "ova low"  = "#B8ECFF",
@@ -2428,34 +2457,4 @@ so_cols$d2_LEC <- c(
 ```
 
 ```{r, ref.label = c("Functions", "Packages", "Params", "Create refs", "Create sobjs", "Themes"), eval = F}
-```
-
-
-
-
-```{r "TEST", eval = F, echo = F}
-
-NEW_so <- x
-OLD_so <- OLD_sobjs
-
-# TO TEST FOR DIFFERNCES IN METADATA
-walk2(OLD_so, NEW_so, ~ {
-  so1 <- .x
-  so2 <- .y
-  
-  ident_columns <- colnames(so1@meta.data)
-  
-  walk(ident_columns, ~ {
-    iden <- identical(so1@meta.data[, .x], so2@meta.data[, .x])
-    
-    msg <- if_else(
-      iden,
-      str_c("IDENTICAL ", .x),
-      str_c("NOT IDENTICAL NOT IDENTICAL NOT IDENTICAL ", .x)
-    )
-    
-    print(msg)
-  })
-})
-
 ```

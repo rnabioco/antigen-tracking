@@ -9,15 +9,15 @@ output:
     fig_caption: false
 
 documentclass: article
-mainfont: DejaVu Sans
+mainfont: Arial
 geometry: top=1in,bottom=1in,left=1in,right=1in
 
 params:
   template_dir: "src"
   rds_dir:      "sobjs"
   ref_dir:      "ref"
-  # xlsx_dir:     "results/figures"
-  # browser_dir:  "results/cellbrowser"
+  xlsx_dir:     "results/figures"
+  browser_dir:  "results/cellbrowser"
   
   # These parameters specify the input matrices and cell types that should be used for analysis
   # mat_in: Cellranger output folder.
@@ -774,51 +774,6 @@ calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran
   res
 }
 
-# Helper to find subtype ova markers
-find_ova_markers <- function(sobj_in, prefix = "", gmm_column, so_title, p_max = 0.05, FC_min = 0.25,
-                             auc_min = 0.5, pct_in_min = 50, pct_out_max = 100, meta_data = NULL) {
-  
-  grps <- c("ova low", "ova high") %>%
-    set_names(., .)
-  
-  if (prefix != "") {
-    grps <- grps %>%
-      map_chr(~ str_c(prefix, "-", .x))
-  }
-  
-  res <- find_markers(
-    sobj_in      = sobj_in,
-    group_column = gmm_column,
-    groups_use   = grps,
-    p_max        = p_max,
-    FC_min       = FC_min,
-    auc_min      = auc_min,
-    pct_in_min   = pct_in_min,
-    pct_out_max  = pct_out_max,
-    uniq         = F
-  )
-  
-  if (!is.null(meta_data)) {
-    meta_data <- sobj_in %>%
-      FetchData(c(gmm_column, meta_data)) %>%
-      unique() %>%
-      as_tibble()
-    
-    res <- res %>%
-      left_join(meta_data, by = c("group" = gmm_column))
-  }
-  
-  res <- res %>%
-    mutate(Sample = so_title) %>%
-    relocate(Sample, before = feature) %>%
-    rename(gene = feature) %>%
-    group_by(Sample, group) %>%
-    arrange(desc(logFC), .by_group = T) %>%
-    ungroup()
-  
-  res
-}
-
 # Helper to write marker excel files
 write_xlsx <- function(df_in, file_out, sheet_id, ...) {
   
@@ -879,17 +834,18 @@ create_browser <- function(sobj_in, markers, browser_dir, browser_name, cols = N
   # Create Cell Browser files for gene expression data
   sobj_in %>%
     ExportToCellbrowser(
-      markers.file  = marker_path,
-      dir           = brow_path,
-      reductions    = "umap",
-      dataset.name  = browser_name,
-      subtype       = "Cell type",
-      GMM_grp       = "Cluster",
-      nCount_RNA    = "RNA UMI count",
-      nFeature_RNA  = "Gene count",
-      Percent_mito  = "Percent mito",
-      ova_counts    = "ova counts",
-      ova_fc        = "Relative ova signal",
+      markers.file   = marker_path,
+      dir            = brow_path,
+      reductions     = "umap",
+      dataset.name   = browser_name,
+      subtype        = "Cell type",
+      GMM_grp        = "Cluster",
+      type_GMM_grp_2 = "Cell type ova groups",
+      nCount_RNA     = "RNA UMI count",
+      nFeature_RNA   = "Gene count",
+      Percent_mito   = "Percent mito",
+      ova_counts     = "ova counts",
+      ova_fc         = "Relative ova signal",
       ...
     )
   
@@ -1123,7 +1079,7 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
     low_col_mtplyr  = low_col_mtplyr,
     high_col_mtplyr = high_col_mtplyr,
     return_list     = T,
-    legend.margin   = margin(0.1, 0, 0.1, 1.5, "cm")
+    legend.margin   = margin(0.1, 0, 0.1, 1.5, "cm"),
     ...
   )
   
@@ -1862,7 +1818,7 @@ sobjs %>%
 
 ```
 
-```{bash "Cellbrowser 2", eval = !is.null(params$browser_dir)}
+```{bash "Cellbrowser 2", eval = FALSE}
 
 html_dir=../cellbrowser
 
@@ -1889,7 +1845,4 @@ cbBuild $args -o $html_dir/html
 aws s3 sync $html_dir/html s3://antigen-tracking-browser
 
 ```
-
-
-
 
