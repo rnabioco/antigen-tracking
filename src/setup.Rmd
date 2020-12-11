@@ -1,5 +1,5 @@
 
-```{r "Functions", echo = F}
+```{r "Functions", echo = F, eval = F}
 
 # Utility ----
 
@@ -355,7 +355,7 @@ calc_feat_fc <- function(sobj_in, feat = "adt_ovalbumin", data_slot = "counts", 
 }
 
 # Subset Seurat objects for plotting
-subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type", dims = 1:40,
+subset_sobj <- function(sobj_in, cell_types, type_column = "cell_type", dims = 1:40,
                         cc_scoring = F, regress_vars = NULL, ...) {
   
   # Filter cells based on input cell type
@@ -390,35 +390,14 @@ subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type", di
   res
 }
 
-# Merge Seurat objects 
-merge_sobj <- function(sobj_list, sample_order = NULL) {
-
-  res <- merge(
-    x = sobj_list[[1]],
-    y = sobj_list[2:length(sobj_list)],
-    add.cell.ids = names(sobj_list)
-  ) %>%
-    ScaleData(assay = "RNA") %>%
-    ScaleData(assay = "adt") %>%
-    FindVariableFeatures(assay = "RNA")
-  
-  # Set sample order
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_ids") %>%
-    mutate(orig.ident = fct_relevel(orig.ident, sample_order)) %>%
-    column_to_rownames("cell_ids")
-  
-  res
-}
-
 # Fit gaussian mixture model for given signal
-fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts", prob = 0.5, quiet = F) {
+fit_GMM <- function(sobj_in, gmm_data = "adt_ovalbumin", data_slot = "counts", prob = 0.5, quiet = F) {
   
   set.seed(42)
   
   # Fit GMM for ova signal
   data_df <- sobj_in %>%
-    FetchData(data_column, slot = data_slot)
+    FetchData(gmm_data, slot = data_slot)
   
   quiet_EM <- quietly(~ normalmixEM(.))
   
@@ -427,7 +406,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
   }
   
   mixmdl <- data_df %>%
-    pull(data_column) %>%
+    pull(gmm_data) %>%
     quiet_EM()
   
   if (quiet) {
@@ -435,31 +414,31 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
   }
   
   # New column names
-  ova_names <- c("Low", "High")
+  gmm_names <- c("Low", "High")
   comp_names <- c("comp.1", "comp.2")
   
   if (mixmdl$mu[1] > mixmdl$mu[2]) {
-    ova_names <- rev(ova_names)
+    gmm_names <- rev(gmm_names)
   }
   
-  names(comp_names)    <- ova_names
-  names(mixmdl$mu)     <- ova_names
-  names(mixmdl$sigma)  <- ova_names
-  names(mixmdl$lambda) <- ova_names
+  names(comp_names)    <- gmm_names
+  names(mixmdl$mu)     <- gmm_names
+  names(mixmdl$sigma)  <- gmm_names
+  names(mixmdl$lambda) <- gmm_names
 
   # Divide into ova groups
   res <- data.frame(
     cell_id = rownames(data_df),
-    data = data_df[, data_column],
+    data = data_df[, gmm_data],
     mixmdl$posterior
   ) %>%
-    dplyr::rename(!!sym(data_column) := data) %>%
+    dplyr::rename(!!sym(gmm_data) := data) %>%
     rename(all_of(comp_names)) %>%
     mutate(GMM_grp = if_else(High >= prob, "High", "Low")) %>%
     column_to_rownames("cell_id")
   
   # Check that GMM results match input data
-  data_chk <- identical(res[, data_column], data_df[, data_column])
+  data_chk <- identical(res[, gmm_data], data_df[, gmm_data])
   cell_chk <- identical(rownames(res), rownames(sobj_in@meta.data))
   
   if (!data_chk && cell_chk) {
@@ -478,7 +457,7 @@ fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts"
 }
 
 # Classify cells based on ova signal
-classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_column = "adt_ovalbumin", 
+classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, gmm_data = "adt_ovalbumin", 
                          data_slot = "counts", return_sobj = T, ...) {
   
   # Filter Seurat object
@@ -492,7 +471,7 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
   # Fit GMM
   gmm_res <- sobj_filt %>%
     fit_GMM(
-      data_column = data_column,
+      gmm_data = gmm_data,
       data_slot   = data_slot,
       ...
     )
@@ -507,7 +486,7 @@ classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_c
       GMM_grp    = str_to_lower(GMM_grp),
       GMM_grp    = str_c("ova ", GMM_grp)
     ) %>%
-    select(-!!sym(data_column), -Low, -High)
+    select(-!!sym(gmm_data), -Low, -High)
   
   # Return data.frame
   if (!return_sobj) {
@@ -616,7 +595,7 @@ clustify_cell_types_02 <- function(sobj_in, ref_mat, threshold, umap_meta = F) {
       cluster_col   = "RNA_clusters",
       ref_mat       = ref_mat,
       rename_prefix = "t1",
-      seurat_out    = T,
+      seurat_out    = TRUE,
       threshold     = threshold
     )
   
@@ -654,7 +633,7 @@ clustify_subsets_03 <- function(sobj_in, type_in = NULL, ref, assay = "RNA", res
   if (!is.null(type_in)) {
     sobj_in <- sobj_in %>%
       subset_sobj(
-        cell_type    = type_in,
+        cell_types   = type_in,
         type_column  = type_column,
         cc_scoring   = cc_scoring,
         regress_vars = regress_vars
@@ -750,14 +729,14 @@ resplit_objects_04 <- function(sobj_in, subtype_so, type_in, inc_types, cc_scori
 # Classify classify cells based on ova counts, do this for each cell type
 # and each subtype
 classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype_column = "subtype",
-                            data_column = "adt_ovalbumin", data_slot = "counts") {
+                            gmm_data = "adt_ovalbumin", data_slot = "counts") {
   
   # Classify cells for cell type based on ova signal
   res <- sobj_in %>%
     classify_ova(
       filt_column = type_column,
       filt        = type_in,
-      data_column = data_column,
+      gmm_data    = gmm_data,
       data_slot   = data_slot,
       quiet       = T,
       return_sobj = T
@@ -772,7 +751,7 @@ classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype
         sobj_in     = res,
         filt_column = subtype_column,
         filt        = .x,
-        data_column = data_column,
+        gmm_data    = gmm_data,
         data_slot   = data_slot,
         quiet       = T,
         return_sobj = F
@@ -1333,7 +1312,7 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
   
   # Helper function to create UMAPs
   create_umaps <- function(df_in, x, y, feat, plot_cols = get_cols(70), pt_size = 0.05,
-                           pt_outline = 0.06, guide = outline_guide, ...) {
+                           pt_outline = 0.06, guide = legd_guide(), ...) {
     res <- df_in %>%
       plot_features(
         x          = x,
@@ -1359,7 +1338,7 @@ create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", resl
   }
   
   # Cluster UMAPs
-  umap_guide <- outline_guide
+  umap_guide <- legd_guide()
   umap_guide$nrow <- 4
   
   clust_gg <- cluster_df %>%
@@ -1423,8 +1402,8 @@ create_ref_umap <- function(input_sobj, pt_size = 0.1, pt_outline = NULL, pt_mtp
   
   res <- input_sobj %>%
     plot_features(
-      pt_size     = pt_size * pt_mtplyr,
-      pt_outline  = pt_outline,
+      pt_size    = pt_size * pt_mtplyr,
+      pt_outline = pt_outline,
       ...
     ) +
     guides(color = color_guide) +
@@ -2032,6 +2011,8 @@ create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_co
 
 ```{r "Packages", include = F}
 
+source(here::here("R/funs.R"))
+
 # Load packages
 R_packages <- c(
   "tidyverse",  "Seurat",
@@ -2276,7 +2257,7 @@ sobjs_sub <- sobjs %>%
         prefix         = "t2",
         type_column    = "cell_type",
         subtype_column = "subtype",
-        cc_scoring     = F,
+        cc_scoring     = FALSE,
         regress_vars   = NULL
       )
     
@@ -2306,7 +2287,7 @@ args_in <- list(
 sobjs <- args_in %>%
   pmap(
     resplit_objects_04,
-    cc_scoring   = T,
+    cc_scoring   = TRUE,
     regress_vars = c(
       "Percent_mito", "nCount_RNA",
       "S.Score",      "G2M.Score"
@@ -2314,7 +2295,8 @@ sobjs <- args_in %>%
   )
 
 
-# Classify cells based on CLR-transformed ova counts, do this for each cell type and subtype
+# Classify cells based on CLR-transformed ova counts, do this for each cell type
+# and subtype
 sobjs <- sobjs %>%
   imap(~ {
     classify_ova_05(
@@ -2322,7 +2304,7 @@ sobjs <- sobjs %>%
       type_in        = so_types[[.y]],
       type_column    = "cell_type",
       subtype_column = "subtype",
-      data_column    = "adt_ovalbumin",
+      gmm_data    = "adt_ovalbumin",
       data_slot      = "data"
     )
   })
@@ -2374,37 +2356,69 @@ sobjs <- so_out %>%
 ```{r "Themes", echo = F}
 
 # ggplot2 themes
+# txt_pt1 <- 8
+# txt_pt2 <- 10
+# ttl_pt1 <- 12
+# ttl_pt2 <- 20
+txt_pt1  <- 11
+txt_pt2  <- 13
+ttl_pt1  <- 16
+ttl_pt2  <- 26
+ln_pt    <- 0.5
+ln_col   <- "grey85"
+cir_size <- 3.5
+sqr_size <- 4
+
 text_theme <- theme(
-  legend.text = element_text(size = 8),
-  axis.title  = element_text(size = 10),
-  axis.text   = element_text(size = 8)
+  strip.text  = element_text(size = ttl_pt1),
+  legend.text = element_text(size = txt_pt1),
+  axis.title  = element_text(size = txt_pt2),
+  axis.text   = element_text(size = txt_pt1)
+)
+
+line_theme <- theme(
+  axis.line.x  = element_line(size = ln_pt, color = ln_col),
+  axis.line.y  = element_line(size = ln_pt, color = ln_col),
+  axis.ticks.x = element_line(size = ln_pt, color = ln_col),
+  axis.ticks.y = element_line(size = ln_pt, color = ln_col)
 )
 
 base_theme <- theme_cowplot() +
   theme(
-    plot.title       = element_text(face = "plain", size = 20),
+    plot.title       = element_text(face = "plain", size = ttl_pt2),
     strip.background = element_blank(),
     strip.text       = element_text(face = "plain")
   ) +
-  text_theme
+  text_theme +
+  line_theme
 
 umap_theme <- base_theme +
   theme(
-    axis.title = element_blank(),
-    axis.line  = element_blank(),
-    axis.ticks = element_blank(),
-    axis.text  = element_blank()
+    axis.title   = element_blank(),
+    axis.line.x  = element_blank(),
+    axis.line.y  = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text    = element_blank()
   )
 
 # Legend guides
-col_guide <- guide_legend(override.aes = list(size = 3.5, shape = 16))
+col_guide <- guide_legend(override.aes = list(size = sqr_size, shape = 16))
 
-outline_guide <- guide_legend(override.aes = list(
-  size   = 3.5,
-  shape  = 21,
-  color  = "black",
-  stroke = 0.25
-))
+legd_guide <- function(nrow = NULL, ncol = NULL, size = 4, shape = 21,
+                       stroke = 0.25, color = "black", ...) {
+  guide_legend(
+    nrow = nrow,
+    ncol = ncol,
+    override.aes = list(
+      size   = size,
+      shape  = shape,
+      color  = color,
+      stroke = stroke,
+      ...
+    )
+  )  
+}
 
 # Okabe Ito color palettes
 ito_cols <- c(
