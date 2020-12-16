@@ -168,7 +168,6 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
     if (is.numeric(counts[[feature]])) {
       res <- res +
         scale_color_gradientn(colors = plot_cols)
-      # scale_color_gradient(low = plot_cols[1], high = plot_cols[2])
       
     } else {
       res <- res +
@@ -309,8 +308,8 @@ create_ref_umap <- function(sobj_in, pt_size = 0.1, pt_outline = NULL, pt_mtplyr
 #' @param pt_size Point size.
 #' @param pt_outline Point outline size.
 #' @param pt_mtplyr Point size multiplier.
-#' @param low_col_mtplyr Multiplier for low color.
-#' @param high_col_mtplyr Multiplier for high color.
+#' @param low_col_mtplyr Multiplier to adjust gradient scale for low color.
+#' @param high_col_mtplyr Multiplier to adjust gradient scale for high color.
 #' @return ggplot object
 #' @export
 create_marker_umaps <- function(sobj_in, input_markers, low_col = "#fafafa", high_col = NULL, pt_size = 0.1, 
@@ -381,7 +380,7 @@ create_marker_umaps <- function(sobj_in, input_markers, low_col = "#fafafa", hig
 #' @param ... Additional arguments to pass to scale_x_log10
 #' @return List of ggplot objects
 #' @export
-equal_x <- function(gg_list_in, log_tran = TRUE, ...) {
+set_equal_x <- function(gg_list_in, log_tran = TRUE, ...) {
   
   set_lims <- function(gg_in, min_x, max_x, log_tran, ...) {
     res <- gg_in +
@@ -419,7 +418,7 @@ equal_x <- function(gg_list_in, log_tran = TRUE, ...) {
   res
 }
 
-#' Create GMM panels
+#' Create GMM figure panels
 #' 
 #' @param sobj_in Seurat object.
 #' @param gmm_column meta.data column containing GMM groups.
@@ -441,7 +440,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
   # Theme elements
   guide <- legd_guide(size = cir_size, reverse = TRUE)
   
-  # Data for OVA group UMAP
+  # Data for ova group UMAP
   ova_order <- names(ova_cols)
   
   data_df <- sobj_in@meta.data %>%
@@ -456,7 +455,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
       cell_count = fct_inorder(cell_count)
     )
   
-  # Set OVA group colors
+  # Set ova group colors
   names(ova_order) <- levels(data_df$cell_count)
   
   cols_df <- tibble(
@@ -472,7 +471,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
     nm = cols_df$cell_count
   )
   
-  # Create OVA group UMAP
+  # Create ova group UMAP
   ova_labeller <- function(labels) {
     labels %>%
       map(str_remove, "^[a-zA-Z0-9 \\-\\+]+-")
@@ -497,7 +496,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
       legend.title      = element_blank()
     )
   
-  # OVA hist
+  # ova hist
   # Add +1 pseudo count to adt_ovalbumin since using log scale
   ova_hist_order <- names(ova_cols) %>%
     grep("ova (low|high)", ., value = T)
@@ -531,7 +530,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
       panel.grid.major.y = element_line(size = 0.1, color = ln_col)
     )
   
-  # OVA subtype bar graphs
+  # ova subtype bar graphs
   type_bar <- sobj_in@meta.data %>%
     as_tibble(rownames = "cell_id") %>%
     filter(!!sym(gmm_column) != "Other") %>%
@@ -578,10 +577,28 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
   res
 }
 
-#' Create feature UMAPs
+#' Create UMAPs showing feature signal
+#' 
+#' @param sobj_in Seurat object.
+#' @param feats Features to plot.
+#' @param ref_cols Colors for reference UMAP showing cell subtypes.
+#' @param ref_size Point size for reference UMAP.
+#' @param pt_size Point size for feature UMAPs.
+#' @param pt_outline Point outline size.
+#' @param panels_n_row Number of rows for final figure.
+#' @param low_col Gradient color for low signal.
+#' @param low_col_mtplyr Multiplier to adjust gradient scale for low color.
+#' @param high_col_mtplyr Multiplier to adjust gradient scale for high color.
+#' @param on_top Cell subtypes for reference UMAP that should be plotted on
+#' top.
+#' @param return_list Return a list of plots. If set to FALSE, plots will be
+#' be combined with plot_grid().
+#' @param ... Additional arguments to adjust the reference UMAP theme.
+#' @return ggplot object, or list of ggplot objects
+#' @export
 create_feat_umap_panels <- function(sobj_in, feats, ref_cols, ref_size = 0.00001, pt_size = ref_size, pt_outline = 0.4,
-                                    panels_n_row = 2, low_col = "#ffffff", low_col_mtplyr = 2, high_col_mtplyr = 1, on_top = NULL,
-                                    return_list = F, include_pie = F, pie_pos = c(-Inf, -Inf), pie_size = c(0.3, 0.3), ...) {
+                                    panels_n_row = 2, low_col = "#ffffff", low_col_mtplyr = 2, high_col_mtplyr = 1,
+                                    on_top = NULL, return_list = FALSE, ...) {
   
   # Reference UMAP
   if (!is.null(on_top)) {
@@ -671,8 +688,19 @@ create_feat_umap_panels <- function(sobj_in, feats, ref_cols, ref_size = 0.00001
   res
 }
 
-# Create feature boxplots
-create_feat_boxes <- function(sobj_in, feats, grp_column = "subtype", box_cols,  median_pt = 1, panels_n_col = 1, ...) {
+#' Create boxplots showing feature signal
+#' 
+#' @param sobj_in Seurat object.
+#' @param feats Features to plot.
+#' @param grp_column meta.data column containing groups to plot.
+#' @param box_cols Colors to use for boxplots.
+#' @param median_pt Size of point used to mark median.
+#' @param panels_n_col Number of columns for final figure.
+#' @param ... Additional arguments to adjust the boxplot theme.
+#' @return ggplot object
+#' @export
+create_feat_boxes <- function(sobj_in, feats, grp_column = "subtype", box_cols,
+                              median_pt = 1, panels_n_col = 1, ...) {
   
   # Boxplot data
   # What to arrange boxplots by median and 3rd quartile
@@ -684,7 +712,7 @@ create_feat_boxes <- function(sobj_in, feats, grp_column = "subtype", box_cols, 
     group_by(type_name) %>%
     mutate(
       up_qt = boxplot.stats(value)$stats[4],
-      med = median(value)
+      med   = median(value)
     ) %>%
     ungroup() %>%
     arrange(desc(med), desc(up_qt)) %>%
@@ -696,10 +724,13 @@ create_feat_boxes <- function(sobj_in, feats, grp_column = "subtype", box_cols, 
   # Create boxplots
   feat_boxes <- box_data %>%
     ggplot(aes(type_name, value, fill = !!sym(grp_column))) +
+    
     facet_wrap(~ name, ncol = panels_n_col, scales = "free_x") +
+    
     scale_fill_manual(values = box_cols) +
     scale_color_manual(values = box_cols) +
     labs(y = "Counts") +
+    
     theme_minimal_hgrid() +
     base_theme +
     theme(
@@ -742,7 +773,16 @@ create_feat_boxes <- function(sobj_in, feats, grp_column = "subtype", box_cols, 
   res
 }
 
-# Create violin plots for DNA-tag counts
+#' Create violin plots showing DNA-tag counts
+#' 
+#' @param sobj_in Seurat object.
+#' @param plot_cols Colors to use for violin plots.
+#' @param box_counts Data to use for violin plots.
+#' @param type_column meta.data column containing cell subtypes.
+#' @param plot_title Title to add to plot.
+#' @param control_types Control subtypes to plot last.
+#' @return ggplot object
+#' @export
 create_count_violins <- function(sobj_in, plot_cols, box_counts, type_column = "subtype",
                                  plot_title = NULL, control_types = c("B cell", "T cell")) {
   
@@ -827,7 +867,7 @@ create_count_violins <- function(sobj_in, plot_cols, box_counts, type_column = "
   
   # Set equal x-axis scales
   vlns <- vlns %>%
-    equalize_x(log_tran = T)
+    set_equal_x(log_tran = T)
   
   # Create final figure
   res <- plot_grid(
@@ -840,16 +880,27 @@ create_count_violins <- function(sobj_in, plot_cols, box_counts, type_column = "
   res
 }
 
-# Create correlation heatmaps for cell types
-create_ref_heatmap <- function(sobj_in, ref_in, type_column = "subtype", plot_cols = NULL, rename_ref = NULL,
-                               exclude_ref = "^Endothelial cells ", plot_title = NULL, return_mat = F) {
+#' Create correlation heatmaps for cell types
+#' 
+#' @param sobj_in Seurat object.
+#' @param ref_in Cell type refence to use for clustifyr.
+#' @param type_column meta.data column containing cell subtypes to compare.
+#' @param plot_cols Gradient color to use for high values.
+#' @param rename_ref Named vector to use for changing reference labels.
+#' @param exclude_ref Regular expression to use for filtering cell type references.
+#' @param plot_title Title to add to plot.
+#' @param return_mat Return a correlation matrix instead of a heatmap.
+#' @return ggplot object or correlation matrix
+#' @export
+create_ref_heatmap <- function(sobj_in, ref_in, type_column = "subtype", plot_cols = "red", rename_ref = NULL,
+                               exclude_ref = "^Endothelial cells ", plot_title = NULL, return_mat = FALSE) {
   
   # Get clustifyr matrix
   cor_mat <- sobj_in %>%
     clustify(
       cluster_col = type_column,
       ref_mat     = ref_in,
-      seurat_out  = F
+      seurat_out  = FALSE
     )
   
   if (return_mat) {
@@ -887,8 +938,10 @@ create_ref_heatmap <- function(sobj_in, ref_in, type_column = "subtype", plot_co
       axis.title   = element_text(size = 10),
       axis.text.x  = element_text(angle = 45, hjust = 1),
       axis.text    = element_text(size = 8),
-      axis.ticks   = element_blank(),
-      axis.line    = element_blank()
+      axis.line.x  = element_blank(),
+      axis.line.y  = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.ticks.y = element_blank()
     )
   
   
@@ -900,8 +953,15 @@ create_ref_heatmap <- function(sobj_in, ref_in, type_column = "subtype", plot_co
   res
 }
 
-# Calculate pairwise p-values for Seurat objects
-calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran = F) {
+#' Calculate pairwise p-values for cell subtypes
+#' 
+#' @param sobj_in Seurat object.
+#' @param sample_name Sample name to add to results table.
+#' @param data_column meta.data column containing data to use for test.
+#' @param type_column meta.data column containing cell subtypes to test.
+#' @return tibble
+#' @export
+calc_p_vals <- function(sobj_in, sample_name, data_column, type_column) {
   
   # Helper to calc p-values for give cell types
   calc_p <- function(x, y, df_in, data_column, type_column) {
@@ -932,21 +992,15 @@ calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran
   p_data <- sobj_in@meta.data %>%
     as_tibble(rownames = "cell_id") %>%
     mutate("cell_type" = !!sym(type_column))
-  
-  # Log transform
-  if (log_tran) {
-    p_data <- p_data %>%
-      mutate(!!sym(data_column) := log10(!!sym(data_column)))
-  }
-  
+
   # Calculate additional stats for table
   p_stats <- p_data %>%
     group_by(cell_type) %>%
     summarize(
       n_cells = n_distinct(cell_id),
-      med = median(!!sym(data_column))
+      med     = median(!!sym(data_column)),
+      .groups = "drop"
     ) %>%
-    ungroup() %>%
     mutate(frac_cells = n_cells / sum(n_cells))
   
   # Create data.frame with all combinations of cell types for comparison
@@ -961,22 +1015,20 @@ calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran
     v = c_types
   ) %>%
     as_tibble(.name_repair = "unique") %>%
+    rename(x = ...1, y = ...2) %>%
     mutate(
-      ...1 = if_else(...1 == "B cell" & ...2 == "T cell", "T cell", ...1),
-      ...2 = if_else(...1 == "T cell" & ...2 == "T cell", "B cell", ...2)
+      x = if_else(x == "B cell" & y == "T cell", "T cell", x),
+      y = if_else(x == "T cell" & y == "T cell", "B cell", y)
     )
   
   # Calculate pairwise wilcox test for all combinations of cell types
-  res <- map2(c_comps$...1, c_comps$...2, ~ {
-    calc_p(
-      x           = .x,
-      y           = .y,
+  res <- c_comps %>%
+    pmap_dfr(
+      calc_p,
       df_in       = p_data,
       data_column = data_column,
       type_column = type_column
     )
-  }) %>%
-    bind_rows()
   
   # Apply multiple testing correction
   res <- res %>%
@@ -1016,7 +1068,13 @@ calc_p_vals <- function(sobj_in, sample_name, data_column, type_column, log_tran
   res
 }
 
-# Helper to write marker excel files
+#' Helper to write excel files
+#' 
+#' @param df_in data.frame to add to excel document.
+#' @param file_out Path to output file.
+#' @param sheet_id Name of sheet.
+#' @return Excel file
+#' @export
 write_xlsx <- function(df_in, file_out, sheet_id, ...) {
   
   if (file.exists(file_out)) {
@@ -1050,7 +1108,19 @@ write_xlsx <- function(df_in, file_out, sheet_id, ...) {
     })
 }
 
-# Create Cell Browser files
+#' Create files for Cell Browser
+#' 
+#' @param sobj_in Seurat object.
+#' @param markers Marker genes to include in browser.
+#' @param browser_dir Path to Cell Browser directory.
+#' @param browser_name Name for dataset.
+#' @param cols Colors to use for Cell Browser.
+#' @param browser_title Title to use for Cell Browser description.
+#' @param abstract Abstract to use for Cell Browser description.
+#' @param methods_desc Methods to use for Cell Browser description.
+#' @param ... Additional arguments to pass to ExportToCellbrowser().
+#' @return Cell Browser files
+#' @export
 create_browser <- function(sobj_in, markers, browser_dir, browser_name, cols = NULL,
                            browser_title = NULL, abstract = NULL, methods_desc = NULL, ...) {
   
@@ -1121,10 +1191,29 @@ create_browser <- function(sobj_in, markers, browser_dir, browser_name, cols = N
 
 # Create figure panels ----
 
-# Create figure 3 panels
+#' Create panels for figure 3
+#' 
+#' @param sobj_in Seurat object.
+#' @param cols_in Colors to use for cell subtypes.
+#' @param subtype_column meta.data column containing cell subtypes.
+#' @param data_slot Slot to pull data.
+#' @param ova_cols Colors to use for plotting signal on UMAP.
+#' @param box_counts Data to use for violin plots.
+#' @param umap_counts Data to use for plotting signal on UMAP.
+#' @param plot_title Title to use for plot.
+#' @param pt_size Point size for cell subtype UMAP.
+#' @param pt_outline Point outline size for cell subtype UMAP.
+#' @param pt_size_2 Point size for plotting signal on UMAP.
+#' @param pt_outline_2 Point outline size for plotting signal on UMAP.
+#' @param box_cell_count For violin plots include cell count label.
+#' @param control_types Control cell subtypes that should be plotted last.
+#' @param on_top Cell subtypes that should be plotted first.
+#' @param ... Additional arguments to adjust the cell type UMAP theme.
+#' @return List of ggplot objects
+#' @export
 create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot = "counts", ova_cols = c("#fafafa", "#d7301f"),
                         box_counts = c("Relative ova signal" = "ova_fc"), umap_counts = c("ova counts" = "adt_ovalbumin"), 
-                        plot_title = NULL, pt_size = 0.1, pt_outline = 0.4, pt_size_2 = 0.3, pt_outline_2 = 0.5, box_cell_count = T,
+                        plot_title = NULL, pt_size = 0.1, pt_outline = 0.4, pt_size_2 = 0.3, pt_outline_2 = 0.5, box_cell_count = TRUE,
                         control_types = c("B cell", "T cell"), on_top = NULL, ...) {
   
   box_column <- umap_column <- "cell_type"
@@ -1151,6 +1240,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
   
   # Set subtype order
   # Move select cell types to front of order
+  # Rename subtype_column to 'cell_type'
   data_df <- data_df %>%
     mutate(
       cell_type = !!sym(subtype_column),
@@ -1214,7 +1304,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
     ) +
     theme(...)
   
-  # OVA UMAP
+  # ova UMAP
   if (!is.null(umap_counts)) {
     ova_umap <- data_df %>%
       plot_features(
@@ -1237,7 +1327,7 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
       )
   }
   
-  # OVA boxes
+  # ova boxes
   if (box_cell_count) {
     box_column <- "cell_count"
     box_cols <- set_names(
@@ -1274,7 +1364,32 @@ create_fig3 <- function(sobj_in, cols_in, subtype_column = "subtype", data_slot 
   res
 }
 
-# Create figure 4 panels
+#' Create panels for figure 4
+#' 
+#' @param sobj_in Seurat object.
+#' @param feat_cols Named vector of colors with features to plot as names.
+#' @param ref_cols Colors to use for cell subtypes.
+#' @param ova_cols Colors to use for ova-low and -high groups.
+#' @param pt_size Point size to use for UMAPs.
+#' @param pt_outline Point outline size to use for UMAPs.
+#' @param median_pt Size of point used to mark median.
+#' @param panels_n_col Number of columns for feature UMAPs.
+#' @param low_col_mtplyr Multiplier for feature UMAPs to adjust gradient scale
+#' for low color.
+#' @param high_col_mtplyr Multiplier for feature UMAPs to adjust gradient scale
+#' for high color.
+#' @param on_top Cell subtypes that should be plotted first.
+#' @param gmm_column meta.data column containing GMM groups.
+#' @param gmm_grps GMM groups to plot, groups not included will be labeled as
+#' 'Other'.
+#' @param panel_heights Relative heights for figure panels.
+#' @param plot_labs Labels to use for each panel (e.g. 'A', 'B', ...).
+#' @param box_pad Additional padding to add to the right of the feature boxplots.
+#' @param umap_legd_pad Additional padding to add to the top of the legend for
+#' the cell type reference UMAP.
+#' @param ... Additional arguments to use for create feature UMAPs.
+#' @return ggplot object
+#' @export
 create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.00001, pt_outline = 0.4, median_pt = 1.5,
                         panels_n_col = 4, low_col_mtplyr = 1, high_col_mtplyr = 1, on_top = NULL, gmm_column = "GMM_grp",
                         gmm_grps = c("ova low", "ova high"), panel_heights = c(0.5, 1, 0.4), plot_labs, box_pad = 0.2, 
@@ -1318,7 +1433,7 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
     on_top          = on_top,
     low_col_mtplyr  = low_col_mtplyr,
     high_col_mtplyr = high_col_mtplyr,
-    return_list     = T,
+    return_list     = TRUE,
     legend.margin   = margin(0.1, 0, 0.1, 1.5, "cm"),
     ...
   )
@@ -1392,10 +1507,30 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
   res
 }
 
-# Create figure 5 panels
-create_fig5 <- function(sobj_in, feat_cols, ref_cols, ova_cols, ref_size = 0.00001, pt_size = ref_size, pt_outline = 0.4, median_pt = 1.5,
-                        low_col = "#ffffff", low_col_mtplyr = 2, high_col_mtplyr = 1, on_top = NULL,  gmm_column = "GMM_grp",
-                        gmm_grps = c("ova low", "ova high")) {
+#' Create panels for figure 5
+#' 
+#' @param sobj_in Seurat object.
+#' @param feat_cols Named vector of colors with features to plot as names.
+#' @param ref_cols Colors to use for cell subtypes.
+#' @param ova_cols Colors to use for ova-low and -high groups.
+#' @param ref_size Point size for cell type reference UMAP.
+#' @param pt_size Point size to use for UMAPs.
+#' @param pt_outline Point outline size to use for UMAPs.
+#' @param median_pt Size of point used to mark median.
+#' @param low_col Gradient color for low signal.
+#' @param low_col_mtplyr Multiplier for feature UMAPs to adjust gradient scale
+#' for low color.
+#' @param high_col_mtplyr Multiplier for feature UMAPs to adjust gradient scale
+#' for high color.
+#' @param on_top Cell subtypes that should be plotted first.
+#' @param gmm_column meta.data column containing GMM groups.
+#' @param gmm_grps GMM groups to plot, groups not included will be labeled as
+#' 'Other'.
+#' @return ggplot object
+#' @export
+create_fig5 <- function(sobj_in, feat_cols, ref_cols, ova_cols, ref_size = 0.00001, pt_size = ref_size, pt_outline = 0.4, 
+                        median_pt = 1.5, low_col = "#ffffff", low_col_mtplyr = 2, high_col_mtplyr = 1, on_top = NULL, 
+                        gmm_column = "GMM_grp", gmm_grps = c("ova low", "ova high")) {
   
   # Set GMM groups in Seurat object
   sobj_in@meta.data <- sobj_in@meta.data %>%
@@ -1488,7 +1623,21 @@ create_fig5 <- function(sobj_in, feat_cols, ref_cols, ova_cols, ref_size = 0.000
   res
 }
 
-# Create figure S6 panels
+#' Create panels for figure S6
+#' 
+#' Generates scatter plots comparing ova counts and mRNA counts.
+#' 
+#' @param sobj_in Seurat object.
+#' @param x Feature to plot on the x-axis.
+#' @param y Feature to plot on the y-axis.
+#' @param feat Feature to use for splitting plots.
+#' @param data_slot Slot to pull data.
+#' @param cols_in Colors to use for scatter plots.
+#' @param plot_title Title to use for plot.
+#' @param add_y_pseudo Pseudo count to add to the y-axis data.
+#' @param ... Additional arguments to use for generating plots.
+#' @return ggplot object
+#' @export
 create_figS6 <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title,
                          add_y_pseudo = 1, ...) {
   
