@@ -2,10 +2,12 @@
 title:  "Antigen Tracking Figures"
 author: "Ryan Sheridan"
 date:   "`r Sys.Date()`"
+
 output: 
   pdf_document:
     latex_engine: xelatex
     fig_caption:  false
+    
 documentclass:    article
 mainfont:         Arial
 geometry:         top=1in,bottom=1in,left=1in,right=1in
@@ -14,7 +16,7 @@ params:
   template_dir: "src"
   rds_dir:      "sobjs"
   ref_dir:      "ref"
-  xlsx_dir:     "results/figures"
+  # xlsx_dir:     "results/figures"
   browser_dir:  "results/cellbrowser"
   
   # These parameters specify the input matrices and cell types that should be used for analysis
@@ -58,7 +60,6 @@ params:
   # These parameters specify paths to clustifyr references
   ref_sobjs: ["d2_so.rds", "d14_so.rds"]
   type_ref:  "ref_celltype_walsh.rda"
-  xiang_ref: "ref_LEC_xiang.rda"
   subtype_refs:
     value:
       DC:         "ref_DC_walsh.rda"

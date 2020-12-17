@@ -523,7 +523,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
     theme_minimal_hgrid() +
     base_theme +
     theme(
-      plot.margin        = unit(c(0.2, 1, 0.2, 0.2), "cm"),
+      plot.margin        = unit(c(0.2, 1, 0.2, 1), "cm"),
       legend.position    = c(0.05, 0.92),
       legend.key.height  = unit(0.5, "cm"),
       legend.title       = element_blank(),
@@ -552,7 +552,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
     theme_minimal_hgrid() +
     base_theme +
     theme(
-      plot.margin        = unit(c(0.2, 8, 0.2, 0.2), "cm"),
+      plot.margin        = unit(c(0.2, 6.5, 0.2, 0.2), "cm"),
       legend.title       = element_blank(),
       legend.key.height  = unit(0.45, "cm"),
       axis.title.x       = element_blank(),
@@ -1415,7 +1415,7 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
     pt_outline      = pt_outline,
     show_bars       = F,
     legd_pos        = "left",
-    umap_margin     = unit(c(0.1, 0.1, 0.1, 0.2), "cm"),
+    umap_margin     = unit(c(0.2, 0.2, 0.2, 0.4), "cm"),
     plot_labs       = c(plot_labs[1:2], "", ""), 
     rel_widths      = c(0.86, 1, 0.7, 0.2),
     nrow            = 1,
@@ -1434,7 +1434,7 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
     low_col_mtplyr  = low_col_mtplyr,
     high_col_mtplyr = high_col_mtplyr,
     return_list     = TRUE,
-    legend.margin   = margin(0.1, 0, 0.1, 1.5, "cm"),
+    legend.margin   = margin(0.2, 0, 0.2, 2, "cm"),
     ...
   )
   
@@ -1471,7 +1471,8 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
       box_cols        = ref_cols,
       median_pt       = median_pt,
       panels_n_col    = length(feat_cols),
-      legend.position = "left"
+      legend.position = "left",
+      legend.margin   = margin(0.8, 0.2, 0.2, 0.3, "cm")
     ) +
     guides(fill = legd_guide(ncol = 1, shape = 22))
   
