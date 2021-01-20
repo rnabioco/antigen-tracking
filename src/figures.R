@@ -3,7 +3,7 @@
 plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slot = "data", 
                           split_id = NULL, pt_size = 0.25, pt_outline = NULL, plot_cols = NULL,
                           feat_levels = NULL, split_levels = NULL, min_pct = NULL, max_pct = NULL, 
-                          calc_cor = F, lm_line = F, lab_size = 3.7, lab_pos = c(0.8, 0.9), ...) {
+                          calc_cor = FALSE, lm_line = F, lab_size = 3.7, ...) {
   
   # Format imput data
   counts <- sobj_in
@@ -46,11 +46,11 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   if (!is.null(min_pct) || !is.null(max_pct)) {
     counts <- counts %>%
       mutate(
-        pct_rank = percent_rank(!!sym(feature)),
-        max_val  = ifelse(pct_rank > max_pct, !!sym(feature), NA),
-        max_val  = min(max_val, na.rm = T),
-        min_val  = ifelse(pct_rank < min_pct, !!sym(feature), NA),
-        min_val  = max(min_val, na.rm = T),
+        pct_rank       = percent_rank(!!sym(feature)),
+        max_val        = ifelse(pct_rank > max_pct, !!sym(feature), NA),
+        max_val        = min(max_val, na.rm = T),
+        min_val        = ifelse(pct_rank < min_pct, !!sym(feature), NA),
+        min_val        = max(min_val, na.rm = T),
         !!sym(feature) := if_else(!!sym(feature) > max_val, max_val, !!sym(feature)),
         !!sym(feature) := if_else(!!sym(feature) < min_val, min_val, !!sym(feature))
       )
@@ -86,23 +86,7 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
         r       = round(r, digits = 2),
         pval    = tidy(cor.test(!!sym(x), !!sym(y)))$p.value,
         cor_lab = str_c("r = ", r, ", p = ", format(pval, digits = 2))
-        
-        # cor_lab = cor(!!sym(x), !!sym(y)),
-        # cor_lab = round(cor_lab, digits = 2),
-        # cor_lab = str_c("r = ", cor_lab),
       )
-    
-    if (lab_pos != "strip") {
-      counts <- counts %>%
-        mutate(
-          min_x = min(!!sym(x)),
-          max_x = max(!!sym(x)),
-          min_y = min(!!sym(y)),
-          max_y = max(!!sym(y)),
-          lab_x = (max_x - min_x) * lab_pos[1] + min_x,
-          lab_y = (max_y - min_y) * lab_pos[2] + min_y
-        )
-    }
   }
   
   # Create scatter plot
@@ -114,7 +98,11 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
     
     if (!is.numeric(counts[[feature]])) {
       res <- res %>%
-        ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature), fill = !!sym(feature)))
+        ggplot(aes(
+          !!sym(x), !!sym(y),
+          color = !!sym(feature),
+          fill  = !!sym(feature)
+        ))
       
       feats <- counts[[feature]] %>%
         unique()
@@ -122,20 +110,32 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
       if (!is.null(feat_levels)) {
         feats <- feat_levels[feat_levels %in% feats]
       }
-      
-      for (feat in feats) {
-        f_counts <- counts %>%
-          filter(!!sym(feature) == feat)
         
-        res <- res +
-          geom_point(data = f_counts, aes(fill = !!sym(feature)), size = pt_outline, color = "black", show.legend = F) +
-          geom_point(data = f_counts, size = pt_size)
-      }
+      feats %>%
+        walk(~ {
+          f_counts <- counts %>%
+            filter(!!sym(feature) == .x)
+          
+          res <<- res +
+            geom_point(
+              aes(fill = !!sym(feature)),
+              data        = f_counts,
+              size        = pt_outline,
+              color       = "black",
+              show.legend = FALSE
+            ) +
+            geom_point(data = f_counts, size = pt_size)
+        })
       
     } else {
       res <- res %>%
         ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature))) +
-        geom_point(aes(fill = !!sym(feature)), size = pt_outline, color = "black", show.legend = F) +
+        geom_point(
+          aes(fill = !!sym(feature)),
+          size        = pt_outline,
+          color       = "black",
+          show.legend = FALSE
+        ) +
         geom_point(size = pt_size)
     }
     
@@ -148,18 +148,12 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   # Add regression line
   if (lm_line) {
     res <- res +
-      geom_smooth(method = "lm", se = F, color = "black", size = 0.5, linetype = 2)
-  }
-  
-  # Add correlation coefficient label
-  if (calc_cor && lab_pos != "strip") {
-    res <- res +
-      geom_text(
-        aes(lab_x, lab_y, label = cor_lab),
-        color = "black",
-        size  = lab_size,
-        check_overlap = T, 
-        show.legend = F
+      geom_smooth(
+        method   = "lm",
+        se       = FALSE,
+        color    = "black",
+        size     = 0.5,
+        linetype = 2
       )
   }
   
@@ -194,17 +188,17 @@ plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slo
   if (!is.null(split_id)) {
     if (length(split_id) == 1) {
       
-      if (calc_cor && lab_pos == "strip") {
+      my_labs <- "label_value"
+      
+      if (calc_cor) {
         my_labs <- cor_labeller
-        
-      } else {
-        my_labs <- "label_value"
       }
       
       res <- res +
         facet_wrap(~ split_id, labeller = my_labs, ...)
       
     } else if (length(split_id) == 2) {
+      
       eq <- str_c(split_id[1], " ~ ", split_id[2])
       
       res <- res +
@@ -1654,7 +1648,6 @@ create_figS6 <- function(sobj_in, x, y, feat, data_slot, cols_in, plot_title,
       feature   = feat,
       data_slot = "counts",
       plot_cols = cols_in,
-      lab_pos   = "strip",
       lab_size  = 5,
       calc_cor  = T,
       lm_line   = T,

@@ -16,7 +16,7 @@ params:
   template_dir: "src"
   rds_dir:      "sobjs"
   ref_dir:      "ref"
-  # xlsx_dir:     "results/figures"
+  xlsx_dir:     "results/figures"
   browser_dir:  "results/cellbrowser"
   
   # These parameters specify the input matrices and cell types that should be used for analysis
@@ -56,10 +56,20 @@ params:
         cell_type: "fibroblast"
         title:     "Fibroblast/Stromal Cells (Day 14)"
         sobj_out:  "walsh_d14_FRC.rds"
-        
-  # These parameters specify paths to clustifyr references
+
+  # These objects contain Shannon's original cell type classifications.
+  # These classifications are used to identify DCs, LECs, FRCs etc., and to
+  # identify DC and FRC subtypes. LEC subtypes are identified using the
+  # Xiang et al. reference.
   ref_sobjs: ["d2_so.rds", "d14_so.rds"]
+  
+  # This reference is generated from Shannon's objects and is used to classify
+  # DCs, LECs, FRCs, B cells, T cells, NK cells etc. 
   type_ref:  "ref_celltype_walsh.rda"
+  
+  # These references are used to classify DC, LEC, and FRC subtypes. The DC and
+  # FRC references were created using Shannon's original classifications. The
+  # LEC reference is generated using data from Xiang et al.
   subtype_refs:
     value:
       DC:         "ref_DC_walsh.rda"
@@ -91,7 +101,7 @@ knitr::opts_chunk$set(
 source(here(params$template_dir, "figures.R"))
 source(here(params$template_dir, "markers.R"))
 
-# Seurat objects used for subtype annotations
+# These objects only include DCs, FRCs, or LECs and were used for subtype annotations
 # This is needed for Fig S7 heatmaps
 sobjs_sub <- read_rds(here(params$rds_dir, "sobjs_subsets.rds"))
 

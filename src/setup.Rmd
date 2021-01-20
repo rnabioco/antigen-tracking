@@ -18,7 +18,7 @@ R_packages <- c(
   "gtools"
 )
 
-purrr::walk(R_packages, library, character.only = T)
+purrr::walk(R_packages, library, character.only = TRUE)
 
 source(here(params$template_dir, "processing.R"))
 
@@ -56,6 +56,9 @@ load_refs <- all(file.exists(c(type_ref_path, subtype_ref_paths)))
 load_sobjs <- all(file.exists(so_out))
 
 # Clustering parameters
+# These are the clustering resolutions and clustifyr thresholds used for
+# classifying the broad cell types (DCs, LECs, FRCs, B cells, etc.) and the
+# DC, LEC, and FRC subtypes.
 type_res    <- 0.8
 type_thresh <- 0.5
 
@@ -108,7 +111,7 @@ cell_types <- ref_sobj@meta.data %>%
   unique()
 
 subtype_refs <- cell_types %>%
-  set_names(., .) %>%
+  set_names() %>%
   map(~ {
     ref_sobj %>%
       subset(subset = !!sym(type_column) == .x) %>%
@@ -165,7 +168,7 @@ subtype_refs <- params$subtype_refs %>%
 
 # Create Seurat objects, normalize data, run UMAP, and cluster
 sobjs_raw <- unique(mat_paths) %>%
-  set_names(., .) %>%
+  set_names() %>%
   imap(~ {
     create_sobjs_01(
       path_in      = .x,
@@ -176,7 +179,6 @@ sobjs_raw <- unique(mat_paths) %>%
     )
   })
 
-
 # Annotate cell types and calculate ova fold change for each object
 sobjs_raw <- sobjs_raw %>%
   map(
@@ -184,7 +186,6 @@ sobjs_raw <- sobjs_raw %>%
     ref_mat   = type_ref,
     threshold = type_thresh
   )
-
 
 # Split objects based on cell type, re-cluster and run clustifyr to annotate
 # cell subtypes
@@ -211,7 +212,6 @@ sobjs_sub <- sobjs %>%
     
     res
   })
-
 
 # Add subtype assignments back to main objects and split again to now include
 # additional cell types (B cells, T cells, etc.) for plotting
@@ -242,7 +242,6 @@ sobjs <- args_in %>%
     )
   )
 
-
 # Classify cells based on CLR-transformed ova counts, do this for each cell type
 # and subtype
 sobjs <- sobjs %>%
@@ -257,7 +256,6 @@ sobjs <- sobjs %>%
     )
   })
 
-
 # Write list of Seurat objects divided by cell type
 file_out <- here(params$rds_dir, "sobjs_subsets.rds")
 
@@ -266,7 +264,7 @@ sobjs_sub %>%
 
 # Write final Seurat objects and meta.data
 sobjs %>%
-  iwalk(~ write_rds(.x, path = so_out[.y]))
+  iwalk(~ write_rds(.x, so_out[.y]))
 
 sobjs %>%
   iwalk(~ {
@@ -280,6 +278,15 @@ sobjs %>%
 ```
 
 ```{r "Load sobjs", eval = load_sobjs, echo = F}
+
+sobjs <- so_out %>%
+  map(~ {
+    p <- dirname(.x)
+    f <- basename(.x)
+
+    file.path(p, "old_objects/2020-08-17", f) %>%
+      read_rds()
+  })
 
 # Load Seurat objects
 sobjs <- so_out %>%
