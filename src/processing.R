@@ -131,6 +131,64 @@ set_type_cols <- function(type_in, sobjs_in, type_key, type_column = "subtype",
   res
 }
 
+#' Modify meta.data for Seurat object
+#' 
+#' @param sobj_in Seurat object
+#' @param ... Arguments to pass to specified function
+#' @param .fun Function to use for modifying Seurat object
+#' @return Seurat object
+#' @export
+mutate_metadata <- function(sobj_in, ..., .fun = dplyr::mutate) {
+  meta_df <- sobj_in@meta.data
+  
+  meta_df <- tibble::rownames_to_column(meta_df, "cell_id")
+  meta_df <- .fun(meta_df, ...)
+  meta_df <- tibble::column_to_rownames(meta_df, "cell_id")
+  
+  sobj_in@meta.data <- meta_df
+  
+  sobj_in
+}
+
+#' Create labeller function to add cell n labels
+#' 
+#' @param sobj_in Seurat object or data.frame containing plot data.
+#' @param lab_col meta.data column containing cell groups.
+#' @param nm Should cell group be included in label.
+#' @param sep Separator to use for labels.
+#' @return Labeller function
+#' @export
+get_nlab_fun <- function(sobj_in, lab_col, nm = TRUE, sep = "\n") {
+  
+  dat <- sobj_in
+  
+  if ("Seurat" %in% class(sobj_in)) {
+    dat <- sobj_in@meta.data
+  }
+  
+  labs <- dat %>%
+    group_by(!!sym(lab_col)) %>%
+    summarize(
+      n       = format(n(), big.mark = ",", scientific = FALSE),
+      n       = str_c("n = ", n),
+      .groups = "drop"
+    ) %>%
+    distinct()
+  
+  if (nm) {
+    labs <- labs %>%
+      mutate(n = str_c(!!sym(lab_col), sep, "(", n, ")"))
+  }
+  
+  labs <- set_names(
+    x  = pull(labs, "n"),
+    nm = pull(labs, lab_col)
+  )
+  
+  res <- function(x) labs[x]
+  
+  res
+}
 
 # Processing helpers ----
 
@@ -172,7 +230,7 @@ create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL
   
   # Load matrices
   mat_list <- Read10X(matrix_dir)
-  rna_mat <- mat_list
+  rna_mat  <- mat_list
   
   # Create Seurat object using gene expression data
   if (is_list(mat_list)) {
@@ -181,7 +239,7 @@ create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL
   
   res <- rna_mat %>%
     CreateSeuratObject(
-      project = proj_name,
+      project   = proj_name,
       min.cells = 5
     )
   
@@ -198,7 +256,7 @@ create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL
     
     # Remove ADT features that have low total counts and likely failed or
     # were omitted
-    n_feats <- nrow(adt_mat)
+    n_feats    <- nrow(adt_mat)
     count_sums <- rowSums(as.matrix(adt_mat))
     
     adt_mat <- adt_mat[count_sums >= adt_count_min, ]
@@ -213,20 +271,20 @@ create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL
   # Calculate percentage of mitochondrial reads
   res <- res %>%
     PercentageFeatureSet(
-      pattern = mt_str, 
+      pattern  = mt_str,
       col.name = "Percent_mito"
     )
   
   # Add QC classifications to meta.data
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(
-      qc_class = "Pass filters",
-      qc_class = ifelse(nFeature_RNA < gene_min, "Low gene count", qc_class),
-      qc_class = ifelse(nFeature_RNA > gene_max, "High gene count", qc_class),
-      qc_class = ifelse(Percent_mito > mito_max, "High mito reads", qc_class)
-    ) %>%
-    column_to_rownames("cell_id")
+  res <- res %>%
+    mutate_metadata(
+      qc_class = case_when(
+        Percent_mito > mito_max ~ "High mito reads",
+        nFeature_RNA > gene_max ~ "High gene count",
+        nFeature_RNA < gene_min ~ "Low gene count",
+        TRUE ~ "Pass filters"
+      )
+    )
   
   res
 }
@@ -238,20 +296,23 @@ create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL
 #' @param adt_assay Name of ADT assay in object.
 #' @param cc_scoring Score cell cycle genes.
 #' @param regress_vars Variables to regress out when scaling data
+#' @param rna_method Method to use with NormalizeData for RNA assay.
+#' @param adt_method Method to use with NormalizeData for ADT assay.
 #' @return Seurat object
 #' @export
 norm_sobj <- function(sobj_in, rna_assay = "RNA", adt_assay = "ADT", cc_scoring = FALSE,
-                      regress_vars = NULL) {
+                      regress_vars = NULL, rna_method = "LogNormalize", adt_method = "CLR") {
   
   # Normalize counts
   res <- sobj_in %>%
     subset(qc_class == "Pass filters") %>%
     NormalizeData(
-      assay = rna_assay,
-      normalization.method = "LogNormalize"
+      assay                = rna_assay,
+      normalization.method = rna_method
     )
   
   # Score cell cycle genes
+  # cc.genes comes loaded with Seurat
   if (cc_scoring) {
     s.genes <- cc.genes$s.genes %>%
       str_to_title()
@@ -271,7 +332,7 @@ norm_sobj <- function(sobj_in, rna_assay = "RNA", adt_assay = "ADT", cc_scoring 
   res <- res %>%
     FindVariableFeatures(
       selection.method = "vst",
-      nfeatures = 2000
+      nfeatures        = 2000
     ) %>%
     ScaleData(vars.to.regress = regress_vars)
   
@@ -279,8 +340,8 @@ norm_sobj <- function(sobj_in, rna_assay = "RNA", adt_assay = "ADT", cc_scoring 
   if (adt_assay %in% names(res)) {
     res <- res %>%
       NormalizeData(
-        assay = adt_assay,
-        normalization.method = "CLR"
+        assay                = adt_assay,
+        normalization.method = adt_method
       ) %>%
       ScaleData(assay = adt_assay)
   }
@@ -303,36 +364,45 @@ run_UMAP_RNA <- function(sobj_in, assay = "RNA", dims = 1:40, prefix = "",
                          pca_meta = TRUE, umap_meta = TRUE, ...) {
   
   # Reduction keys
-  red_name = str_c(prefix, "umap")
-  red_key  = str_c(prefix, "UMAP_")
+  pca_name  = str_c(prefix, "pca")
+  pca_key   = str_c(prefix, "PC_")
+  umap_name = str_c(prefix, "umap")
+  umap_key  = str_c(prefix, "UMAP_")
   
   # Run PCA and UMAP
   # By default only variable features are used for PCA
   res <- sobj_in %>%  
-    RunPCA(assay = assay, ...) %>%
+    RunPCA(
+      assay          = assay,
+      reduction.name = pca_name,
+      reduction.key  = pca_key,
+      ...
+    ) %>%
     RunUMAP(
       assay          = assay,
       dims           = dims,
-      reduction.name = red_name,
-      reduction.key  = red_key
+      reduction.name = umap_name,
+      reduction.key  = umap_key
     )
   
   # Add PCA to meta.data
   if (pca_meta) {
+    pca_columns = str_c(pca_key, c(1, 2))
+    
     res <- res %>%
       AddMetaData(
-        metadata = FetchData(., c("PC_1", "PC_2")),
-        col.name = str_c(prefix, c("PC_1", "PC_2"))
+        metadata = FetchData(., pca_columns),
+        col.name = pca_columns
       )
   }
   
   # Add UMAP to meta.data
   if (umap_meta) {
-    umap_columns = str_c(red_key, c(1, 2))
+    umap_columns = str_c(umap_key, c(1, 2))
     
     res <- res %>%
       AddMetaData(
-        metadata = Embeddings(., reduction = red_name),
+        metadata = Embeddings(., reduction = umap_name),
         col.name = umap_columns
       )
   }
@@ -349,39 +419,49 @@ run_UMAP_RNA <- function(sobj_in, assay = "RNA", dims = 1:40, prefix = "",
 #' @param prefix Prefix to add to reduction keys and meta.data columns.
 #' @param pca_meta Should PC-1 and PC-2 coordinates be added to meta.data table.
 #' @param umap_meta Should UMAP coordinates be added to meta.data table.
+#' @param rerun_pca Re-run PCA and UMAP even if there is already a reduction
+#' with the same name.
 #' @param ... Additional arguments to pass to RunPCA.
 #' @return Seurat object
 #' @export
-cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6, dims = 1:40, 
-                        prefix = "", pca_meta = TRUE, umap_meta = TRUE, ...) {
+cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6, dims = 1:40, prefix = "",
+                        pca_meta = TRUE, umap_meta = TRUE, rerun_pca = TRUE, ...) {
   # Use FindNeighbors to construct a K-nearest neighbors graph based on the euclidean distance in 
   # PCA space, and refine the edge weights between any two cells based on the
   # shared overlap in their local neighborhoods (Jaccard similarity).
   # Use FindClusters to apply modularity optimization techniques such as the Louvain algorithm 
   # (default) or SLM, to iteratively group cells together
   
+  res <- sobj_in
+  
   # Run PCA and UMAP
   # Data must be scaled
-  res <- sobj_in %>%
-    run_UMAP_RNA(
-      assay     = assay,
-      prefix    = prefix,
-      dims      = dims,
-      pca_meta  = pca_meta,
-      umap_meta = umap_meta,
-      ...
-    )
+  umap_name <- str_c(prefix, "umap")
+  
+  if (!umap_name %in% names(sobj_in@reductions) || rerun_pca) {
+    res <- res %>%
+      run_UMAP_RNA(
+        assay     = assay,
+        prefix    = prefix,
+        dims      = dims,
+        pca_meta  = pca_meta,
+        umap_meta = umap_meta,
+        ...
+      )
+  }
   
   # Create nearest neighbors graph and find clusters
+  pca_name <- str_c(prefix, "pca")
+  
   res <- res %>%
     FindNeighbors(
       assay     = assay,
-      reduction = "pca",
+      reduction = pca_name,
       dims      = dims
     ) %>%
     FindClusters(
       resolution = resolution,
-      verbose = F
+      verbose    = FALSE
     ) %>%
     AddMetaData(
       metadata = Idents(.),
@@ -406,6 +486,7 @@ cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6, dims = 1:40,
 calc_feat_fc <- function(sobj_in, feat = "adt_ovalbumin", data_slot = "counts", add_pseudo = FALSE,
                          fc_column = "ova_fc", grp_column = "cell_type", control_grps = c("B cell", "T cell")) {
   
+  # Add data for calculations to meta.data
   res <- sobj_in %>%
     AddMetaData(FetchData(
       object = ., 
@@ -413,29 +494,41 @@ calc_feat_fc <- function(sobj_in, feat = "adt_ovalbumin", data_slot = "counts", 
       slot   = data_slot
     ))
   
+  # Calculate fold changes
   res@meta.data <- res@meta.data %>%
     rownames_to_column("cell_id") %>%
-    mutate(con_grp = if_else(!!sym(grp_column) %in% control_grps, T, F)) %>%
-    group_by(con_grp) %>%
-    mutate(con_med = ifelse(con_grp, median(!!sym(feat)), NA)) %>%
+    
+    mutate(con_grp = if_else(                                               # Identify control groups
+      !!sym(grp_column) %in% control_grps,
+      TRUE,
+      FALSE
+    )) %>%
+    
+    group_by(con_grp) %>%                                                   # Calculate median counts for control
+    mutate(con_med = ifelse(
+      con_grp,
+      median(!!sym(feat)),
+      NA
+    )) %>%
     ungroup() %>%
+    
     mutate(
-      con_med = max(con_med, na.rm = T),
+      con_med           = replace_na(con_med, max(con_med, na.rm = TRUE)),  # Fill in NAs with median control counts
       !!sym(fc_column) := !!sym(feat) / con_med
     ) %>%
+    
     dplyr::select(-con_grp, -con_med) %>%
     column_to_rownames("cell_id")
   
-  # Add pseudo count so values can be log transformed
+  # Add pseudo count so fold changes can be log transformed
+  # pseudo count is smallest non-zero value divided by 2
   if (0 %in% pull(res@meta.data, fc_column) && add_pseudo) {
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
-        pseudo = ifelse(!!sym(fc_column) > 0, !!sym(fc_column), NA),
-        pseudo = min(pseudo, na.rm = T) * 0.5,
+    res <- res %>%
+      mutate_metadata(
+        pseudo            = ifelse(!!sym(fc_column) > 0, !!sym(fc_column), NA), 
+        pseudo            = min(pseudo, na.rm = TRUE) * 0.5,
         !!sym(fc_column) := !!sym(fc_column) + pseudo
-      ) %>%
-      column_to_rownames("cell_id")
+      )
   }
   
   res
@@ -468,7 +561,7 @@ subset_sobj <- function(sobj_in, cell_types, type_column = "cell_type", dims = 1
       str_to_title()
     
     res <- res %>%
-      CellCycleScoring(
+      Seurat::CellCycleScoring(
         s.features   = s.genes,
         g2m.features = g2m.genes
       )
@@ -476,36 +569,42 @@ subset_sobj <- function(sobj_in, cell_types, type_column = "cell_type", dims = 1
   
   # Re-process object
   res <- res %>%
-    FindVariableFeatures(
+    Seurat::FindVariableFeatures(
       selection.method = "vst",
-      nfeatures = 2000
+      nfeatures        = 2000
     ) %>%
-    ScaleData(vars.to.regress = regress_vars) %>%
-    RunPCA() %>%
-    RunUMAP(dims = dims)
+    Seurat::ScaleData(vars.to.regress = regress_vars) %>%
+    Seurat::RunPCA() %>%
+    Seurat::RunUMAP(dims = dims)
   
   res
 }
 
 #' Fit gaussian mixture model
 #' 
-#' @param sobj_in Seurat object.
-#' @param gmm_data Data to use for fitting model.
+#' @param sobj_in A Seurat object or data.frame with cell IDs as row names.
+#' @param gmm_data Column containing data to use for fitting model.
 #' @param data_slot Slot to pull data from.
+#' @param gmm_grps Names to use for GMM groups.
 #' @param prob Probability cutoff to use for classifying cells. If the
 #' probability is >= prob, cell will be classified in the high signal group.
+#' @param prefix Prefix to use for results table containing containing GMM groups.
 #' @param quiet Suppress output messages.
 #' @return List containing results
 #' @export
-fit_GMM <- function(sobj_in, gmm_data = "adt_ovalbumin", data_slot = "counts",
-                    prob = 0.5, quiet = FALSE) {
+fit_gmm <- function(sobj_in, gmm_data, data_slot = "counts", gmm_grps = c("Low", "High"),
+                    prob = 0.5, prefix = "", quiet = FALSE) {
   
   set.seed(42)
   
-  # Fit GMM for ova signal
-  data_df <- sobj_in %>%
-    FetchData(gmm_data, slot = data_slot)
+  data_df <- sobj_in
   
+  if ("Seurat" %in% class(sobj_in)) {
+    data_df <- sobj_in %>%
+      Seurat::FetchData(gmm_data, slot = data_slot)
+  }
+  
+  # Fit GMM for ova signal
   quiet_EM <- quietly(~ normalmixEM(.))
   
   if (!quiet) {
@@ -521,32 +620,40 @@ fit_GMM <- function(sobj_in, gmm_data = "adt_ovalbumin", data_slot = "counts",
   }
   
   # New column names
-  gmm_names <- c("Low", "High")
   comp_names <- c("comp.1", "comp.2")
   
   if (mixmdl$mu[1] > mixmdl$mu[2]) {
-    gmm_names <- rev(gmm_names)
+    gmm_grps <- rev(gmm_grps)
   }
   
-  names(comp_names)    <- gmm_names
-  names(mixmdl$mu)     <- gmm_names
-  names(mixmdl$sigma)  <- gmm_names
-  names(mixmdl$lambda) <- gmm_names
+  names(comp_names)    <- gmm_grps
+  names(mixmdl$mu)     <- gmm_grps
+  names(mixmdl$sigma)  <- gmm_grps
+  names(mixmdl$lambda) <- gmm_grps
   
-  # Divide into ova groups
+  # Divide into gmm groups
+  gmm_col <- str_c(prefix, "GMM_grp")
+  
   res <- data.frame(
     cell_id = rownames(data_df),
     data    = data_df[, gmm_data],
     mixmdl$posterior
   ) %>%
-    dplyr::rename(!!sym(gmm_data) := data) %>%
-    rename(all_of(comp_names)) %>%
-    mutate(GMM_grp = if_else(High >= prob, "High", "Low")) %>%
+    dplyr::rename(
+      !!sym(gmm_data) := data,
+      all_of(comp_names)
+    ) %>%
+    # rename(all_of(comp_names)) %>%
+    mutate(!!sym(gmm_col) := if_else(
+      !!sym(gmm_grps[2]) >= prob,
+      gmm_grps[2],
+      gmm_grps[1]
+    )) %>%
     column_to_rownames("cell_id")
   
   # Check that GMM results match input data
   data_chk <- identical(res[, gmm_data], data_df[, gmm_data])
-  cell_chk <- identical(rownames(res), rownames(sobj_in@meta.data))
+  cell_chk <- identical(rownames(res), rownames(data_df))
   
   if (!data_chk && cell_chk) {
     stop("Input cells do not match cells in GMM output.")
@@ -563,72 +670,87 @@ fit_GMM <- function(sobj_in, gmm_data = "adt_ovalbumin", data_slot = "counts",
   res
 }
 
-#' Classify cells based on ova signal using GMM
+#' Classify cells using GMM
 #' 
 #' @param sobj_in Seurat object.
-#' @param filt_column meta.data column containing cell labels to use for
+#' @param gmm_data Variable present in Seurat object to use for classifying cells.
+#' @param grp_column meta.data column containing cell labels to use for
 #' filtering object prior to fitting GMM.
 #' @param filt Cell label to use for filtering object.
-#' @param gmm_data Data to use for classifying cells.
 #' @param data_slot Slot to pull data from.
+#' @param prefix Prefix to add to meta.data columns.
 #' @param return_sobj Return a Seurat object. If set to FALSE, a tibble will be
 #' returned.
 #' @param ... Additional arguments to pass to fit_GMM.
 #' @return Seurat object or tibble containing results
 #' @export
-classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, gmm_data = "adt_ovalbumin",
-                         data_slot = "counts", return_sobj = TRUE, ...) {
+run_gmm <- function(sobj_in, gmm_data, grp_column = "cell_type", filt = NULL,
+                    data_slot = "counts", prefix = "", return_sobj = TRUE) {
   
   # Filter Seurat object
   sobj_filt <- sobj_in
   
   if (!is.null(filt)) {
     sobj_filt <- sobj_filt %>%
-      subset(!!sym(filt_column) == filt)
+      subset(!!sym(grp_column) == filt)
   }
   
   # Fit GMM
-  gmm_res <- sobj_filt %>%
-    fit_GMM(
-      gmm_data  = gmm_data,
-      data_slot = data_slot,
-      ...
-    )
+  # Split meta.data by grp_column
+  # Split meta.data by grp_column
+  gmm_df <- sobj_filt %>%
+    Seurat::SplitObject(grp_column)
   
-  # Add results to data.frame
-  gmm_df <- gmm_res$res %>%
-    rownames_to_column("cell_id") %>%
-    mutate(
-      GMM_mu     = gmm_res$mu[GMM_grp],
-      GMM_sigma  = gmm_res$sigma[GMM_grp],
-      GMM_lambda = gmm_res$lambda[GMM_grp],
-      GMM_grp    = str_to_lower(GMM_grp),
-      GMM_grp    = str_c("ova ", GMM_grp)
-    ) %>%
-    select(-!!sym(gmm_data), -Low, -High)
+  # Fit GMM for each group and bind data.frames
+  gmm_grps <- c("Low", "High")
+  gmm_col  <- str_c(prefix, "GMM_grp")
+  mu_col   <- str_c(prefix, "GMM_mu")
+  sig_col  <- str_c(prefix, "GMM_sigma")
+  lam_col  <- str_c(prefix, "GMM_lambda")
+  
+  gmm_df <- gmm_df %>%
+    imap_dfr(~ {
+      res <- .x %>%
+        fit_gmm(
+          gmm_data  = gmm_data,
+          data_slot = data_slot,
+          gmm_grps  = gmm_grps,
+          prefix    = prefix,
+          quiet     = TRUE
+        )
+      
+      res$res %>%
+        select(-all_of(gmm_grps)) %>%
+        rownames_to_column() %>%
+        mutate(
+          !!sym(grp_column) := .y,
+          !!sym(mu_col)     := res$mu[!!sym(gmm_col)],
+          !!sym(sig_col)    := res$sigma[!!sym(gmm_col)],
+          !!sym(lam_col)    := res$lambda[!!sym(gmm_col)]
+        ) %>%
+        column_to_rownames()
+    })
   
   # Return data.frame
   if (!return_sobj) {
-    if (!is.null(filt)) {
-      gmm_df <- gmm_df %>%
-        mutate(!!sym(filt_column) := filt)
-    }
-    
     return(gmm_df)
   }
   
   # Add ova groups to meta.data for input object
   gmm_df <- gmm_df %>%
-    column_to_rownames("cell_id")
+    select(-!!sym(gmm_data), -!!sym(grp_column))
   
   res <- sobj_in %>%
     AddMetaData(gmm_df)
   
-  # Add "Other" label for cells not included in the comparison
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(GMM_grp = if_else(is.na(GMM_grp), "Other", GMM_grp)) %>%
-    column_to_rownames("cell_id")
+  # Check that rownames are the same for input and output
+  if (!identical(rownames(sobj_in@meta.data), rownames(res@meta.data))) {
+    stop("Input and output cell IDs do not match.")
+  }
+  
+  # Add "other" label for cells not included in the comparison
+  res <- res %>%
+    mutate_metadata(!!sym(gmm_col) := replace_na(!!sym(gmm_col), "Other"))
   
   res
 }
@@ -711,8 +833,8 @@ create_sobjs_01 <- function(path_in, resolution, cc_scoring = FALSE, regress_var
     cluster_RNA(
       assay      = "RNA",
       resolution = resolution,
-      pca_meta   = F,
-      umap_meta  = F 
+      pca_meta   = FALSE,
+      umap_meta  = FALSE 
     )
   
   res
@@ -735,20 +857,16 @@ clustify_cell_types_02 <- function(sobj_in, ref_mat, threshold, umap_meta = FALS
       cluster_col   = "RNA_clusters",
       ref_mat       = ref_mat,
       rename_prefix = "t1",
-      seurat_out    = T,
+      seurat_out    = TRUE,
       threshold     = threshold
     )
   
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(cell_type = t1_type) %>%
-    column_to_rownames("cell_id")
+  res <- res %>%
+    mutate_metadata(cell_type = t1_type)
   
   if (!umap_meta) {
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      select(-UMAP_1, -UMAP_2) %>%
-      column_to_rownames("cell_id")
+    res <- res %>%
+      mutate_metadata(.fun = select, -UMAP_1, -UMAP_2)
   }
   
   # Calculate ova fold change
@@ -831,13 +949,11 @@ clustify_subsets_03 <- function(sobj_in, type_in = NULL, ref_mat, assay = "RNA",
     clust_col <- sym(str_c(subtype_column, "_clusters"))
     new_col   <- sym(new_col)
     
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
+    res <- res %>%
+      mutate_metadata(
         !!sub_col   := str_to_title_v2(!!new_col),
         !!clust_col := str_c(type_clusters, "-", !!sub_col)
-      ) %>%
-      column_to_rownames("cell_id")
+      )
   }
   
   res
@@ -879,14 +995,12 @@ resplit_objects_04 <- function(sobj_in, subtype_so, type_in, inc_types, cc_scori
   res <- res %>%
     AddMetaData(FetchData(., c("UMAP_1", "UMAP_2")))
   
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(
+  res <- res %>%
+    mutate_metadata(
       subtype          = ifelse(is.na(subtype), cell_type, subtype),
       subtype          = str_to_title_v2(subtype),
       subtype_clusters = ifelse(is.na(subtype_clusters), cell_type, subtype_clusters)
-    ) %>%
-    column_to_rownames("cell_id")
+    )
   
   res
   
@@ -908,31 +1022,34 @@ classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype
   
   # Classify cells for cell type based on ova signal
   res <- sobj_in %>%
-    classify_ova(
-      filt_column = type_column,
+    run_gmm(
+      grp_column  = type_column,
       filt        = type_in,
       gmm_data    = gmm_data,
       data_slot   = data_slot,
-      quiet       = T,
-      return_sobj = T
+      return_sobj = TRUE
+    ) %>%
+    mutate_metadata(
+      GMM_grp = if_else(GMM_grp != "Other", str_to_lower(GMM_grp), GMM_grp),
+      GMM_grp = if_else(GMM_grp != "Other", str_c("ova ", GMM_grp), GMM_grp ),
     )
   
-  # Split by subtype before classifying based on ova
-  subtypes <- unique(pull(res@meta.data, subtype_column))
+  # Classify cells separately for each subtype
+  GMM_res <- res %>%
+    run_gmm(
+      grp_column  = subtype_column,
+      gmm_data    = gmm_data,
+      data_slot   = data_slot,
+      return_sobj = FALSE
+    ) %>%
+    rownames_to_column("cell_id")
   
-  GMM_res <- subtypes %>%
-    map_dfr(~ {
-      classify_ova(
-        sobj_in     = res,
-        filt_column = subtype_column,
-        filt        = .x,
-        gmm_data    = gmm_data,
-        data_slot   = data_slot,
-        quiet       = T,
-        return_sobj = F
-      )
-    }) %>%
-    mutate(type_GMM_grp_2 = str_c(!!sym(subtype_column), "-", GMM_grp)) %>%
+  # Format subtype GMM results
+  GMM_res <- GMM_res %>%
+    mutate(
+      GMM_grp        = str_c("ova ", str_to_lower(GMM_grp)),
+      type_GMM_grp_2 = str_c(!!sym(subtype_column), "-", GMM_grp)
+    ) %>%
     select(
       cell_id,
       type_GMM_grp    = GMM_grp,
@@ -943,6 +1060,7 @@ classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype
     ) %>%
     column_to_rownames("cell_id")
   
+  # Add subtype GMM results back to object
   res <- res %>%
     AddMetaData(GMM_res)
   
