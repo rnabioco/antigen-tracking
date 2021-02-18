@@ -1,1998 +1,4 @@
 
-```{r "Functions", echo = F}
-
-# Utility ----
-
-# Plot color palette
-plot_color_palette <- function(input_cols) {
-  
-  col_data <- tibble(color = input_cols) %>%
-    mutate(color =  fct_inorder(color))
-  
-  res <- col_data %>%
-    ggplot(aes(x = "color", fill = color)) +
-    geom_bar() +
-    scale_fill_manual(values = input_cols) +
-    theme_void()
-  
-  res
-}
-
-# Create color palette
-create_gradient <- function(cols_in, n = NULL) {
-  
-  if (is.null(n)) {
-    n <- length(cols_in)
-  }
-  
-  colorRampPalette(cols_in)(n)
-}
-
-create_col_fun <- function(cols_in) {
-  
-  function(n = NULL) {
-    create_gradient(cols_in, n)
-  }
-}
-
-# Pull items from list of vectors
-pull_nest_vec <- function(list_in, idx) {
-  res <- map_chr(list_in, ~ .x[[idx]])
-  
-  res
-}
-
-# Capitalize first character without modifying other characters
-str_to_title_v2 <- function(string, exclude = "cell") {
-  
-  cap_first_chr <- function(string, exclude) {
-    chrs <- string %>%
-      str_split(pattern = "") %>%
-      unlist()
-    
-    if (any(chrs %in% LETTERS) || string == exclude) {
-      return(string)
-    }
-    
-    chrs[1] <- str_to_upper(chrs[1])
-    
-    res <- chrs %>%
-      reduce(str_c)
-    
-    res
-  }
-  
-  res <- string %>%
-    map_chr(~ {
-      .x %>%
-        str_split(pattern = " ") %>%
-        unlist() %>%
-        map_chr(cap_first_chr, exclude = exclude) %>%
-        reduce(str_c, sep = " ")
-    })
-  
-  res
-}
-
-# Set colors
-set_cols <- function(types_in, cols_in, other_cols) {
-  
-  types_in <- types_in[!types_in %in% names(other_cols)]
-  cols_in <- cols_in[!cols_in %in% other_cols]
-  
-  names(cols_in) <- types_in
-  cols_in <- cols_in[!is.na(names(cols_in))]
-  
-  res <- c(cols_in, other_cols)
-  
-  res
-}
-
-# Set subtype colors
-set_type_cols <- function(type_in, sobjs_in, type_key, type_column = "subtype",
-                          cols_in, other_cols) {
-  
-  sobjs_in <- sobjs_in[type_key[names(sobjs_in)] == type_in]
-  
-  res <- sobjs_in %>%
-    map(~ {
-      .x@meta.data %>%
-        pull(type_column) %>%
-        unique()
-    }) %>%
-    reduce(c) %>%
-    unique() %>%
-    set_cols(
-      cols_in = cols_in,
-      other_cols = other_cols
-    )
-  
-  res
-}
-
-
-# Processing helpers ----
-
-# Generate project names from matrix path
-shorten_names <- function(str_in, extra_path = "/outs/(filtered|raw)_feature_bc_matrix$") {
-  res <- str_in %>%
-    str_remove(extra_path) %>%
-    basename() %>%
-    str_extract("^[a-zA-Z0-9_]+") %>%
-    str_remove("^GEX_")
-
-  res
-}
-
-# Import matrices and create Seurat object
-create_sobj <- function(matrix_dir, proj_name = "SeuratProject", hash_ids = NULL, adt_count_min = 0,
-                        gene_min = 250, gene_max = 5000, mito_max = 15, mt_str = "^mt-",
-                        rna_assay = "Gene Expression", adt_assay = "Antibody Capture", ...) {
-  
-  # Load matrices
-  mat_list <- Read10X(matrix_dir)
-  rna_mat <- mat_list
-  
-  # Create Seurat object using gene expression data
-  if (is_list(mat_list)) {
-    rna_mat <- mat_list[[rna_assay]]
-  }
-  
-  res <- rna_mat %>%
-    CreateSeuratObject(
-      project = proj_name,
-      min.cells = 5
-    )
-  
-  # Add antibody capture data to Seurat object
-  if (is_list(mat_list)) {
-    adt_mat <- mat_list[[adt_assay]]
-    
-    # Double check that cells match for both assays
-    if (!identical(colnames(res), colnames(adt_mat))) {
-      adt_mat <- adt_mat[, colnames(res)]
-      
-      warning("Not all cells are shared between RNA and ADT assays.")
-    }
-    
-    # Remove ADT features that have low total counts and likely failed or
-    # were omitted
-    n_feats <- nrow(adt_mat)
-    count_sums <- rowSums(as.matrix(adt_mat))
-    
-    adt_mat <- adt_mat[count_sums >= adt_count_min, ]
-    
-    if (n_feats != nrow(adt_mat)) {
-      warning("Some ADT features were removed due to low counts (<", adt_count_min, ").")
-    }
-    
-    res[["ADT"]] <- CreateAssayObject(adt_mat)
-  }
-  
-  # Calculate percentage of mitochondrial reads
-  res <- res %>%
-    PercentageFeatureSet(
-      pattern = mt_str, 
-      col.name = "Percent_mito"
-    )
-  
-  # Add QC classifications to meta.data
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(
-      qc_class = "Pass filters",
-      qc_class = ifelse(nFeature_RNA < gene_min, "Low gene count", qc_class),
-      qc_class = ifelse(nFeature_RNA > gene_max, "High gene count", qc_class),
-      qc_class = ifelse(Percent_mito > mito_max, "High mito reads", qc_class)
-    ) %>%
-    column_to_rownames("cell_id")
-  
-  res
-}
-
-# Filter and normalize matrices, find variable features
-norm_sobj <- function(sobj_in, rna_assay = "RNA", adt_assay = "ADT", cc_scoring = F,
-                      regress_vars = NULL) {
-  
-  # Normalize counts
-  res <- sobj_in %>%
-    subset(qc_class == "Pass filters") %>%
-    NormalizeData(
-      assay = rna_assay,
-      normalization.method = "LogNormalize"
-    )
-  
-  # Score cell cycle genes
-  if (cc_scoring) {
-    s.genes <- cc.genes$s.genes %>%
-      str_to_title()
-    
-    g2m.genes <- cc.genes$g2m.genes %>%
-      str_to_title()
-    
-    res <- res %>%
-      CellCycleScoring(
-        s.features = s.genes,
-        g2m.features = g2m.genes
-      )
-  }
-  
-  # Scale data
-  # By default variable features will be used
-  res <- res %>%
-    FindVariableFeatures(
-      selection.method = "vst",
-      nfeatures = 2000
-    ) %>%
-    ScaleData(vars.to.regress = regress_vars)
-  
-  # Normalize ADT data
-  if (adt_assay %in% names(res)) {
-    res <- res %>%
-      NormalizeData(
-        assay = adt_assay,
-        normalization.method = "CLR"
-      ) %>%
-      ScaleData(assay = adt_assay)
-  }
-  
-  res
-}
-
-# Scale data, run PCA, run UMAP for gene expression data
-run_UMAP_RNA <- function(sobj_in, assay = "RNA", dims = 1:40, prefix = "",
-                         pca_meta = T, umap_meta = T, ...) {
-  
-  # Reduction keys
-  red_name = str_c(prefix, "umap")
-  red_key  = str_c(prefix, "UMAP_")
-  
-  # Scale data, run PCA, run UMAP
-  # By default only variable features are used for PCA
-  res <- sobj_in %>%  
-    RunPCA(assay = assay, ...) %>%
-    RunUMAP(
-      assay          = assay,
-      dims           = dims,
-      reduction.name = red_name,
-      reduction.key  = red_key
-    )
-  
-  # Add PCA to meta.data
-  if (pca_meta) {
-    res <- res %>%
-      AddMetaData(
-        metadata = FetchData(., c("PC_1", "PC_2")),
-        col.name = str_c(prefix, c("PC_1", "PC_2"))
-      )
-  }
-  
-  # Add UMAP to meta.data
-  if (umap_meta) {
-    umap_columns = str_c(red_key, c(1, 2))
-    
-    res <- res %>%
-      AddMetaData(
-        metadata = Embeddings(., reduction = red_name),
-        col.name = umap_columns
-      )
-  }
-  
-  res
-}
-
-# Run PCA, cluster, run UMAP, cluster cells 
-cluster_RNA <- function(sobj_in, assay = "RNA", resolution = 0.6, dims = 1:40, 
-                        prefix = "", pca_meta = T, umap_meta = T, ...) {
-  # Use FindNeighbors to construct a K-nearest neighbors graph based on the euclidean distance in 
-  # PCA space, and refine the edge weights between any two cells based on the
-  # shared overlap in their local neighborhoods (Jaccard similarity).
-  # Use FindClusters to apply modularity optimization techniques such as the Louvain algorithm 
-  # (default) or SLM, to iteratively group cells together
-  
-  # Run PCA and UMAP
-  # Data must be scaled
-  res <- sobj_in %>%
-    run_UMAP_RNA(
-      assay     = assay,
-      prefix    = prefix,
-      dims      = dims,
-      pca_meta  = pca_meta,
-      umap_meta = umap_meta,
-      ...
-    )
-  
-  # Create nearest neighbors graph and find clusters
-  res <- res %>%
-    FindNeighbors(
-      assay     = assay,
-      reduction = "pca",
-      dims      = dims
-    ) %>%
-    FindClusters(
-      resolution = resolution,
-      verbose = F
-    ) %>%
-    AddMetaData(
-      metadata = Idents(.),
-      col.name = str_c(assay, "_clusters")
-    )
-  
-  res
-}
-
-# Calculate feature fold change with median control group signal
-calc_feat_fc <- function(sobj_in, feat = "adt_ovalbumin", data_slot = "counts", add_pseudo = F,
-                         fc_column = "ova_fc", grp_column = "cell_type", control_grps = c("B cell", "T cell")) {
-  
-  res <- sobj_in %>%
-    AddMetaData(FetchData(
-      object = ., 
-      vars   = feat,
-      slot   = data_slot
-    ))
-  
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(con_grp = if_else(!!sym(grp_column) %in% control_grps, T, F)) %>%
-    group_by(con_grp) %>%
-    mutate(con_med = ifelse(con_grp, median(!!sym(feat)), NA)) %>%
-    ungroup() %>%
-    mutate(
-      con_med = max(con_med, na.rm = T),
-      !!sym(fc_column) := adt_ovalbumin / con_med
-    ) %>%
-    dplyr::select(-con_grp, -con_med) %>%
-    column_to_rownames("cell_id")
-  
-  
-  # Add pseudo count
-  if (0 %in% pull(res@meta.data, fc_column)) {
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
-        pseudo = ifelse(!!sym(fc_column) > 0, !!sym(fc_column), NA),
-        pseudo = min(pseudo, na.rm = T) * 0.5,
-        !!sym(fc_column) := !!sym(fc_column) + pseudo
-      ) %>%
-      column_to_rownames("cell_id")
-  }
-  
-  res
-}
-
-# Subset Seurat objects for plotting
-subset_sobj <- function(sobj_in, name, cell_types, type_column = "cell_type", dims = 1:40,
-                        cc_scoring = F, regress_vars = NULL, ...) {
-  
-  # Filter cells based on input cell type
-  res <- sobj_in %>%
-    subset(subset = !!sym(type_column) %in% cell_types)
-  
-  # Score cell cycle genes
-  if (cc_scoring) {
-    s.genes <- cc.genes$s.genes %>%
-      str_to_title()
-    
-    g2m.genes <- cc.genes$g2m.genes %>%
-      str_to_title()
-    
-    res <- res %>%
-      CellCycleScoring(
-        s.features   = s.genes,
-        g2m.features = g2m.genes
-      )
-  }
-  
-  # Re-process object
-  res <- res %>%
-    FindVariableFeatures(
-      selection.method = "vst",
-      nfeatures = 2000
-    ) %>%
-    ScaleData(vars.to.regress = regress_vars) %>%
-    RunPCA() %>%
-    RunUMAP(dims = dims)
-  
-  res
-}
-
-# Filter list of Seurat objects for patient, normalize and merge objects 
-merge_sobj <- function(sobj_list, sample_order = NULL) {
-
-  res <- merge(
-    x = sobj_list[[1]],
-    y = sobj_list[2:length(sobj_list)],
-    add.cell.ids = names(sobj_list)
-  ) %>%
-    ScaleData(assay = "RNA") %>%
-    ScaleData(assay = "adt") %>%
-    FindVariableFeatures(assay = "RNA")
-  
-  # Set sample order
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_ids") %>%
-    mutate(orig.ident = fct_relevel(orig.ident, sample_order)) %>%
-    column_to_rownames("cell_ids")
-  
-  res
-}
-
-# Fit gaussian mixture model for given signal
-fit_GMM <- function(sobj_in, data_column = "adt_ovalbumin", data_slot = "counts", prob = 0.5, quiet = F) {
-  
-  set.seed(42)
-  
-  # Fit GMM for OVA signal
-  data_df <- sobj_in %>%
-    FetchData(data_column, slot = data_slot)
-  
-  quiet_EM <- quietly(~ normalmixEM(.))
-  
-  if (!quiet) {
-    quiet_EM <- normalmixEM
-  }
-  
-  mixmdl <- data_df %>%
-    pull(data_column) %>%
-    quiet_EM()
-  
-  if (quiet) {
-    mixmdl <- mixmdl$result
-  }
-  
-  # New column names
-  ova_names <- c("Low", "High")
-  comp_names <- c("comp.1", "comp.2")
-  
-  if (mixmdl$mu[1] > mixmdl$mu[2]) {
-    ova_names <- rev(ova_names)
-  }
-  
-  names(comp_names)    <- ova_names
-  names(mixmdl$mu)     <- ova_names
-  names(mixmdl$sigma)  <- ova_names
-  names(mixmdl$lambda) <- ova_names
-
-  # Divide into OVA groups
-  res <- data.frame(
-    cell_id = rownames(data_df),
-    data = data_df[, data_column],
-    mixmdl$posterior
-  ) %>%
-    dplyr::rename(!!sym(data_column) := data) %>%
-    rename(all_of(comp_names)) %>%
-    mutate(GMM_grp = if_else(High >= prob, "High", "Low")) %>%
-    column_to_rownames("cell_id")
-  
-  # Check that GMM results match input data
-  data_chk <- identical(res[, data_column], data_df[, data_column])
-  cell_chk <- identical(rownames(res), rownames(sobj_in@meta.data))
-  
-  if (!data_chk && cell_chk) {
-    stop("Input cells do not match cells in GMM output.")
-  }
-  
-  res <- list(
-    res    = res,
-    mu      = mixmdl$mu,
-    sigma   = mixmdl$sigma,
-    lambda  = mixmdl$lambda,
-    mix_obj = mixmdl
-  )
-  
-  res
-}
-
-# Classify cells based on OVA signal
-classify_ova <- function(sobj_in, filt_column = "cell_type", filt = NULL, data_column = "adt_ovalbumin", 
-                         data_slot = "counts", return_sobj = T, ...) {
-  
-  # Filter Seurat object
-  sobj_filt <- sobj_in
-  
-  if (!is.null(filt)) {
-    sobj_filt <- sobj_filt %>%
-      subset(!!sym(filt_column) == filt)
-  }
-  
-  # Fit GMM
-  gmm_res <- sobj_filt %>%
-    fit_GMM(
-      data_column = data_column,
-      data_slot   = data_slot,
-      ...
-    )
-  
-  # Add results to data.frame
-  gmm_df <- gmm_res$res %>%
-    rownames_to_column("cell_id") %>%
-    mutate(
-      GMM_mu     = gmm_res$mu[GMM_grp],
-      GMM_sigma  = gmm_res$sigma[GMM_grp],
-      GMM_lambda = gmm_res$lambda[GMM_grp],
-      GMM_grp    = str_to_lower(GMM_grp),
-      GMM_grp    = str_c("ova ", GMM_grp)
-    ) %>%
-    select(-!!sym(data_column), -Low, -High)
-  
-  # Return data.frame
-  if (!return_sobj) {
-    if (!is.null(filt)) {
-      gmm_df <- gmm_df %>%
-        mutate(!!sym(filt_column) := filt)
-    }
-    
-    return(gmm_df)
-  }
-  
-  # Add OVA groups to meta.data for input object
-  gmm_df <- gmm_df %>%
-    column_to_rownames("cell_id")
-  
-  res <- sobj_in %>%
-    AddMetaData(gmm_df)
-  
-  # Add "Other" label for cells not included in the comparison
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(GMM_grp = if_else(is.na(GMM_grp), "Other", GMM_grp)) %>%
-    column_to_rownames("cell_id")
-  
-  res
-}
-
-# Helper to export counts and meta.data tables
-export_matrices <- function(sobj_in, out_dir, file_prefix) {
-  
-  # Format count matrices
-  rna <- sobj_in %>%
-    GetAssayData(assay = "RNA", "counts") %>%
-    as_tibble(rownames = "gene_symbol")
-  
-  adt <- sobj_in %>%
-    GetAssayData(assay = "ADT", "counts") %>%
-    as_tibble(rownames = "gene_symbol") %>%
-    mutate(gene_symbol = str_c("adt_", gene_symbol))
-  
-  # Write count matrix
-  counts_out <- file.path(out_dir, str_c(file_prefix, "_count_matrix.tsv.gz"))
-  
-  bind_rows(rna, adt) %>%
-    write_tsv(counts_out)
-  
-  # meta.data columns to include  
-  meta_cols <- c(
-    "cell_id",      "orig.ident",
-    "nCount_RNA",   "nFeature_RNA",
-    "Percent_mito", "S.Score",
-    "G2M.Score",    "Phase",
-    "subtype",      "UMAP_1",
-    "UMAP_2"
-  )
-
-  # Write meta.data table
-  meta_out <- file.path(out_dir, str_c(file_prefix, "_metadata.tsv.gz"))
-  
-  sobj_in@meta.data %>%
-    as_tibble(rownames = "cell_id") %>%
-    select(all_of(meta_cols)) %>%
-    write_tsv(meta_out)
-}
-
-
-# Processing ----
-
-# Create Seurat object, normalize data, run UMAP, and cluster
-create_sobjs_01 <- function(path_in, resolution, cc_scoring = F, regress_vars = NULL,
-                            proj_name = "SeuratProject") {
-  
-  # Create Seurat object
-  res <- path_in %>%
-    create_sobj(
-      proj_name = proj_name,
-      adt_count_min = 0
-    )
-  
-  # Normalize and cluster
-  res <- res %>%
-    norm_sobj(
-      rna_assay    = "RNA",
-      adt_assay    = "ADT",
-      cc_scoring   = F, 
-      regress_vars = NULL
-    ) %>%
-    cluster_RNA(
-      assay      = "RNA",
-      resolution = resolution,
-      pca_meta   = F,
-      umap_meta  = F 
-    )
-  
-  res
-}
-
-# Annotate cell types and calculate OVA fold change for each object
-clustify_cell_types_02 <- function(sobj_in, ref_mat, threshold, umap_meta = F) {
-
-  # Assign cell types
-  # By default variable features are used for annotation
-  res <- sobj_in %>%
-    clustify(
-      cluster_col   = "RNA_clusters",
-      ref_mat       = ref_mat,
-      rename_prefix = "t1",
-      seurat_out    = T,
-      threshold     = threshold
-    )
-  
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(cell_type = t1_type) %>%
-    column_to_rownames("cell_id")
-  
-  if (!umap_meta) {
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      select(-UMAP_1, -UMAP_2) %>%
-      column_to_rownames("cell_id")
-  }
-
-  # Calculate OVA fold change
-  res <- res %>%
-    calc_feat_fc(
-      feat         = "adt_ovalbumin",
-      data_slot    = "counts",
-      grp_column   = "cell_type",
-      control_grps = c("B cell", "T cell"),
-      add_pseudo   = T
-    )
-  
-  res
-}
-
-# Split objects based on cell type, re-cluster and run clustify to annotate subtypes
-clustify_subsets_03 <- function(sobj_in, type_in = NULL, ref, assay = "RNA", resolution = 1.8, dims = 1:40,
-                                type_column = "cell_type", subtype_column = "subtype", prefix = NULL, 
-                                cc_scoring = F, regress_vars = NULL, ...) {
-  
-  # Subset object, scale data, run PCA, and run UMAP
-  if (!is.null(type_in)) {
-    sobj_in <- sobj_in %>%
-      subset_sobj(
-        cell_type    = type_in,
-        type_column  = type_column,
-        cc_scoring   = cc_scoring,
-        regress_vars = regress_vars
-      )
-  }
-  
-  # Re-cluster data
-  res <- sobj_in %>%
-    FindNeighbors(
-      assay     = assay,
-      reduction = "pca",
-      dims      = dims
-    ) %>%
-    FindClusters(
-      resolution = resolution,
-      verbose = F
-    ) %>%
-    AddMetaData(
-      metadata = Idents(.),
-      col.name = "type_clusters"
-    ) %>%
-    clustify(
-      ref_mat       = ref,
-      cluster_col   = "type_clusters",
-      rename_prefix = prefix,
-      ...
-    )
-  
-  # Set subtype and subtype_cluster columns
-  if (!is.null(subtype_column)) {
-    new_col <- "type"
-    
-    if (!is.null(prefix)) {
-      new_col <- str_c(prefix, "_", new_col)
-    }
-    
-    type_col  <- sym(type_column)
-    sub_col   <- sym(subtype_column)
-    clust_col <- sym(str_c(subtype_column, "_clusters"))
-    new_col   <- sym(new_col)
-    
-    res@meta.data <- res@meta.data %>%
-      rownames_to_column("cell_id") %>%
-      mutate(
-        !!sub_col   := str_to_title_v2(!!new_col),
-        !!clust_col := str_c(type_clusters, "-", !!sub_col)
-      ) %>%
-      column_to_rownames("cell_id")
-  }
-  
-  res
-}
-
-# Add subtype assignments back to main objects and split again to now include
-# additional cell types (B cells, T cells, etc.) for plotting
-resplit_objects_04 <- function(sobj_in, subtype_so, type_in, inc_types, cc_scoring = F,
-                               regress_vars = NULL) {
-  
-  # Retrieve subtype labels from subtype_so
-  type_res <- subtype_so %>%
-    FetchData(c(
-      "t2_type", "t2_r",
-      "subtype", "subtype_clusters"
-    ))
-  
-  # Add subtype labels and subset to add back additional
-  # cell types (B cells, T cells, etc)
-  res <- sobj_in %>%
-    AddMetaData(type_res) %>%
-    subset_sobj(
-      cell_types   = c(type_in, inc_types),
-      type_column  = "cell_type",
-      cc_scoring   = cc_scoring,
-      regress_vars = regress_vars
-    )
-  
-  # Format meta.data
-  res <- res %>%
-    AddMetaData(FetchData(., c("UMAP_1", "UMAP_2")))
-  
-  res@meta.data <- res@meta.data %>%
-    rownames_to_column("cell_id") %>%
-    mutate(
-      subtype          = ifelse(is.na(subtype), cell_type, subtype),
-      subtype          = str_to_title_v2(subtype),
-      subtype_clusters = ifelse(is.na(subtype_clusters), cell_type, subtype_clusters)
-    ) %>%
-    column_to_rownames("cell_id")
-  
-  res
-  
-}
-
-# Classify classify cells based on OVA counts, do this for each cell type
-# and each subtype
-classify_ova_05 <- function(sobj_in, type_in, type_column = "cell_type", subtype_column = "subtype",
-                            data_column = "adt_ovalbumin", data_slot = "counts") {
-  
-  # Classify cells for cell type based on OVA signal
-  res <- sobj_in %>%
-    classify_ova(
-      filt_column = type_column,
-      filt        = type_in,
-      data_column = data_column,
-      data_slot   = data_slot,
-      quiet       = T,
-      return_sobj = T
-    )
-  
-  # Split by subtype before classifying based on OVA
-  subtypes <- unique(pull(res@meta.data, subtype_column))
-  
-  GMM_res <- subtypes %>%
-    map(~ {
-      classify_ova(
-        sobj_in     = res,
-        filt_column = subtype_column,
-        filt        = .x,
-        data_column = data_column,
-        data_slot   = data_slot,
-        quiet       = T,
-        return_sobj = F
-      )
-    }) %>%
-    bind_rows() %>%
-    mutate(type_GMM_grp_2 = str_c(!!sym(subtype_column), "-", GMM_grp)) %>%
-    select(
-      cell_id,
-      type_GMM_grp    = GMM_grp,
-      type_GMM_grp_2,
-      type_GMM_mu     = GMM_mu,
-      type_GMM_sigma  = GMM_sigma,
-      type_GMM_lambda = GMM_lambda
-    ) %>%
-    column_to_rownames("cell_id")
-  
-  res <- res %>%
-    AddMetaData(GMM_res)
-  
-  res
-}
-
-
-# Plotting ----
-
-# Overlay feature data on UMAP or tSNE
-# Cannot change number of columns when using FeaturePlot with split.by
-plot_features <- function(sobj_in, x = "UMAP_1", y = "UMAP_2", feature, data_slot = "data", 
-                          split_id = NULL, pt_size = 0.25, pt_outline = NULL, plot_cols = NULL,
-                          feat_levels = NULL, split_levels = NULL, min_pct = NULL, max_pct = NULL, 
-                          calc_cor = F, lm_line = F, lab_size = 3.7, lab_pos = c(0.8, 0.9), ...) {
-  
-  # Format imput data
-  counts <- sobj_in
-  
-  if ("Seurat" %in% class(sobj_in)) {
-    vars <- c(x, y, feature)
-    
-    if (!is.null(split_id)) {
-      vars <- c(vars, split_id)
-    }
-
-    counts <- sobj_in %>%
-      FetchData(vars = unique(vars), slot = data_slot) %>%
-      as_tibble(rownames = "cell_ids")
-  }
-  
-  # Rename features
-  if (!is.null(names(feature))) {
-    counts <- counts %>%
-      rename(!!!syms(feature))
-    
-    feature <- names(feature)
-  }
-  
-  if (!is.null(names(x))) {
-    counts <- counts %>%
-      rename(!!!syms(x))
-    
-    x <- names(x)
-  }
-  
-  if (!is.null(names(y))) {
-    counts <- counts %>%
-      rename(!!!syms(y))
-    
-    y <- names(y)
-  }
-  
-  # Set min and max values for feature
-  if (!is.null(min_pct) || !is.null(max_pct)) {
-    counts <- counts %>%
-      mutate(
-        pct_rank = percent_rank(!!sym(feature)),
-        max_val  = ifelse(pct_rank > max_pct, !!sym(feature), NA),
-        max_val  = min(max_val, na.rm = T),
-        min_val  = ifelse(pct_rank < min_pct, !!sym(feature), NA),
-        min_val  = max(min_val, na.rm = T),
-        !!sym(feature) := if_else(!!sym(feature) > max_val, max_val, !!sym(feature)),
-        !!sym(feature) := if_else(!!sym(feature) < min_val, min_val, !!sym(feature))
-      )
-  }
-
-  # Set feature order
-  if (!is.null(feat_levels)) {
-    counts <- counts %>%
-      mutate(!!sym(feature) := fct_relevel(!!sym(feature), feat_levels))
-  }
-  
-  # Set facet order
-  if (!is.null(split_id) && length(split_id) == 1) {
-    counts <- counts %>%
-      mutate(split_id = !!sym(split_id))
-    
-    if (!is.null(split_levels)) {
-      counts <- counts %>%
-        mutate(split_id = fct_relevel(split_id, split_levels))
-    }
-  }
-  
-  # Calculate correlation
-  if (calc_cor) {
-    if (!is.null(split_id)) {
-      counts <- counts %>%
-        group_by(split_id)
-    }
-    
-    counts <- counts %>%
-      mutate(
-        r       = tidy(cor.test(!!sym(x), !!sym(y)))$estimate,
-        r       = round(r, digits = 2),
-        pval    = tidy(cor.test(!!sym(x), !!sym(y)))$p.value,
-        cor_lab = str_c("r = ", r, ", p = ", format(pval, digits = 2))
-        
-        # cor_lab = cor(!!sym(x), !!sym(y)),
-        # cor_lab = round(cor_lab, digits = 2),
-        # cor_lab = str_c("r = ", cor_lab),
-      )
-    
-    if (lab_pos != "strip") {
-      counts <- counts %>%
-        mutate(
-          min_x = min(!!sym(x)),
-          max_x = max(!!sym(x)),
-          min_y = min(!!sym(y)),
-          max_y = max(!!sym(y)),
-          lab_x = (max_x - min_x) * lab_pos[1] + min_x,
-          lab_y = (max_y - min_y) * lab_pos[2] + min_y
-        )
-    }
-  }
-  
-  # Create scatter plot
-  # To add outline for each cluster create separate layers
-  res <- counts %>%
-    arrange(!!sym(feature))
-  
-  if (!is.null(pt_outline)) {
-    
-    if (!is.numeric(counts[[feature]])) {
-      res <- res %>%
-        ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature), fill = !!sym(feature)))
-      
-      feats <- counts[[feature]] %>%
-        unique()
-      
-      if (!is.null(feat_levels)) {
-        feats <- feat_levels[feat_levels %in% feats]
-      }
-      
-      for (feat in feats) {
-        f_counts <- counts %>%
-          filter(!!sym(feature) == feat)
-        
-        res <- res +
-          geom_point(data = f_counts, aes(fill = !!sym(feature)), size = pt_outline, color = "black", show.legend = F) +
-          geom_point(data = f_counts, size = pt_size)
-      }
-      
-    } else {
-      res <- res %>%
-        ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature))) +
-        geom_point(aes(fill = !!sym(feature)), size = pt_outline, color = "black", show.legend = F) +
-        geom_point(size = pt_size)
-    }
-    
-  } else {
-    res <- res %>%
-      ggplot(aes(!!sym(x), !!sym(y), color = !!sym(feature))) +
-      geom_point(size = pt_size)
-  }
-
-  # Add regression line
-  if (lm_line) {
-    res <- res +
-      geom_smooth(method = "lm", se = F, color = "black", size = 0.5, linetype = 2)
-  }
-  
-  # Add correlation coefficient label
-  if (calc_cor && lab_pos != "strip") {
-    res <- res +
-      geom_text(
-        aes(lab_x, lab_y, label = cor_lab),
-        color = "black",
-        size  = lab_size,
-        check_overlap = T, 
-        show.legend = F
-      )
-  }
-  
-  # Set feature colors
-  if (!is.null(plot_cols)) {
-    if (is.numeric(counts[[feature]])) {
-      res <- res +
-        scale_color_gradientn(colors = plot_cols)
-        # scale_color_gradient(low = plot_cols[1], high = plot_cols[2])
-
-    } else {
-      res <- res +
-        scale_color_manual(values = plot_cols) +
-        scale_fill_manual(values = plot_cols)
-    }
-  }
-  
-  # Split plot into facets
-  cor_labeller <- function(labels) {
-    labels %>%
-      map(~ {
-        cor_labs <- counts %>%
-          ungroup() %>%
-          select(!!sym(feature), cor_lab) %>%
-          unique()
-        
-        cor_labs <- set_names(cor_labs$cor_lab, cor_labs[[feature]])
-        
-        str_c(.x, "\n", cor_labs[.x])
-      })
-  }
-  
-  if (!is.null(split_id)) {
-    if (length(split_id) == 1) {
-      
-      if (calc_cor && lab_pos == "strip") {
-        my_labs <- cor_labeller
-        
-      } else {
-        my_labs <- "label_value"
-      }
-      
-      res <- res +
-        facet_wrap(~ split_id, labeller = my_labs, ...)
-      
-    } else if (length(split_id) == 2) {
-      eq <- str_c(split_id[1], " ~ ", split_id[2])
-      
-      res <- res +
-        facet_grid(as.formula(eq), ...)
-    }
-  }
-  
-  res
-}
-
-# Create GO bubble plot
-create_bubbles <- function(GO_df, plot_colors = theme_cols[c(1:2, 4, 9)],
-                           n_terms = 15) {
-
-  # Check for empty inputs
-  if (is_empty(GO_df) || nrow(GO_df) == 0) {
-    res <- ggplot() +
-      geom_blank()
-    
-    return(res)
-  }
-  
-  # Shorten GO terms and database names
-  GO_data <- GO_df %>%
-    mutate(
-      term_id = str_remove(term_id, "(GO|KEGG):"),
-      term_id = str_c(term_id, " ", term_name),
-      term_id = str_to_lower(term_id),
-      term_id = str_trunc(term_id, 40, "right"),
-      source  = fct_recode(
-        source,
-        "Biological\nProcess" = "GO:BP",
-        "Cellular\nComponent" = "GO:CC",
-        "Molecular\nFunction" = "GO:MF",
-        "KEGG"                = "KEGG"
-      )
-    )
-  
-  # Reorder database names
-  plot_levels <- c(
-    "Biological\nProcess",
-    "Cellular\nComponent",
-    "Molecular\nFunction",
-    "KEGG"
-  )
-  
-  GO_data <- GO_data %>%
-    mutate(source = fct_relevel(source, plot_levels))
-  
-  # Extract top terms for each database
-  top_GO <- GO_data %>%
-    group_by(source) %>%
-    arrange(p_value) %>%
-    dplyr::slice(1:n_terms) %>%
-    ungroup()
-  
-  # Create bubble plots
-  res <- GO_data %>%
-    ggplot(aes(1.25, -log10(p_value), size = intersection_size)) +
-    geom_point(color = plot_colors, alpha = 0.5, show.legend = T) +
-    geom_text_repel(
-      aes(2, -log10(p_value), label = term_id),
-      data         = top_GO,
-      size         = 2.3,
-      direction    = "y",
-      hjust        = 0,
-      segment.size = NA
-    ) +
-    xlim(1, 8) +
-    labs(y = "-log10(p-value)") +
-    base_theme +
-    theme(
-      axis.title.x    = element_blank(),
-      axis.text.x     = element_blank(),
-      axis.ticks.x    = element_blank()
-    ) +
-    facet_wrap(~ source, scales = "free", nrow = 1)
-  
-  res
-}
-
-# Plot percentage of cells in given groups
-plot_cell_count <- function(sobj_in, group_id, split_id = NULL, group_order = NULL, fill_id, 
-                            plot_cols = NULL, x_lab = "Cell type", y_lab = "Fraction of cells",
-                            bar_pos = "fill", order_count = T, bar_line = 0, ...) {
-  
-  res <- sobj_in
-  
-  if ("Seurat" %in% class(sobj_in)) {
-    res <- sobj_in@meta.data %>%
-      rownames_to_column("cell_id")
-  }
-  
-  res <- res %>%
-    mutate(
-      group_id := !!sym(group_id),
-      fill_id  := !!sym(fill_id)
-    )
-  
-  if (!is.null(group_order)) {
-    res <- res %>%
-      mutate(group_id = fct_relevel(group_id, group_order))
-  }
-  
-  if (!is.null(split_id)) {
-    res <- res %>%
-      mutate(split_id := !!sym(split_id))
-  }
-  
-  if (order_count) {
-    res <- res %>%
-      mutate(fill_id = fct_reorder(fill_id, cell_id, n_distinct))
-  }
-
-  res <- res %>%
-    ggplot(aes(group_id, fill = fill_id)) +
-    geom_bar(position = bar_pos, size = bar_line, color = "black") +
-    labs(x = x_lab, y = y_lab)
-  
-  if (!is.null(plot_cols)) {
-    res <- res +
-      scale_fill_manual(values = plot_cols)
-  }
-  
-  if (!is.null(split_id)) {
-    res <- res +
-      facet_wrap(~ split_id, ...)
-  }
-  
-  res
-}
-
-
-# Differential expression ----
-
-# Find markers with presto
-find_markers <- function(sobj_in, group_column = NULL, exclude_clust = NULL, groups_use = NULL, 
-                         uniq = params$uniq_markers, FC_min = params$FC_min, auc_min = params$auc_min, 
-                         p_max = params$p_max_markers, pct_in_min = params$pct_in_min, 
-                         pct_out_max = params$pct_out_max, ...) {
-  
-  if (!is.null(exclude_clust) && is.null(groups_use)) {
-    sobj_in <- sobj_in %>%
-      subset(subset = !!sym(group_column) != exclude_clust)
-  }
-  
-  res <- sobj_in %>%
-    wilcoxauc(
-      group_by = group_column,
-      groups_use = groups_use,
-      ...
-    ) %>%
-    as_tibble() %>%
-    filter(
-      padj    < p_max,
-      logFC   > FC_min,
-      auc     > auc_min,
-      pct_in  > pct_in_min,
-      pct_out < pct_out_max
-    ) %>%
-    arrange(desc(logFC))
-  
-  if (uniq) {
-    res <- res %>%
-      group_by(feature) %>%
-      filter(n() == 1) %>%
-      ungroup()
-  }
-  
-  res
-}
-
-# Find cluster markers for each separate cell type
-find_group_markers <- function(input_grp, input_sobj, grp_column, clust_column) {
-  
-  res <- input_sobj %>%
-    subset(!!sym(grp_column) == input_grp)
-
-  clusts <- res@meta.data %>%
-    pull(clust_column)
-
-  if (n_distinct(clusts) < 2) {
-    return(NULL)
-  }
-
-  res <- res %>%
-    find_markers(group_column = clust_column) %>%
-    mutate(cell_type = input_grp)
-
-  res
-}
-
-# Run gprofiler
-run_gprofiler <- function(gene_list, genome = NULL, gmt_id = NULL, p_max = params$p_max_GO, 
-                          GO_size = params$term_size, intrsct_size = params$intrsct_size, 
-                          order_query = params$order_query, dbases = c("GO:BP", "GO:MF", "KEGG"), ...) {
-  
-  # Check for empty gene list
-  if (is_empty(gene_list)) {
-    return(as_tibble(NULL))
-  }
-  
-  # Check arguments
-  if (is.null(genome) && is.null(gmt_id)) {
-    stop("ERROR: Must specifiy genome or gmt_id")
-  }
-  
-  # Use gmt id
-  if (!is.null(gmt_id)) {
-    genome <- gmt_id
-    dbases <- NULL
-  }
-  
-  # Run gProfileR
-  res <- gene_list %>%
-    gost(
-      organism       = genome,
-      sources        = dbases,
-      domain_scope   = "annotated",
-      significant    = T,
-      user_threshold = p_max,
-      ordered_query  = order_query,
-      ...
-    )
-  
-  # Format and sort output data.frame
-  res <- as_tibble(res$result)
-  
-  if (!is_empty(res)) {
-    res <- res %>%
-      filter(
-        term_size > GO_size,
-        intersection_size > intrsct_size
-      ) %>%
-      arrange(source, p_value)
-  }
-  
-  res
-}
-
-
-# Figure panels ----
-
-# Create UMAPs testing different clustering resolutions with clustifyr
-create_clust_umaps <- function(sobj_in, ref_in, x = "UMAP_1", y = "UMAP_2", reslns, plot_cols, pt_size = 0.05, pt_outline = 0.06, 
-                               threshold = "auto", bar_cols = c(rep("white", 2), "#403164"), panel_heights = c(0.75, 0.75, 1), ...) {
-  
-  # Remove UMAP columns from meta.data since clustifyr automatically adds these
-  if (any(c("UMAP_1", "UMAP_2") %in% colnames(sobj_in@meta.data))) {
-    sobj_in@meta.data <- sobj_in@meta.data %>%
-      select(-UMAP_1, -UMAP_2)
-  }
-  
-  # Cluster and create data.frame for UMAPs
-  cluster_df <- map(reslns, ~ {
-    res <- sobj_in %>%
-      clustify_subsets_03(
-        ref        = ref_in,
-        resolution = .x,
-        threshold  = threshold
-      )
-    
-    res <- res@meta.data %>%
-      as_tibble(rownames = "cell_id") %>%
-      mutate(
-        n_clust   = n_distinct(seurat_clusters),
-        clust_lab = str_c(n_clust, " (", .x, ")"),
-        type      = str_to_title_v2(type)
-      ) %>%
-      arrange(n_clust) %>%
-      mutate(clust_lab = fct_inorder(clust_lab)) %>%
-      dplyr::select(
-        cell_id, orig.ident, seurat_clusters,
-        type, n_clust, clust_lab, r, all_of(c(x, y))
-      )
-    
-    res
-  }) %>%
-    bind_rows()
-  
-  # Helper function to create UMAPs
-  create_umaps <- function(df_in, x, y, feat, plot_cols = get_cols(70), pt_size = 0.05,
-                           pt_outline = 0.06, guide = outline_guide, ...) {
-    res <- df_in %>%
-      plot_features(
-        x          = x,
-        y          = y,
-        feature    = feat,
-        pt_size    = pt_size,
-        pt_outline = pt_outline,
-        plot_cols  = plot_cols,
-        split_id   = "clust_lab",
-        nrow       = 1
-      ) +
-      guides(color = guide) +
-      umap_theme +
-      theme(
-        plot.margin     = unit(c(0.7, 0.2, 0.2, 0.2), "cm"),
-        legend.position = "bottom",
-        legend.title    = element_blank(),
-        legend.text     = element_text(size = 10)
-      ) +
-      theme(...)
-    
-    res
-  }
-  
-  # Cluster UMAPs
-  umap_guide <- outline_guide
-  umap_guide$nrow <- 4
-  
-  clust_gg <- cluster_df %>%
-    create_umaps(
-      x               = x,
-      y               = y,
-      pt_size         = pt_size,
-      pt_outline      = pt_outline,
-      feat            = "seurat_clusters",
-      guide           = umap_guide,
-      legend.position = "none",
-      ...
-    )
-  
-  # Correlation UMAPs
-  bar_guide <- guide_colorbar(frame.colour = "black", frame.linewidth = 0.2, barwidth = unit(0.2, "cm"))
-  
-  cor_gg <- cluster_df %>%
-    create_umaps(
-      x               = x,
-      y               = y,
-      pt_size         = pt_size,
-      pt_outline      = pt_outline,
-      feat            = "r",
-      guide           = bar_guide,
-      plot_cols       = bar_cols,
-      legend.position = "right",
-      legend.title    = element_text(),
-      ...
-    )
-    
-  # Cell type UMAPs
-  type_gg <- cluster_df %>%
-    create_umaps(
-      x          = x,
-      y          = y,
-      pt_size    = pt_size,
-      pt_outline = pt_outline,
-      feat       = "type",
-      guide      = umap_guide,
-      plot_cols  = plot_cols,
-      ...
-    )
-  
-  # Create final figure
-  plot_grid(
-    clust_gg, cor_gg, type_gg,
-    rel_heights = panel_heights,
-    ncol  = 1,
-    align = "v",
-    axis  = "rl"
-  )
-}
-
-# Create reference UMAP for comparisons
-create_ref_umap <- function(input_sobj, pt_size = 0.1, pt_outline = NULL, pt_mtplyr = 1, color_guide, ...) {
-  
-  if (is.null(pt_outline)) {
-    pt_outline <- pt_size * pt_mtplyr + 0.3
-  }
-  
-  res <- input_sobj %>%
-    plot_features(
-      pt_size     = pt_size * pt_mtplyr,
-      pt_outline  = pt_outline,
-      ...
-    ) +
-    guides(color = color_guide) +
-    umap_theme +
-    theme(
-      legend.position = "top",
-      legend.title    = element_blank(),
-      legend.text     = element_text(size = 10)
-    )
-  
-  res
-}
-
-# Create UMAPs showing marker gene signal
-create_marker_umaps <- function(input_sobj, input_markers, low_col = "#fafafa", high_col = NULL, pt_size = 0.1, 
-                                pt_outline = NULL, pt_mtplyr = 1, low_col_mtplyr = 1, high_col_mtplyr = 1) {
-
-  # Set UMAP point size
-  pt_size <- pt_size * pt_mtplyr
-  
-  # Set UMAP colors
-  if (!is.null(high_col)) {
-    input_markers <- set_names(
-      x  = rep(high_col, length(input_markers)),
-      nm = input_markers
-    )
-  }
-  
-  # Set color multipliers
-  if (length(high_col_mtplyr) == 1) {
-    high_col_mtplyr <- rep(high_col_mtplyr, length(input_markers))
-  }
-  
-  if (length(low_col_mtplyr) == 1) {
-    low_col_mtplyr <- rep(low_col_mtplyr, length(input_markers))
-  }
-  
-  # Plot parameters
-  umap_args <- list(
-    unname(input_markers),
-    names(input_markers),
-    low_col_mtplyr,
-    high_col_mtplyr
-  )
-  
-  # Create UMAPs
-  res <- umap_args %>%
-    pmap(~ {
-      input_sobj %>%
-        plot_features(
-          feature    = ..2,
-          plot_cols  = c(rep(low_col, ..3), rep(..1, ..4)),
-          pt_outline = pt_outline,
-          pt_size    = pt_size
-        ) +
-        ggtitle(.y) +
-        umap_theme +
-        theme(
-          plot.title        = element_text(size = 13),
-          legend.position   = "bottom",
-          legend.title      = element_blank(),
-          legend.text       = element_text(size = 8),
-          legend.key.height = unit(0.1, "cm"),
-          legend.key.width  = unit(0.3, "cm"),
-          axis.title.y      = element_text(size = 13, color = "white"),
-          axis.text.y       = element_text(size = 8, color = "white")
-        )
-    })
-  
-  res
-}
-
-# Create boxplots showing marker gene signal
-create_marker_boxes <- function(input_sobj, input_markers, clust_column, box_cols, group = NULL, include_legend = F,
-                                all_boxes = F, all_violins = F, order_boxes = T, clust_regex = "\\-[a-zA-Z0-9_ ]+$",
-                                n_boxes = 10, median_pt = 0.75, n_rows = 2, pt_mtplyr = 1, exclude_clust = NULL, ...) {
-  
-  # Retrieve and format data for boxplots
-  input_markers <- input_markers %>%
-    head(n_boxes)
-  
-  box_data <- input_sobj %>%
-    FetchData(c(clust_column, input_markers)) %>%
-    as_tibble(rownames = "cell_id") %>%
-    filter(!(!!sym(clust_column) %in% exclude_clust)) %>%
-    mutate(grp = str_remove(!!sym(clust_column), clust_regex))
-  
-  input_markers <- input_markers %>%
-    str_trunc(9)
-  
-  # Filter based on input group
-  if (!is.null(group)) {
-    box_data <- box_data %>%
-      filter(grp == group)
-  }
-  
-  # Format data for plots
-  box_data <- box_data %>%
-    pivot_longer(cols = c(-cell_id, -grp, -!!sym(clust_column)), names_to = "key", values_to = "Counts") %>%
-    mutate(
-      !!sym(clust_column) := fct_relevel(!!sym(clust_column), names(box_cols)),
-      key = str_trunc(key, width = 9, side = "right"),
-      key = fct_relevel(key, input_markers)
-    )
-  
-  # Order boxes by mean signal
-  if (order_boxes) {
-    box_data <- box_data %>%
-      mutate(!!sym(clust_column) := fct_reorder(!!sym(clust_column), Counts, mean, .desc = T))
-  }
-  
-  n_clust <- box_data %>%
-    pull(clust_column) %>%
-    n_distinct()
-  
-  # Create plots
-  n_cols <- ceiling(n_boxes / n_rows)
-  
-  res <- box_data %>%
-    ggplot(aes(!!sym(clust_column), Counts, fill = !!sym(clust_column))) + 
-    facet_wrap(~ key, ncol = n_cols) +
-    scale_color_manual(values = box_cols) +
-    base_theme +
-    theme(
-      panel.spacing.x  = unit(0.7, "cm"),
-      strip.background = element_blank(),
-      strip.text       = element_text(size = 13),
-      legend.position  = "none",
-      axis.title.x     = element_blank(),
-      axis.title.y     = element_text(size = 13),
-      axis.text.x      = element_blank(),
-      axis.text.y      = element_text(size = 8),
-      axis.ticks.x     = element_blank(),
-      axis.line.x      = element_blank()
-    )
-  
-  # Adjust output plot type
-  if (n_clust > 6 || all_boxes) {
-    res <- res +
-      stat_summary(geom = "point", shape = 22, fun = median, size = 0) +
-      stat_summary(geom = "point", shape = 22, fun = median, size = median_pt * 2, color = "black") +
-      geom_boxplot(
-        color          = "white",
-        fill           = "white",
-        alpha          = 1,
-        size           = 0.3,
-        outlier.colour = "white",
-        outlier.alpha  = 1,
-        outlier.size   = 0.1,
-        coef           = 0       # To exclude whiskers
-      ) +
-      geom_boxplot(
-        size           = 0.3,
-        outlier.colour = "grey85",
-        outlier.alpha  = 1,
-        outlier.size   = 0.1,
-        show.legend    = F,
-        coef           = 0,
-        fatten = 0
-      ) +
-      stat_summary(
-        aes(color = !!sym(clust_column)),
-        geom        = "point",
-        shape       = 22,
-        fun         = median,
-        size        = median_pt,
-        stroke      = 0.75,
-        fill        = "white",
-        show.legend = F
-      ) +
-      guides(fill = guide_legend(override.aes = list(size = 3.5, stroke = 0.25))) +
-      scale_fill_manual(values = box_cols) +
-      theme(
-        panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
-        panel.spacing.x  = unit(0.2, "cm")
-      ) +
-      theme(...)
-      
-  } else if (all_violins) {
-    res <- res +
-      geom_violin(aes(fill = !!sym(clust_column)), size = 0.2) +
-      stat_summary(
-        aes(color = !!sym(clust_column)),
-        geom   = "point",
-        shape  = 22,
-        fun    = median,
-        size   = median_pt,
-        stroke = 0.75,
-        fill   = "white"
-      ) +
-      scale_fill_manual(values = box_cols) +
-      scale_color_manual(values = box_cols) +
-      theme(
-        panel.background = element_rect(color = "#fafafa", fill = "#fafafa"),
-        panel.spacing.x  = unit(0.2, "cm")
-      ) +
-      theme(...)
-    
-  } else {
-    pt_size <- 0.3 * pt_mtplyr
-    
-    res <- res +
-      geom_quasirandom(size = pt_size) +
-      theme(...)
-  }
-  
-  # Add legend
-  if (include_legend) {
-    res <- res +
-      guides(color = col_guide) +
-      theme(legend.position = "top")
-  }
-  
-  # Add blank space for missing facets
-  n_keys <- n_distinct(box_data$key)
-  
-  if (n_keys <= n_cols && n_rows > 1) {
-    n_keys <- if_else(n_keys == 1, 2, as.double(n_keys))
-    n_cols <- floor(n_cols / n_keys)
-    
-    res <- res %>%
-      plot_grid(
-        ncol = n_cols,
-        nrow = 2
-      )
-  }
-  
-  res
-}
-
-# Create figure summarizing marker genes
-create_marker_fig <- function(input_sobj, input_markers, input_GO, clust_column, input_umap, umap_color, fig_heights = c(0.46, 0.3, 0.3), 
-                              GO_genome = params$genome, box_colors, n_boxes = 10, umap_outline = NULL, umap_mtplyr = 1, xlsx_name = NULL, 
-                              sheet_name = NULL, ...) {
-  
-  # Set blank plots
-  marks_umap <- marks_boxes <- GO_bubbles <- ggplot() +
-    geom_blank() +
-    theme_void()
-  
-  if (nrow(input_markers) == 0) {
-    res <- plot_grid(
-      marks_umap, marks_boxes, GO_bubbles,
-      rel_heights = fig_heights,
-      ncol = 1
-    )
-    
-    return(res)
-  }
-  
-  # Create UMAPs showing marker gene signal
-  top_marks <- input_markers$feature %>%
-    head(n_boxes)
-  
-  clust_legend <- get_legend(input_umap)
-  
-  input_umap <- input_umap +
-    theme(legend.position = "none")
-  
-  marks_umap <- input_sobj %>%
-    create_marker_umaps(
-      input_markers = head(top_marks, 7),
-      high_col      = umap_color,
-      pt_outline    = umap_outline,
-      pt_mtplyr     = umap_mtplyr
-    ) %>%
-    append(list(input_umap), .)
-  
-  marks_umap <- plot_grid(
-    plotlist = marks_umap,
-    ncol     = 4,
-    nrow     = 2,
-    align    = "vh",
-    axis     = "trbl"
-  )
-  
-  marks_umap <- plot_grid(
-    clust_legend, marks_umap,
-    rel_heights = c(0.2, 0.9),
-    nrow = 2
-  )
-  
-  # Create boxplots showing marker gene signal
-  marks_boxes <- input_sobj %>%
-    create_marker_boxes(
-      input_markers = top_marks,
-      clust_column  = clust_column,
-      box_cols      = box_colors,
-      n_boxes       = n_boxes,
-      plot.margin   = unit(c(0.8, 0.2, 0.2, 0.2), "cm"),
-      ...
-    )
-  
-  # Create GO term plots
-  if (nrow(input_GO) == 0) {
-    res <- plot_grid(
-      marks_umap, marks_boxes, GO_bubbles,
-      rel_heights = fig_heights,
-      ncol = 1
-    )
-    
-    return(res)  
-  }
-  
-  GO_bubbles <- input_GO %>%
-    create_bubbles(plot_colors = umap_color) +
-    theme(
-      plot.margin      = unit(c(0.8, 0.2, 0.2, 0.2), "cm"),
-      strip.background = element_blank(),
-      strip.text       = element_text(size = 13),
-      axis.title.y     = element_text(size = 13),
-      axis.text.y      = element_text(size = 8),
-      axis.line.x      = element_blank(),
-      legend.position  = "bottom",
-      legend.title     = element_blank(),
-      legend.text      = element_text(size = 8)
-    )
-  
-  # Write GO terms to excel file 
-  if (!is.null(xlsx_name)) {
-    
-    input_GO %>%
-      dplyr::select(
-        term_name,  term_id,
-        source,     effective_domain_size,
-        query_size, intersection_size,
-        p_value,    significant 
-      ) %>%
-      arrange(source, p_value) %>%
-      write.xlsx(
-        file      = str_c(xlsx_name, "_GO.xlsx"),
-        sheetName = sheet_name,
-        append    = T
-      )
-  }
-  
-  # Write markers to excel file
-  if (!is.null(xlsx_name)) {
-    input_markers %>%
-      write.xlsx(
-        file      = str_c(xlsx_name, "_markers.xlsx"),
-        sheetName = sheet_name,
-        append    = T
-      )
-  }
-  
-  # Create final figure
-  res <- plot_grid(
-    marks_umap, marks_boxes, GO_bubbles,
-    rel_heights = fig_heights,
-    ncol = 1
-  )
-  
-  res
-}
-
-# Filter clusters and set cluster order
-set_cluster_order <- function(input_cols, input_marks, n_cutoff = 5) {
-  input_marks <- input_marks %>%
-    group_by(group) %>%
-    filter(n() >= n_cutoff) %>%
-    ungroup()
-  
-  marks <- unique(input_marks$group)
-  res   <- names(input_cols)
-  res   <- res[res %in% marks]
-  
-  res
-}
-
-# Create v1 panel for marker genes
-create_marker_panel_v1 <- function(input_sobj, input_cols, input_umap = NULL, clust_column, order_boxes = T,
-                                   color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)),
-                                   uniq = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, exclude_clust = NULL,
-                                   groups_use = NULL, ...) {
-  
-  # Set point size
-  # ref_mtplyr <- if_else(umap_mtplyr == 1, umap_mtplyr, umap_mtplyr * 2.5)
-  umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
-  ref_mtplyr <- umap_mtplyr
-  
-  # Find marker genes
-  markers <- input_sobj %>%
-    find_markers(
-      group_column  = clust_column,
-      groups_use    = groups_use,
-      exclude_clust = exclude_clust
-    )
-  
-  # Find GO terms
-  GO_df <- markers
-  
-  if (nrow(markers) > 0) {
-    GO_df <- markers %>%
-      group_by(group) %>%
-      do({
-        arrange(., desc(logFC)) %>%
-          pull(feature) %>%
-          run_gprofiler(genome = params$genome)
-      }) %>%
-      ungroup()
-  }
-  
-  if (uniq && nrow(GO_df) > 0) {
-    GO_df <- GO_df %>%
-      group_by(term_id) %>%
-      filter(n() == 1) %>%
-      ungroup()
-  }
-  
-  # Set cluster order based on order of input_cols
-  fig_clusters <- input_cols %>%
-    set_cluster_order(markers)
-  
-  fig_clusters <- fig_clusters[!fig_clusters %in% exclude_clust]
-  
-  # Create figures
-  for (i in seq_along(fig_clusters)) {
-    cat("\n#### ", fig_clusters[i], "\n", sep = "")
-    
-    # Filter markers and GO terms
-    clust <- fig_clusters[i]
-    
-    fig_marks <- markers %>%
-      filter(group == clust)
-    
-    fig_GO <- GO_df %>%
-      filter(group == clust)
-    
-    # Create reference umap
-    ref_umap <- input_umap
-    umap_col <- input_cols[clust]
-    
-    if (is.null(input_umap)) {
-      umap_levels <- input_cols[names(input_cols) != clust]
-      umap_levels <- names(c(umap_levels, umap_col))
-      
-      ref_umap <- input_sobj %>%
-        create_ref_umap(
-          feature     = clust_column,
-          plot_cols   = input_cols,
-          feat_levels = umap_levels,
-          pt_mtplyr   = ref_mtplyr,
-          color_guide = color_guide
-        )
-    }
-    
-    # Create panel
-    marker_fig <- input_sobj %>%
-      create_marker_fig(
-        input_markers = fig_marks,
-        input_GO      = fig_GO,
-        clust_column  = clust_column,
-        input_umap    = ref_umap,
-        umap_color    = umap_col,
-        box_colors    = input_cols,
-        order_boxes   = order_boxes,
-        umap_mtplyr   = umap_mtplyr,
-        xlsx_name     = xlsx_name,
-        sheet_name    = clust,
-        exclude_clust = exclude_clust,
-        ...
-      )
-    
-    # Save excel file meta data
-    cat(nrow(fig_marks), "marker genes and", nrow(fig_GO), "GO terms were identified.")
-    print(marker_fig)
-    cat("\n\n---\n\n<br>\n\n<br>\n\n")
-  }
-  
-  # md5sums for output files
-  file_out <- str_c(xlsx_name, "_GO.xlsx")
-  
-  if (file.exists(file_out)) {
-    FILES_OUT <<- file_out %>%
-      md5sum() %>%
-      c(FILES_OUT)
-  }
-  
-  file_out <- str_c(xlsx_name, "_markers.xlsx")
-  
-  if (file.exists(file_out)) {
-    FILES_OUT <<- file_out %>%
-      md5sum() %>%
-      c(FILES_OUT)
-  }
-}
-
-# Create v2 panel that splits plots into groups
-create_marker_panel_v2 <- function(input_sobj, input_markers, input_cols, grp_column, clust_column,
-                                   color_guide = guide_legend(override.aes = list(size = 3.5, shape = 16)), 
-                                   uniq_GO = params$uniq_GO, umap_mtplyr = 6, xlsx_name = NULL, 
-                                   clust_regex = "\\-[a-zA-Z0-9_ ]+$", ...) {
-  
-  # Set point size
-  # ref_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr * 2.5, 1)
-  umap_mtplyr <- if_else(ncol(input_sobj) < 500, umap_mtplyr, 1)
-  ref_mtplyr <- umap_mtplyr
-  
-  # Figure colors and order
-  fig_clusters <- input_cols %>%
-    set_cluster_order(input_markers)
-  
-  # Find GO terms
-  GO_df <- input_markers %>%
-    group_by(group) %>%
-    do({
-      arrange(., desc(logFC)) %>%
-        pull(feature) %>%
-        run_gprofiler(genome = params$genome)
-    }) %>%
-    ungroup()
-  
-  if (uniq_GO && nrow(GO_df) > 0) {
-    GO_df <- GO_df %>%
-      group_by(term_id) %>%
-      filter(n() == 1) %>%
-      ungroup()
-  }
-  
-  # Create figures
-  for (i in seq_along(fig_clusters)) {
-    cat("\n#### ", fig_clusters[i], "\n", sep = "")
-    
-    # Filter markers and GO terms
-    clust <- fig_clusters[i]
-    
-    fig_marks <- input_markers %>%
-      filter(group == clust)
-    
-    fig_GO <- GO_df %>%
-      filter(group == clust)
-    
-    # Set colors
-    umap_col <- input_cols[clust]
-    
-    group <- clust %>%
-      str_remove(clust_regex)
-    
-    grp_regex <- str_c("^", group, "-") %>%
-      str_replace("\\+", "\\\\+")            # include this to escape "+" in names
-    
-    fig_cols <- input_cols[grepl(grp_regex, names(input_cols))]
-    fig_cols <- c( "Other" = "#fafafa", fig_cols)
-    ref_cols <- fig_cols[names(fig_cols) != clust]
-    ref_cols <- c(ref_cols, umap_col)
-    
-    # Create reference UMAP
-    ref_umap <- input_sobj %>%
-      FetchData(c("UMAP_1", "UMAP_2", grp_column, clust_column)) %>%
-      as_tibble(rownames = "cell_id") %>%
-      mutate(!!sym(clust_column) := if_else(
-        !!sym(grp_column) != group, 
-        "Other", 
-        !!sym(clust_column)
-      )) %>%
-      create_ref_umap(
-        feature     = clust_column,
-        plot_cols   = ref_cols,
-        feat_levels = names(ref_cols),
-        pt_mtplyr   = ref_mtplyr,
-        color_guide = color_guide
-      )
-    
-    # Create panel
-    marker_fig <- input_sobj %>%
-      create_marker_fig(
-        input_markers = fig_marks,
-        input_GO      = fig_GO,
-        clust_column  = clust_column,
-        input_umap    = ref_umap,
-        umap_color    = umap_col,
-        box_colors    = fig_cols,
-        group         = group,
-        umap_mtplyr   = umap_mtplyr,
-        xlsx_name     = xlsx_name,
-        sheet_name    = clust,
-        ...
-      )
-    
-    cat(nrow(fig_marks), "marker genes were identified.", nrow(fig_GO), "GO terms were identified.")
-    print(marker_fig)
-    cat("\n\n---\n\n<br>\n\n<br>\n\n")
-  }
-  
-  # md5sums for output files
-  file_out <- str_c(xlsx_name, "_GO.xlsx")
-  
-  if (file.exists(file_out)) {
-    FILES_OUT <<- file_out %>%
-      md5sum() %>%
-      c(FILES_OUT)
-  }
-  
-  file_out <- str_c(xlsx_name, "_markers.xlsx")
-  
-  if (file.exists(file_out)) {
-    FILES_OUT <<- file_out %>%
-      md5sum() %>%
-      c(FILES_OUT)
-  }
-}
-
-```
-
 ```{r "Packages", include = F}
 
 # Load packages
@@ -2012,7 +18,9 @@ R_packages <- c(
   "gtools"
 )
 
-purrr::walk(R_packages, library, character.only = T)
+purrr::walk(R_packages, library, character.only = TRUE)
+
+source(here(params$template_dir, "processing.R"))
 
 ```
 
@@ -2023,18 +31,18 @@ knitr::opts_chunk$set(message = F, warning = F)
 
 # Set paths/names
 mat_paths <- params$sobjs %>%
-  pull_nest_vec("mat_in") %>%
+  map_chr(pluck, "mat_in") %>%
   map_chr(here)
 
 so_out <- params$sobjs %>%
-  pull_nest_vec("sobj_out") %>%
+  map_chr(pluck, "sobj_out") %>%
   map_chr(~ here(params$rds_dir, .x))
 
 so_types <- params$sobjs %>%
-  pull_nest_vec("cell_type")
+  map_chr(pluck, "cell_type")
 
 so_titles <- params$sobjs %>%
-  pull_nest_vec("title")
+  map_chr(pluck, "title")
 
 type_ref_path <- here(params$ref_dir, params$type_ref)
 
@@ -2048,6 +56,9 @@ load_refs <- all(file.exists(c(type_ref_path, subtype_ref_paths)))
 load_sobjs <- all(file.exists(so_out))
 
 # Clustering parameters
+# These are the clustering resolutions and clustifyr thresholds used for
+# classifying the broad cell types (DCs, LECs, FRCs, B cells, etc.) and the
+# DC, LEC, and FRC subtypes.
 type_res    <- 0.8
 type_thresh <- 0.5
 
@@ -2062,12 +73,6 @@ subtype_res <- c(
 
 subtype_thresh <- 0.5
 
-# Vector to store excel file metadata
-# The file name and checksum for each excel is appended to a vector and printed
-# as a table
-FILES_IN  <- c()
-FILES_OUT <- c()
-
 ```
 
 ```{r "Create refs", eval = !load_refs, echo = F}
@@ -2079,11 +84,7 @@ subtype_column <- "cell_type2"
 # Load Seurat objects for refs
 ref_sobjs <- params$ref_sobjs %>%
   here(params$rds_dir, .) %>%
-  map(~ {
-    FILES_IN <<- c(FILES_IN, md5sum(.x))
-    
-    read_rds(.x)
-  })
+  map(read_rds)
 
 ref_sobj <- merge(ref_sobjs[[1]], ref_sobjs[2:length(ref_sobjs)])
 
@@ -2110,30 +111,22 @@ cell_types <- ref_sobj@meta.data %>%
   unique()
 
 subtype_refs <- cell_types %>%
-  set_names(., .) %>%
+  set_names() %>%
   map(~ {
     ref_sobj %>%
       subset(subset = !!sym(type_column) == .x) %>%
       seurat_ref(cluster_col = subtype_column)
   })
 
-# Load Xiang et al. LEC ref
-file_in <- here(params$ref_dir, params$xiang_ref)
+# Create LEC ref
+# Use Immgen and Xiang et al. LEC ref matrices from clustifyrdata
+immgen_LEC <- ref_immgen[, grepl("Endothelial", colnames(ref_immgen))]
+immgen_LEC <- immgen_LEC[rownames(immgen_LEC) %in% rownames(ref_LEC_xiang), ]
 
-load(file_in)
-
-FILES_IN <<- c(FILES_IN, md5sum(file_in))
-
-LEC_ref <- str_remove(params$xiang_ref, "\\.rda$")
-LEC_ref <- eval(parse(text = LEC_ref))
-
-# Add Immgen endothelial refs
-immgen_LEC <- immgen_ref[, grepl("Endothelial", colnames(immgen_ref))]
-immgen_LEC <- immgen_LEC[rownames(immgen_LEC) %in% rownames(LEC_ref), ]
 colnames(immgen_LEC) <- colnames(immgen_LEC) %>%
   str_replace("Endothelial cells \\(BEC\\)", "BEC")
 
-LEC_ref <- LEC_ref[rownames(immgen_LEC), ]
+LEC_ref <- ref_LEC_xiang[rownames(immgen_LEC), ]
 
 if (!identical(rownames(immgen_LEC), rownames(LEC_ref))) {
   stop("LEC reference rownames do not match.")
@@ -2149,77 +142,44 @@ params$subtype_refs %>%
     
     assign(name, ref)
     
-    file_out <- here(params$ref_dir, .x)
-    save(list = name, file = file_out)
-    
-    FILES_OUT <<- c(FILES_OUT, md5sum(file_out))
+    save(list = name, file = here(params$ref_dir, .x))
   })
 
-file_out <- here(params$ref_dir, "ref_celltype_walsh.rda")
-save(type_ref, file = file_out)
-
-FILES_OUT <<- c(FILES_OUT, md5sum(file_out))
+save(type_ref, file = here(params$ref_dir, "ref_celltype_walsh.rda"))
 
 ```
 
 ```{r "Load refs", eval = load_refs, echo = F}
 
 # Load cell type ref
-file_in <- here(params$ref_dir, params$type_ref)
-
-load(file_in)
-
-FILES_IN <- c(FILES_IN, md5sum(file_in))
+load(here(params$ref_dir, params$type_ref))
 
 # Load cell subtype refs
 subtype_refs <- params$subtype_refs %>%
   map(~ {
-    ref <- str_remove(.x, "\\.rda$")
+    load(here(params$ref_dir, .x))
     
-    file_in <- here(params$ref_dir, .x)
-    
-    load(file_in)
-    
-    FILES_IN <<- c(FILES_IN, md5sum(file_in))
-    
-    eval(parse(text = ref))
+    eval(parse(text = str_remove(.x, "\\.rda$")))
   })
 
 ```
 
 ```{r "Create sobjs", eval = !load_sobjs, echo = F}
 
-# md5sums for input files
-uniq_paths <- unique(mat_paths)
-
-uniq_paths %>%
-  walk(~ {
-    path <- .x
-    files <- dir(.x)
-    
-    files %>%
-      walk(~ {
-        file_in  <- file.path(path, .x)
-        FILES_IN <<- c(FILES_IN, md5sum(file_in))
-      })
-  })
-
-
 # Create Seurat objects, normalize data, run UMAP, and cluster
-sobjs_raw <- uniq_paths %>%
-  set_names(., .) %>%
+sobjs_raw <- unique(mat_paths) %>%
+  set_names() %>%
   imap(~ {
     create_sobjs_01(
       path_in      = .x,
       proj_name    = shorten_names(.y),
-      cc_scoring   = F,
+      cc_scoring   = FALSE,
       regress_vars = NULL,
       resolution   = type_res
     )
   })
 
-
-# Annotate cell types and calculate OVA fold change for each object
+# Annotate cell types and calculate ova fold change for each object
 sobjs_raw <- sobjs_raw %>%
   map(
     clustify_cell_types_02,
@@ -2227,8 +187,7 @@ sobjs_raw <- sobjs_raw %>%
     threshold = type_thresh
   )
 
-
-# Split objects based on cell type, re-cluster and run clustify to annotate
+# Split objects based on cell type, re-cluster and run clustifyr to annotate
 # cell subtypes
 # Expand Seurat object list for subsets
 sobjs <- sobjs_raw[match(mat_paths, names(sobjs_raw))]
@@ -2247,13 +206,12 @@ sobjs_sub <- sobjs %>%
         prefix         = "t2",
         type_column    = "cell_type",
         subtype_column = "subtype",
-        cc_scoring     = F,
+        cc_scoring     = FALSE,
         regress_vars   = NULL
       )
     
     res
   })
-
 
 # Add subtype assignments back to main objects and split again to now include
 # additional cell types (B cells, T cells, etc.) for plotting
@@ -2268,24 +226,24 @@ inc_types <- so_types %>%
 so_names <- names(sobjs)
 
 args_in <- list(
-  sobj_in    <- sobjs[so_names],
-  subtype_so <- sobjs_sub[so_names],
-  type_in    <- so_types[so_names],
-  inc_types  <- inc_types[so_names]
+  sobj_in    = sobjs[so_names],
+  subtype_so = sobjs_sub[so_names],
+  type_in    = so_types[so_names],
+  inc_types  = inc_types[so_names]
 )
 
 sobjs <- args_in %>%
   pmap(
     resplit_objects_04,
-    cc_scoring   = T,
+    cc_scoring   = TRUE,
     regress_vars = c(
       "Percent_mito", "nCount_RNA",
       "S.Score",      "G2M.Score"
     )
   )
 
-
-# Classify cells based on OVA counts, do this for each cell type and subtype
+# Classify cells based on CLR-transformed ova counts, do this for each cell type
+# and subtype
 sobjs <- sobjs %>%
   imap(~ {
     classify_ova_05(
@@ -2293,11 +251,10 @@ sobjs <- sobjs %>%
       type_in        = so_types[[.y]],
       type_column    = "cell_type",
       subtype_column = "subtype",
-      data_column    = "adt_ovalbumin",
+      gmm_data       = "adt_ovalbumin",
       data_slot      = "counts"
     )
   })
-
 
 # Write list of Seurat objects divided by cell type
 file_out <- here(params$rds_dir, "sobjs_subsets.rds")
@@ -2305,77 +262,107 @@ file_out <- here(params$rds_dir, "sobjs_subsets.rds")
 sobjs_sub %>%
   write_rds(file_out)
 
-FILES_OUT <- c(FILES_OUT, md5sum(file_out))
-
 # Write final Seurat objects and meta.data
 sobjs %>%
-  iwalk(~ {
-    file_out <- so_out[.y]
+  iwalk(~ write_rds(.x, so_out[.y]))
 
-    write_rds(.x, path = file_out)
-
-    FILES_OUT <<- c(FILES_OUT, md5sum(file_out))
-  })
+meta_cols <- c(
+  "cell_id",    "orig.ident",
+  "nCount_RNA", "nFeature_RNA",
+  "nCount_ADT", "Percent_mito",
+  "S.Score",    "G2M.Score", 
+  "Phase",      "cell_type", 
+  "subtype",    "adt_ovalbumin",
+  "GMM_grp",    "type_GMM_grp_2",
+  "UMAP_1",     "UMAP_2"
+)
 
 sobjs %>%
   iwalk(~ {
     export_matrices(
       sobj_in     = .x,
+      columns     = meta_cols,
       out_dir     = here(params$rds_dir),
       file_prefix = str_c("walsh_", .y)
     )
   })
 
-
 ```
 
 ```{r "Load sobjs", eval = load_sobjs, echo = F}
 
+# These objects only include DCs, FRCs, or LECs and were used for subtype annotations
+# This is needed for Fig S7 heatmaps
+sobjs_sub <- read_rds(here(params$rds_dir, "sobjs_subsets.rds"))
+
 # Load Seurat objects
 sobjs <- so_out %>%
-  map(~ {
-    res <- read_rds(.x)
-    FILES_IN <<- c(FILES_IN, md5sum(.x))
-    
-    res
-  })
+  map(read_rds)
 
 ```
 
 ```{r "Themes", echo = F}
 
 # ggplot2 themes
+txt_pt1  <- 11
+txt_pt2  <- 13
+ttl_pt1  <- 16
+ttl_pt2  <- 26
+ln_pt    <- 0.5
+ln_col   <- "grey85"
+cir_size <- 3.5
+sqr_size <- 4
+
 text_theme <- theme(
-  legend.text = element_text(size = 8),
-  axis.title  = element_text(size = 10),
-  axis.text   = element_text(size = 8)
+  strip.text  = element_text(size = ttl_pt1),
+  legend.text = element_text(size = txt_pt1),
+  axis.title  = element_text(size = txt_pt2),
+  axis.text   = element_text(size = txt_pt1)
+)
+
+line_theme <- theme(
+  axis.line.x  = element_line(size = ln_pt, color = ln_col),
+  axis.line.y  = element_line(size = ln_pt, color = ln_col),
+  axis.ticks.x = element_line(size = ln_pt, color = ln_col),
+  axis.ticks.y = element_line(size = ln_pt, color = ln_col)
 )
 
 base_theme <- theme_cowplot() +
   theme(
-    plot.title       = element_text(face = "plain", size = 20),
+    plot.title       = element_text(face = "plain", size = ttl_pt2),
     strip.background = element_blank(),
     strip.text       = element_text(face = "plain")
   ) +
-  text_theme
+  text_theme +
+  line_theme
 
 umap_theme <- base_theme +
   theme(
-    axis.title = element_blank(),
-    axis.line  = element_blank(),
-    axis.ticks = element_blank(),
-    axis.text  = element_blank()
+    axis.title   = element_blank(),
+    axis.line.x  = element_blank(),
+    axis.line.y  = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text    = element_blank()
   )
 
 # Legend guides
-col_guide <- guide_legend(override.aes = list(size = 3.5, shape = 16))
+col_guide <- guide_legend(override.aes = list(size = sqr_size, shape = 16))
 
-outline_guide <- guide_legend(override.aes = list(
-  size   = 3.5,
-  shape  = 21,
-  color  = "black",
-  stroke = 0.25
-))
+legd_guide <- function(nrow = NULL, ncol = NULL, size = 4, shape = 21,
+                       stroke = 0.25, color = "black", ...) {
+  guide_legend(
+    nrow = nrow,
+    ncol = ncol,
+    override.aes = list(
+      size   = size,
+      shape  = shape,
+      color  = color,
+      stroke = stroke,
+      ...
+    )
+  )  
+}
 
 # Okabe Ito color palettes
 ito_cols <- c(
@@ -2391,7 +378,7 @@ ito_cols <- ito_cols[3:length(ito_cols)] %>%
 # Set default palette
 get_cols <- create_col_fun(ito_cols)
 
-# OVA colors
+# ova colors
 ova_cols <- c(
   "ova high" = "#475C81",
   "ova low"  = "#B8ECFF",
@@ -2428,34 +415,4 @@ so_cols$d2_LEC <- c(
 ```
 
 ```{r, ref.label = c("Functions", "Packages", "Params", "Create refs", "Create sobjs", "Themes"), eval = F}
-```
-
-
-
-
-```{r "TEST", eval = F, echo = F}
-
-NEW_so <- x
-OLD_so <- OLD_sobjs
-
-# TO TEST FOR DIFFERNCES IN METADATA
-walk2(OLD_so, NEW_so, ~ {
-  so1 <- .x
-  so2 <- .y
-  
-  ident_columns <- colnames(so1@meta.data)
-  
-  walk(ident_columns, ~ {
-    iden <- identical(so1@meta.data[, .x], so2@meta.data[, .x])
-    
-    msg <- if_else(
-      iden,
-      str_c("IDENTICAL ", .x),
-      str_c("NOT IDENTICAL NOT IDENTICAL NOT IDENTICAL ", .x)
-    )
-    
-    print(msg)
-  })
-})
-
 ```
