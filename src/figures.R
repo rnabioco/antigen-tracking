@@ -498,7 +498,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
   ova_hist <- sobj_in@meta.data %>%
     filter(!!sym(gmm_column) != "Other") %>%
     group_by(!!sym(gmm_column)) %>%
-    mutate(ave_ova= mean(adt_ovalbumin)) %>%
+    mutate(ave_ova = mean(adt_ovalbumin)) %>%
     ungroup() %>%
     mutate(!!sym(gmm_column) := fct_relevel(!!sym(gmm_column), ova_hist_order)) %>%
     
@@ -529,7 +529,7 @@ create_gmm_panels <- function(sobj_in, gmm_column = "GMM_grp", ova_cols, bar_col
     as_tibble(rownames = "cell_id") %>%
     filter(!!sym(gmm_column) != "Other") %>%
     mutate(
-      subtype = fct_reorder(subtype, cell_id, n_distinct),
+      subtype            = fct_reorder(subtype, cell_id, n_distinct),
       !!sym(gmm_column) := fct_relevel(!!sym(gmm_column), c("ova low", "ova high"))
     ) %>%
     
@@ -1401,20 +1401,20 @@ create_fig4 <- function(sobj_in, feat_cols, ref_cols, ova_cols, pt_size = 0.0000
   
   # GMM summary plots
   gmm_panels <- create_gmm_panels(
-    sobj_in         = sobj_in,
-    gmm_column      = gmm_column,
-    ova_cols        = ova_cols,
-    bar_cols        = ref_cols,
-    pt_size         = pt_size,
-    pt_outline      = pt_outline,
-    show_bars       = F,
-    legd_pos        = "left",
-    umap_margin     = unit(c(0.2, 0.2, 0.2, 0.4), "cm"),
-    plot_labs       = c(plot_labs[1:2], "", ""), 
-    rel_widths      = c(0.86, 1, 0.7, 0.2),
-    nrow            = 1,
-    align           = "h",
-    axis            = "tb"
+    sobj_in     = sobj_in,
+    gmm_column  = gmm_column,
+    ova_cols    = ova_cols,
+    bar_cols    = ref_cols,
+    pt_size     = pt_size,
+    pt_outline  = pt_outline,
+    show_bars   = F,
+    legd_pos    = "left",
+    umap_margin = unit(c(0.2, 0.2, 0.2, 0.4), "cm"),
+    plot_labs   = c(plot_labs[1:2], "", ""), 
+    rel_widths  = c(0.86, 1, 0.7, 0.2),
+    nrow        = 1,
+    align       = "h",
+    axis        = "tb"
   )
   
   # Feature UMAPs

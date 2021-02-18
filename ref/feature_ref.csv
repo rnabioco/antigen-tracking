@@ -1,4 +1,0 @@
-id,name,read,pattern,sequence,feature_type
-ova,ovalbumin,R2,5PNNN(BC),CCTGAATTCGAG,Antibody Capture
-P_DNA,unprotected_DNA,R2,5PNNN(BC),GCAGATATCCTG,Antibody Capture
-Ps_DNA,protected_DNA,R2,5PNNN(BC),TCAGGTACCTGA,Antibody Capture

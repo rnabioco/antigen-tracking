@@ -117,10 +117,6 @@ subtype_order <- list(
 
 ```
 
-# Abstract
-
-`r params$abstract`
-
 # Methods
 
 `r params$methods`
@@ -661,4 +657,3 @@ cbBuild $args -o $html_dir/html
 aws s3 sync $html_dir/html s3://antigen-tracking-browser
 
 ```
-

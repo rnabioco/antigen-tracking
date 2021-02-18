@@ -758,11 +758,12 @@ run_gmm <- function(sobj_in, gmm_data, grp_column = "cell_type", filt = NULL,
 #' Export counts and meta.data tables
 #' 
 #' @param sobj_in Seurat object
+#' @param columns meta.data columns to export
 #' @param out_dir Output directory
 #' @param file_prefix Prefix to add to output files
 #' @return Counts and meta.data tables
 #' @export
-export_matrices <- function(sobj_in, out_dir, file_prefix) {
+export_matrices <- function(sobj_in, columns, out_dir, file_prefix) {
   
   # Format count matrices
   rna <- sobj_in %>%
@@ -780,23 +781,12 @@ export_matrices <- function(sobj_in, out_dir, file_prefix) {
   bind_rows(rna, adt) %>%
     write_tsv(counts_out)
   
-  # meta.data columns to include  
-  meta_cols <- c(
-    "cell_id",    "orig.ident",
-    "nCount_RNA", "nFeature_RNA",
-    "nCount_ADT", "Percent_mito",
-    "S.Score",    "G2M.Score", 
-    "Phase",      "subtype",
-    "GMM_grp",    "type_GMM_grp_2",
-    "UMAP_1",     "UMAP_2"
-  )
-  
   # Write meta.data table
   meta_out <- file.path(out_dir, str_c(file_prefix, "_metadata.tsv.gz"))
   
   sobj_in@meta.data %>%
     as_tibble(rownames = "cell_id") %>%
-    select(all_of(meta_cols)) %>%
+    select(all_of(columns)) %>%
     write_tsv(meta_out)
 }
 
