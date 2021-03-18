@@ -1,4 +1,6 @@
-## Molecular Tracking Devices to follow molecular dissemination *in vivo
+## Molecular Tracking Devices to follow molecular dissemination *in vivo*
+
+[![DOI](https://zenodo.org/badge/259462838.svg)](https://zenodo.org/badge/latestdoi/259462838)
 
 Shannon M. Walsh\*, Ryan M. Sheridan\*, Erin D. Lucas\*, Thu A. Doan, Brian C. Ware, Johnathon Schafer, Rui Fu, Matthew A. Burchill, Jay R. Hesselberth, and Beth A. Jirón Tamburini
 
